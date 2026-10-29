@@ -21,6 +21,13 @@ export function createFrozenGazeAutomation({run, now=()=>performance.now(), setT
   };
 }
 
+export async function runFrozenGazeCycle({prepare,run,resume}={}) {
+  if(typeof prepare!=='function'||typeof run!=='function'||typeof resume!=='function') throw new TypeError('invalid frozen gaze cycle');
+  if(!prepare()) return {status:'withheld'};
+  try{return await run();}
+  finally{resume();}
+}
+
 // This admits a recent browser sample within a frozen-scene window; it does not
 // estimate or certify physical camera/display synchronization.
 export function selectFrozenSceneGaze({sample, frame, canvasRect, frozenAtMs, stableAfterMs, nowMs, maxCaptureProcessingLagMs=250, maxProcessingAgeMs=100}) {

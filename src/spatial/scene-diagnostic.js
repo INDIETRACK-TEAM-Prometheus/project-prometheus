@@ -32,7 +32,8 @@ export function createSceneDiagnostic({encode,request,display,pin=()=>true,relea
         const overlay=maskOverlay(result.masks,frame.width,frame.height);
         let depth=null;
         try {const sampled=sampleDepth(frame);if(sampled?.frameId===frame.frameId && sampled.observedAt===frame.observedAt)depth=sampled;} catch {}
-        display({frame,pixels,overlay,depth,count:result.masks.length,masks:result.masks,imageDataUrl,provider:result.provider,model:result.model});
+        await display({frame,pixels,overlay,depth,count:result.masks.length,masks:result.masks,imageDataUrl,provider:result.provider,model:result.model});
+        if(token!==generation)return {status:'cancelled'};
         return {status:'ok'};
       } catch {return {status:token===generation?'failed':'cancelled'};}
       finally {releaseOnce();if(token===generation){controller=null;releaseCurrent=null;}}

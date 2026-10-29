@@ -13,7 +13,7 @@ import {createExploration} from './runtime/exploration.js';
 import {createServerReasoner} from './runtime/server-providers.js';
 import {openDurableSession,deleteDurableSlot} from './memory/session.js';
 import {EvaluationLedger} from './evaluation/ledger.js';
-import {selectFrozenSceneGaze,createFrozenGazeAutomation} from './gaze/frozen-demo.js';
+import {selectFrozenSceneGaze,createFrozenGazeAutomation,runFrozenGazeCycle} from './gaze/frozen-demo.js';
 import {estimateUncalibratedGaze,selectProvisionalIrisGaze} from './gaze/uncalibrated.js';
 import {loadGazeCalibration,saveGazeCalibration,gazeCalibrationEnvironmentChanged} from './gaze/persistence.js';
 import {ProvisionalTrackingStore,deleteProvisionalTracking} from './memory/provisional-tracking.js';
@@ -29,6 +29,15 @@ export function requestStartupSceneAnalysis({consent,frame,rgba,diagnostic}={}) 
   return diagnostic.run({frameId:frame.frameId,observedAt:frame.renderTsMs,width:frame.viewport.width,height:frame.viewport.height},rgba,'objects');
 }
 export const provisionalSparkMinIntervalMs=30000;
+export function provisionalSparkValidityScope(record){
+  return `범위: 고정 프레임 ${record.frame.frameId} (${record.frame.observedAt.toFixed(1)} ms)과 당시 시선 추정 (${record.gaze.x.toFixed(3)}, ${record.gaze.y.toFixed(3)} · 표본 ${record.gaze.sampleAtMs.toFixed(1)} ms)에만 적용 · 현재 장면/시선 재사용 불가 · 물리적 시간 정렬 미검증`;
+}
+export async function publishProvisionalSparkIfCurrent({persist,isCurrent,discard,publish}={}){
+  if(typeof persist!=='function'||typeof isCurrent!=='function'||typeof discard!=='function'||typeof publish!=='function')throw new TypeError('invalid provisional Spark publication');
+  const result=await persist();
+  if(!isCurrent()){await discard();return false;}
+  publish(result);return true;
+}
 const provisionalSparkFailureLabels={network_error:'네트워크 연결 실패',request_failed:'요청 처리 실패',timeout:'응답 시간 초과',rate_limited:'요청 한도 초과',budget_exceeded:'호출 예산 소진',provider_busy:'서비스 혼잡',service_unavailable:'서비스 사용 불가',not_configured:'서버 Spark 설정 없음',access_denied:'서비스 접근 거부',incomplete_response:'Spark 응답 미완료',invalid_response:'Spark 응답 형식 오류',request_rejected:'Spark 요청 거부',provider_failed:'Spark 서비스 실패'};
 const provisionalGazeFailureLabels={
   face_not_detected:'얼굴 검출 없음',both_eye_iris_landmarks_required:'양쪽 눈 홍채 랜드마크 없음',uncalibrated_iris_estimate_required:'유효한 미교정 홍채 추정값 없음',
@@ -264,6 +273,7 @@ async function boot() {
       const sparkFailure=record.spark.reason?` · ${provisionalSparkFailureLabels[record.spark.reason]??'실패 사유 확인 필요'}`:'';
       heading.textContent=`${date} · ${record.classification==='uncalibrated_provisional'?'미교정/잠정':'교정 추정/잠정'} · 프레임 ${record.frame.frameId} · 시선 ${record.gaze.x.toFixed(3)}, ${record.gaze.y.toFixed(3)} · SAM ${record.sam.maskCount}개 · Spark ${sparkStatus}${sparkFailure}`;
       item.append(heading);
+      const scope=document.createElement('div');scope.textContent=provisionalSparkValidityScope(record);item.append(scope);
       for(const scenario of record.spark.scenarios){const detail=document.createElement('div');detail.textContent=`Spark 가설: ${scenario.possible_next_action}`;item.append(detail);}
       if(!record.spark.scenarios.length){const detail=document.createElement('div');detail.textContent='저장된 Spark 가설 없음';item.append(detail);}
       provisionalTrackingList.append(item);
@@ -297,9 +307,9 @@ async function boot() {
     if(/IndexedDB unavailable/i.test(detail))return '브라우저 저장소 사용 불가';
     return '저장소 확인 필요';
   }
-  async function persistSparkResult(recordId,status,scenarios=[],reason){
+  async function persistSparkResult(recordId,status,scenarios=[],reason,{render=true}={}){
     if(!recordId)return;
-    try{const store=await ensureProvisionalTracking();await store.updateSparkResult(recordId,{status,scenarios,reason});renderProvisionalTracking(await store.list());}
+    try{const store=await ensureProvisionalTracking();await store.updateSparkResult(recordId,{status,scenarios,reason});const records=await store.list();if(render)renderProvisionalTracking(records);return records;}
     catch{provisionalTrackingStatus.textContent='SAM 결과는 보존했지만 Spark 상태 갱신에 실패했습니다.';}
   }
   async function deleteProvisionalHistory(){
@@ -378,19 +388,21 @@ async function boot() {
     sampleDepth:frame=>world.samplePinnedDepth({frameId:frame.frameId,renderTsMs:frame.observedAt}),
     encode:async(pixels,width,height)=>{const c=document.createElement('canvas');c.width=width;c.height=height;c.getContext('2d').putImageData(new ImageData(pixels,width,height),0,0);return c.toDataURL('image/png');},
     request:async(body,signal)=>journalCall('scene-diagnostic',`${epoch}${body.frame.frameId}:${++diagnosticRequestNumber}`,async()=>{if(signal?.aborted)throw new Error('operation cancelled');const response=await fetch('/api/sam/segment',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal});if(!response.ok)throw new Error('diagnostic unavailable');return response.json();}),
-    display:({frame,pixels,overlay,depth,count,provider,model,masks,imageDataUrl})=>{
-      diagnosticLayers={frame,pixels,overlay,depth,gazePoint:['frozen-gaze-demo','uncalibrated-gaze-demo'].includes(diagnosticPurpose)?diagnosticGazePoint:null};drawDiagnostic();
-      $('#runtimeStatus').textContent=['frozen-gaze-demo','uncalibrated-gaze-demo'].includes(diagnosticPurpose)?'시선 SAM 완료 · 잠정 Spark 동의 확인 중':'SAM 응답 확인 · Spark 대기';
+    display:async({frame,pixels,overlay,depth,count,provider,model,masks,imageDataUrl})=>{
+      const gazeDemo=['frozen-gaze-demo','uncalibrated-gaze-demo'].includes(diagnosticPurpose);
+      if(gazeDemo){$('#provisionalSparkScenarios').replaceChildren();$('#provisionalSparkStatus').textContent=`새 SAM 프레임 ${frame.frameId} · Spark 응답 대기 · 잠정 · 시간 정렬 미검증`;}
+      diagnosticLayers={frame,pixels,overlay,depth,gazePoint:gazeDemo?diagnosticGazePoint:null};drawDiagnostic();
+      $('#runtimeStatus').textContent=gazeDemo?'시선 SAM 완료 · 잠정 Spark 동의 확인 중':'SAM 응답 확인 · Spark 대기';
       if(diagnosticPurpose==='scene-only'){
         $('#worldSceneState').textContent=count?`장면 마스크 ${count}개`:'응답 · 마스크 0개';
         $('#sceneStatus').textContent=`시작 장면 전용 SAM · 시선점 미사용 · ${provider==='Meta'?'Meta':'provider unknown'} ${model==='sam-3.1'?'SAM 3.1':'model unknown'} · 마스크 ${count}개 (0개는 물체 부재를 뜻하지 않음)`;
       }else if(diagnosticPurpose==='frozen-gaze-demo'||diagnosticPurpose==='uncalibrated-gaze-demo'){
         $('#worldSceneState').textContent=count?`시선 SAM 마스크 ${count}개`:'시선 SAM · 마스크 0개';
         const label=diagnosticPurpose==='uncalibrated-gaze-demo'?'미교정 iris 추정':'보정된 브라우저 추정';
-        $('#sceneStatus').textContent=`잠정 고정 장면 시험 · ${frame.frameId} · ${label} ${diagnosticGazePoint.x.toFixed(3)}, ${diagnosticGazePoint.y.toFixed(3)} · 시간 미검증 · ${provider==='Meta'?'Meta':'provider unknown'} ${model==='sam-3.1'?'SAM 3.1':'model unknown'} · 같은 프레임 마스크 ${count}개`;
+        $('#sceneStatus').textContent=`잠정 고정 장면 시험 · ${frame.frameId} · ${label} ${diagnosticGazePoint.x.toFixed(3)}, ${diagnosticGazePoint.y.toFixed(3)} · 해당 프레임 기록 전용 · 현재 장면/시선 재사용 불가 · 물리적 시간 정렬 미검증 · ${provider==='Meta'?'Meta':'provider unknown'} ${model==='sam-3.1'?'SAM 3.1':'model unknown'} · 같은 프레임 마스크 ${count}개`;
       }else $('#sceneStatus').textContent=
         `고정 프레임 ${frame.frameId} · 관측 ${frame.observedAt.toFixed(1)} ms · 처리 ${performance.now().toFixed(1)} ms · ${provider==='Meta'?'Meta':'provider unknown'} ${model==='sam-3.1'?'SAM 3.1':'model unknown'} · 마스크 ${count}개`;
-      if(['frozen-gaze-demo','uncalibrated-gaze-demo'].includes(diagnosticPurpose)){const gazePoint=diagnosticGazePoint,gazeTiming=diagnosticGazeTiming;void persistSamResult({frame,gazePoint,gazeTiming,masks}).then(recordId=>requestProvisionalSpark({frame,imageDataUrl,masks,gazePoint,gazeTiming,recordId}));}
+      if(gazeDemo){const gazePoint=diagnosticGazePoint,gazeTiming=diagnosticGazeTiming,recordId=await persistSamResult({frame,gazePoint,gazeTiming,masks});await requestProvisionalSpark({frame,imageDataUrl,masks,gazePoint,gazeTiming,recordId});}
     }
   });
   function cancelDiagnostic(){diagnostic.cancel();cancelProvisionalSpark();diagnosticLayers=null;diagnosticGazePoint=null;diagnosticGazeTiming=null;diagnosticPurpose='scene';$('#runScene').disabled=false;$('#sceneSnapshot').hidden=true;$('#sceneStatus').textContent='장면 진단 취소됨';if($('#worldSceneState').textContent.includes('SAM 요청 중'))$('#worldSceneState').textContent='중단됨';}
@@ -402,7 +414,14 @@ async function boot() {
   function cancelProvisionalSpark(status='잠정 Spark 결과 폐기 · 물리적 시간 정렬 미검증'){
     provisionalSparkGeneration++;const pending=provisionalSparkController,recordId=provisionalSparkRecordId;provisionalSparkController=null;provisionalSparkRecordId=null;pending?.abort();if(recordId)void persistSparkResult(recordId,'cancelled');$('#provisionalSparkScenarios').replaceChildren();$('#provisionalSparkStatus').textContent=status;
   }
+  function beginGazeObservation(){
+    $('#provisionalSparkScenarios').replaceChildren();
+    if(diagnosticLayers?.frame){const previous=diagnosticLayers.frame;$('#sceneSnapshot').hidden=true;$('#sceneStatus').textContent=`이전 SAM 결과 범위 · 고정 프레임 ${previous.frameId} 기록에만 적용 · 현재 장면/시선 재사용 불가 · 물리적 시간 정렬 미검증`;diagnosticLayers=null;}
+    $('#provisionalSparkStatus').textContent='새 시선 표본 수집 중 · 이전 Spark 가설은 저장된 프레임 기록에만 적용';
+  }
+  function resumeWorldAfterGazeCycle(){sceneFrozen=false;frozenScene=null;$('#worldSceneState').textContent='장면 재생 · 이전 마스크는 고정 프레임 기록';updateFrozenGazeControls();}
   async function requestProvisionalSpark({frame,imageDataUrl,masks,gazePoint,gazeTiming,recordId=null}){
+    $('#provisionalSparkScenarios').replaceChildren();
     if(!provisionalSparkAllowed(frame)){
       if(recordId)void persistSparkResult(recordId,$('#provisionalSparkConsent').checked?'cancelled':'withheld');
       if(!$('#provisionalSparkConsent').checked)$('#provisionalSparkStatus').textContent='SAM 결과만 표시 · 잠정 Spark 별도 동의 필요 · 물리적 시간 정렬 미검증';
@@ -419,13 +438,28 @@ async function boot() {
     try{outcome=await journalCall('provisional-spark',id,()=>sendProvisionalSparkRequest({consent:true,frame,imageDataUrl,gazePoint,gazeTiming,masks,issuedAtMs:performance.now(),signal:requestController.signal}));}catch{outcome=requestController.signal.aborted?{status:'cancelled'}:{status:'failed',reason:'request_failed'};}
     if(token!==provisionalSparkGeneration||requestController.signal.aborted||!provisionalSparkAllowed(frame)){if(recordId)await persistSparkResult(recordId,'cancelled');if(provisionalSparkController===requestController)provisionalSparkController=null;if(provisionalSparkRecordId===recordId)provisionalSparkRecordId=null;return;}
     if(outcome.status==='ok'){
-      const scenarios=outcome.result.scenarios.filter(s=>typeof s?.possible_next_action==='string').slice(0,5),list=$('#provisionalSparkScenarios');list.replaceChildren();
-      for(const scenario of scenarios){const li=document.createElement('li');li.textContent=scenario.possible_next_action;list.appendChild(li);}
-      await persistSparkResult(recordId,'complete',outcome.result.scenarios);
-      $('#runtimeStatus').textContent='SAM + Spark 분석 완료 · 잠정 · 시간 정렬 미검증';
-      $('#provisionalSparkStatus').textContent=scenarios.length?`Spark 분석 완료 · 가설 ${scenarios.length}개 · 잠정 · 시간 정렬 미검증`:`Spark 분석 완료 · 가설 보류 · 잠정 · 시간 정렬 미검증`;
-    }else if(outcome.status==='failed'){await persistSparkResult(recordId,'failed',[],outcome.reason);$('#provisionalSparkStatus').textContent=`Spark 분석 실패 · ${provisionalSparkFailureLabels[outcome.reason]??'실패 사유 확인 필요'} · SAM 결과 보존 · 잠정`;}
-    else await persistSparkResult(recordId,outcome.status==='cancelled'?'cancelled':'failed');
+      const scenarios=outcome.result.scenarios.filter(s=>typeof s?.possible_next_action==='string').slice(0,5),list=$('#provisionalSparkScenarios');
+      const published=await publishProvisionalSparkIfCurrent({
+        persist:()=>persistSparkResult(recordId,'complete',outcome.result.scenarios,undefined,{render:false}),
+        isCurrent:()=>token===provisionalSparkGeneration&&!requestController.signal.aborted&&provisionalSparkAllowed(frame),
+        discard:()=>persistSparkResult(recordId,'cancelled'),
+        publish:records=>{
+          if(records)renderProvisionalTracking(records);
+          for(const scenario of scenarios){const li=document.createElement('li');li.textContent=scenario.possible_next_action;list.appendChild(li);}
+          $('#runtimeStatus').textContent='SAM + Spark 분석 완료 · 잠정 · 시간 정렬 미검증';
+          $('#provisionalSparkStatus').textContent=scenarios.length?`Spark 분석 완료 · 가설 ${scenarios.length}개 · 잠정 · 시간 정렬 미검증`:`Spark 분석 완료 · 가설 보류 · 잠정 · 시간 정렬 미검증`;
+        }
+      });
+      if(!published){if(provisionalSparkController===requestController)provisionalSparkController=null;if(provisionalSparkRecordId===recordId)provisionalSparkRecordId=null;return;}
+    }else if(outcome.status==='failed'){
+      const published=await publishProvisionalSparkIfCurrent({
+        persist:()=>persistSparkResult(recordId,'failed',[],outcome.reason),
+        isCurrent:()=>token===provisionalSparkGeneration&&!requestController.signal.aborted&&provisionalSparkAllowed(frame),
+        discard:()=>persistSparkResult(recordId,'cancelled'),
+        publish:()=>{$('#provisionalSparkStatus').textContent=`Spark 분석 실패 · ${provisionalSparkFailureLabels[outcome.reason]??'실패 사유 확인 필요'} · SAM 결과 보존 · 잠정`;}
+      });
+      if(!published){if(provisionalSparkController===requestController)provisionalSparkController=null;if(provisionalSparkRecordId===recordId)provisionalSparkRecordId=null;return;}
+    }else await persistSparkResult(recordId,outcome.status==='cancelled'?'cancelled':'failed');
     if(provisionalSparkController===requestController)provisionalSparkController=null;
     if(provisionalSparkRecordId===recordId)provisionalSparkRecordId=null;
   }
@@ -507,12 +541,13 @@ async function boot() {
   }
   async function runSamAnalysis(){
     if(!samSessionAllowed())return;
-    if(calibrationPassed()){
-      if(!prepareFrozenSceneForGaze())return;
-      return runFrozenGazeSample();
-    }
-    if(!provisionalGazeAllowed()||!prepareFrozenSceneForGaze(true))return;
-    return runUncalibratedGazeSample();
+    beginGazeObservation();
+    const calibrated=calibrationPassed();
+    return runFrozenGazeCycle({
+      prepare:()=>calibrated?prepareFrozenSceneForGaze():provisionalGazeAllowed()&&prepareFrozenSceneForGaze(true),
+      run:()=>{if(initialScenePending){$('#gazeSamDemoStatus').textContent='시작 장면 SAM 처리 완료 후 시선 표본을 수집합니다.';return {status:'withheld'};}return calibrated?runFrozenGazeSample():runUncalibratedGazeSample();},
+      resume:resumeWorldAfterGazeCycle
+    });
   }
   const frozenGazeAutomation=createFrozenGazeAutomation({run:runSamAnalysis,now:()=>performance.now(),intervalMs:5000});
   function maybeStartFrozenGazeAutomation(){if(!samSessionAllowed()||frozenGazeAutomation.status().active)return false;frozenGazeAutomation.start();updateFrozenGazeControls();return true;}

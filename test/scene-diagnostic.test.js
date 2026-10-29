@@ -19,6 +19,19 @@ test('successful response renders only its matching frozen frame',async()=>{
  assert.equal(rendered.imageDataUrl,'png');assert.equal(rendered.masks,masks);
 });
 
+test('waits for async result display work before releasing the request cycle',async()=>{
+ let beginDisplay,finishDisplay;const entered=new Promise(resolve=>beginDisplay=resolve),frame={frameId:'f',observedAt:10,width:1,height:1};
+ const runner=createSceneDiagnostic({encode:async()=> 'png',request:async({frame})=>({frame,masks:[]}),display:async()=>{beginDisplay();await new Promise(resolve=>finishDisplay=resolve);}});
+ let settled=false;const pending=runner.run(frame,new Uint8Array(4)).then(result=>{settled=true;return result;});
+ await entered;assert.equal(settled,false);finishDisplay();assert.equal((await pending).status,'ok');assert.equal(settled,true);
+});
+
+test('cancellation during async result display remains cancelled',async()=>{
+ let beginDisplay,finishDisplay;const entered=new Promise(resolve=>beginDisplay=resolve),frame={frameId:'f',observedAt:10,width:1,height:1};
+ const runner=createSceneDiagnostic({encode:async()=> 'png',request:async({frame})=>({frame,masks:[]}),display:async()=>{beginDisplay();await new Promise(resolve=>finishDisplay=resolve);}});
+ const pending=runner.run(frame,new Uint8Array(4));await entered;runner.cancel();finishDisplay();assert.equal((await pending).status,'cancelled');
+});
+
 test('unavailable, failing or mismatched depth does not suppress the RGB and mask result',async()=>{
  const frame={frameId:'f',observedAt:10,width:1,height:1};
  const mask={sourceWidth:1,sourceHeight:1,width:1,height:1,bounds:{left:0,top:0,right:1,bottom:1},raster:[1]};

@@ -1,12 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {selectFrozenSceneGaze} from '../src/gaze/frozen-demo.js';
-import {gazeSamPrompt,sendProvisionalSparkRequest,provisionalSparkMinIntervalMs,provisionalGazeFailureReason} from '../src/app.js';
+import {selectFrozenSceneGaze,runFrozenGazeCycle} from '../src/gaze/frozen-demo.js';
+import {gazeSamPrompt,sendProvisionalSparkRequest,provisionalSparkMinIntervalMs,provisionalGazeFailureReason,provisionalSparkValidityScope,publishProvisionalSparkIfCurrent} from '../src/app.js';
 import {createSceneDiagnostic,flipRgba} from '../src/spatial/scene-diagnostic.js';
 
 const frame={frameId:'synthetic-42',observedAt:42,width:4,height:2};
 const rect={left:50,top:100,width:400,height:200};
 const sample={valid:true,timestampKind:'browser_capture_estimate',timestampMs:1600,processedMs:1650,rawScreenXY:{x:250,y:150}};
+
+test('each gaze cycle releases its captured scene after async work, including failure',async()=>{
+ let frozen=false,captures=0;
+ const cycle=()=>runFrozenGazeCycle({prepare:()=>{assert.equal(frozen,false);frozen=true;captures++;return true;},run:async()=>{assert.equal(frozen,true);await Promise.resolve();return captures;},resume:()=>{frozen=false;}});
+ assert.equal(await cycle(),1);assert.equal(frozen,false);assert.equal(await cycle(),2);assert.equal(frozen,false);
+ await assert.rejects(runFrozenGazeCycle({prepare:()=>{frozen=true;return true;},run:async()=>{throw Error('request failed');},resume:()=>{frozen=false;}}),/request failed/);assert.equal(frozen,false);
+});
+
+test('cancelled Spark persistence cannot republish a discarded result and history labels its exact scope',async()=>{
+ let finishPersist,current=true,shown=null,discarded=0;
+ const pending=publishProvisionalSparkIfCurrent({persist:()=>new Promise(resolve=>{finishPersist=resolve;}),isCurrent:()=>current,discard:async()=>{discarded++;},publish:value=>{shown=value;}});
+ current=false;finishPersist(['stale scenario']);assert.equal(await pending,false);assert.equal(shown,null);assert.equal(discarded,1);
+ const scope=provisionalSparkValidityScope({frame:{frameId:'frozen-42',observedAt:1200},gaze:{x:.25,y:.75,sampleAtMs:1230}});
+ assert.match(scope,/frozen-42/);assert.match(scope,/현재 장면\/시선 재사용 불가/);assert.match(scope,/물리적 시간 정렬 미검증/);
+});
 
 test('provisional gaze selector admits only a fresh post-freeze capture estimate inside the canvas',()=>{
   const selected=selectFrozenSceneGaze({sample,frame,canvasRect:rect,frozenAtMs:1000,stableAfterMs:1500,nowMs:1700});
