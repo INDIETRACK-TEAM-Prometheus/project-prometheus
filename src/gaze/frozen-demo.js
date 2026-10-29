@@ -2,12 +2,17 @@ const finite = value => Number.isFinite(value);
 
 export function createFrozenGazeAutomation({run, now=()=>performance.now(), setTimer=setTimeout, clearTimer=clearTimeout, intervalMs=5000}={}) {
   if(typeof run!=='function'||typeof now!=='function'||typeof setTimer!=='function'||typeof clearTimer!=='function'||!finite(intervalMs)||intervalMs<=0) throw new TypeError('invalid frozen gaze automation');
-  let active=false,timer=null,generation=0,lastRunAt=-Infinity;
+  let active=false,timer=null,generation=0,lastRunAt=-Infinity,running=false;
   function schedule(token) {
-    if(!active||token!==generation)return;
+    if(!active||token!==generation||running||timer!==null)return;
     const current=now();if(!finite(current)){active=false;return;}
     const delay=Number.isFinite(lastRunAt)?Math.max(0,lastRunAt+intervalMs-current):0;
-    timer=setTimer(()=>{timer=null;if(!active||token!==generation)return;lastRunAt=now();let result;try{result=run();}catch{schedule(token);return;}if(result&&typeof result.then==='function')Promise.resolve(result).then(()=>schedule(token),()=>schedule(token));else schedule(token);},delay);
+    timer=setTimer(async()=>{
+      timer=null;if(!active||token!==generation)return;
+      lastRunAt=now();running=true;
+      try{await run();}catch{}
+      finally{running=false;if(active)schedule(generation);}
+    },delay);
   }
   return {
     start(){if(active)return false;active=true;schedule(++generation);return true;},
