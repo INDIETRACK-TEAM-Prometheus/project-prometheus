@@ -19,6 +19,8 @@ test('provisional gaze selector admits only a fresh post-freeze capture estimate
     [{sample:{...sample,processedMs:1600},nowMs:1701},'sample_stale_or_lagged'],
     [{sample:{...sample,rawScreenXY:{x:10,y:10}}},'gaze_outside_frozen_scene']
   ]) assert.equal(selectFrozenSceneGaze({sample,frame,canvasRect:rect,frozenAtMs:1000,stableAfterMs:1500,nowMs:1700,...input}).reason,reason);
+  const uncalibrated={...sample,valid:false,rawScreenXY:null,invalidReason:'calibration_required'};
+  assert.equal(selectFrozenSceneGaze({sample:uncalibrated,frame,canvasRect:rect,frozenAtMs:1000,stableAfterMs:1500,nowMs:1700}).reason,'capture_estimate_required');
 });
 
 test('gaze-point SAM request and displayed mask stay attached to the exact frozen framebuffer',async()=>{

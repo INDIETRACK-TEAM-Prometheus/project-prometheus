@@ -11,13 +11,13 @@ test('frozen gaze automation runs no more than once per interval and stops clean
  automation.stop();await advance(10000);assert.deepEqual(calls,[0,5000]);assert.equal(automation.status().active,false);assert.equal(automation.status().timerPending,false);
 });
 
-test('async runs stay serialized and keep the minimum interval between starts',async()=>{
+test('async runs stay serialized and wait a full interval after completion',async()=>{
  let now=0,nextId=0,finish;const timers=new Map(),calls=[];
  const automation=createFrozenGazeAutomation({run:()=>{calls.push(now);if(calls.length===1)return new Promise(resolve=>finish=resolve);},now:()=>now,intervalMs:5000,setTimer:(fn,delay)=>{const id=++nextId;timers.set(id,{fn,due:now+delay});return id;},clearTimer:id=>timers.delete(id)});
  const advance=async to=>{now=to;for(const [id,timer] of [...timers])if(timer.due<=now){timers.delete(id);timer.fn();}await Promise.resolve();await Promise.resolve();};
  automation.start();await advance(0);assert.deepEqual(calls,[0]);
  await advance(4999);assert.deepEqual(calls,[0]);finish();await Promise.resolve();await Promise.resolve();
- await advance(4999);assert.deepEqual(calls,[0]);await advance(5000);assert.deepEqual(calls,[0,5000]);
+ await advance(9998);assert.deepEqual(calls,[0]);await advance(9999);assert.deepEqual(calls,[0,9999]);
  automation.stop();
 });
 
@@ -26,6 +26,6 @@ test('stop and restart do not overlap an unfinished run or reset its interval',a
  const automation=createFrozenGazeAutomation({run:()=>{calls.push(now);if(calls.length===1)return new Promise(resolve=>finish=resolve);},now:()=>now,intervalMs:5000,setTimer:(fn,delay)=>{const id=++nextId;timers.set(id,{fn,due:now+delay});return id;},clearTimer:id=>timers.delete(id)});
  const advance=async to=>{now=to;for(const [id,timer] of [...timers])if(timer.due<=now){timers.delete(id);timer.fn();}await Promise.resolve();await Promise.resolve();};
  automation.start();await advance(0);automation.stop();automation.start();await advance(4999);assert.deepEqual(calls,[0]);
- finish();await Promise.resolve();await Promise.resolve();await advance(4999);assert.deepEqual(calls,[0]);await advance(5000);assert.deepEqual(calls,[0,5000]);
+ finish();await Promise.resolve();await Promise.resolve();await advance(9998);assert.deepEqual(calls,[0]);await advance(9999);assert.deepEqual(calls,[0,9999]);
  automation.stop();
 });

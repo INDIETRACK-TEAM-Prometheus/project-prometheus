@@ -9,9 +9,9 @@ export function createFrozenGazeAutomation({run, now=()=>performance.now(), setT
     const delay=Number.isFinite(lastRunAt)?Math.max(0,lastRunAt+intervalMs-current):0;
     timer=setTimer(async()=>{
       timer=null;if(!active||token!==generation)return;
-      lastRunAt=now();running=true;
+      running=true;
       try{await run();}catch{}
-      finally{running=false;if(active)schedule(generation);}
+      finally{lastRunAt=now();running=false;if(active)schedule(generation);}
     },delay);
   }
   return {
