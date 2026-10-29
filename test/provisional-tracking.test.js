@@ -39,14 +39,41 @@ test('persists only provisional summaries and restores them after restart until 
   assert.equal(await storage.load('provisional-tracking:local-research'),null);
 });
 
-test('requires explicit consent and rejects calibrated samples without writing anything',async()=>{
+test('requires explicit consent and rejects malformed gaze samples without writing anything',async()=>{
   const storage=sharedStorage(),exclusive=locks(),options={sessionId:'local-research',storage,locks:exclusive};
   await assert.rejects(ProvisionalTrackingStore.open(options),/consent/);
   const store=await ProvisionalTrackingStore.open({...options,retentionConsent:true});
-  await assert.rejects(store.appendDemoResult({...validInput(),gazeTiming:{...validInput().gazeTiming,estimateStatus:'validated_calibration_estimate'}}),/uncalibrated/);
+  await assert.rejects(store.appendDemoResult({...validInput(),gazeTiming:{...validInput().gazeTiming,estimateStatus:'unknown'}}),/gaze estimate/);
   assert.deepEqual(await store.list(),[]);
   await store.close();
   assert.equal(await storage.load('provisional-tracking:local-research'),null);
+});
+
+test('calibrated gaze demo remains explicitly provisional while preserving its calibration label',async()=>{
+  const storage=sharedStorage(),exclusive=locks(),options={sessionId:'local-research',retentionConsent:true,storage,locks:exclusive};
+  const store=await ProvisionalTrackingStore.open(options);
+  const calibrated=await store.appendDemoResult({...validInput(),gazeTiming:{sampleAtMs:110,processedAtMs:120,timestampKind:'browser_capture_estimate',estimateStatus:'validated_calibration_estimate'},scenarios:[],sparkStatus:'pending'});
+  assert.equal(calibrated.classification,'calibrated_provisional');
+  assert.equal(calibrated.calibrationStatus,'calibrated_estimate');
+  assert.equal(calibrated.timingStatus,'provisional');
+  await store.close();
+  const restored=await ProvisionalTrackingStore.open(options);
+  assert.equal((await restored.list())[0].gaze.estimateStatus,'validated_calibration_estimate');
+  await restored.close({remove:true});
+});
+
+test('SAM summaries survive Spark failure and Spark outcomes update the same record',async()=>{
+  const storage=sharedStorage(),exclusive=locks(),options={sessionId:'local-research',retentionConsent:true,storage,locks:exclusive};
+  const store=await ProvisionalTrackingStore.open(options);
+  const samRecord=await store.appendDemoResult({...validInput(),scenarios:[],sparkStatus:'pending'});
+  await store.updateSparkResult(samRecord.id,{status:'failed'});
+  assert.equal((await store.list())[0].sam.maskCount,1);
+  assert.equal((await store.list())[0].spark.status,'failed');
+  await store.close();
+  const restored=await ProvisionalTrackingStore.open(options);
+  assert.equal((await restored.list())[0].spark.status,'failed');
+  assert.equal((await restored.list())[0].sam.bounds[0].left,1);
+  await restored.close({remove:true});
 });
 
 test('exclusive lock prevents a second writer and standalone deletion removes the persistent slot',async()=>{
