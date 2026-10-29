@@ -5,6 +5,7 @@ import {ClockDriftMonitor} from '../runtime/clock.js';
 // local or explicitly approved URLs and the import function; no default CDN.
 export function createWebcamGazeController({video, mediaDevices, loadVision, wasmRoot, modelAssetPath, onSample = () => {}, onError = () => {}, blinkThreshold = .5}) {
   if (!video || !mediaDevices?.getUserMedia || typeof loadVision !== 'function' || !wasmRoot || !modelAssetPath) throw new Error('video, mediaDevices, loader, wasmRoot and modelAssetPath required');
+  if (!Number.isFinite(blinkThreshold) || blinkThreshold < 0 || blinkThreshold > 1) throw new Error('blink threshold must be between 0 and 1');
   let stream = null, landmarker = null, running = false, generation = 0, callbackId = null, model = null, timing = null, clockMonitor = null, lastTime = -1, lastTimestamp = -1, starting = false;
   const dispose = () => { if (callbackId !== null && video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(callbackId); callbackId = null; stream?.getTracks().forEach(t => t.stop()); stream = null; landmarker?.close(); landmarker = null; video.srcObject = null; };
   const schedule = token => { if (running && token === generation) callbackId = video.requestVideoFrameCallback((now, metadata) => processFrame(token, now, metadata)); };
@@ -25,12 +26,17 @@ export function createWebcamGazeController({video, mediaDevices, loadVision, was
         const inferenceMs=performance.now()-inferenceStart;
         const landmarks = result.faceLandmarks?.[0];
         const shape = result.faceBlendshapes?.[0]?.categories ?? [];
-        const score = name => shape.find(s => s.categoryName === name)?.score ?? null;
+        const score = name => { const value=shape.find(s => s.categoryName === name)?.score; return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null; };
         const width = video.videoWidth, height = video.videoHeight;
         const pixel = i => { const p = landmarks?.[i]; return p && Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 ? {x:p.x*width,y:p.y*height} : null; };
         function eye(corners, iris, blinkName) {
-          const a = pixel(corners[0]), b = pixel(corners[1]), points = iris.map(pixel), blinkScore = score(blinkName);
-          if (!a || !b || points.some(p => !p) || Math.hypot(b.x-a.x,b.y-a.y) < 1) return {valid:false, reason:'landmarks_unavailable', confidence:null, blinkScore};
+          const indices=[...corners,...iris], sourcePoints=indices.map(i=>landmarks?.[i]), a = pixel(corners[0]), b = pixel(corners[1]), points = iris.map(pixel), blinkScore = score(blinkName);
+          if (!a || !b || points.some(p => !p)) return {valid:false, reason:'landmarks_unavailable', confidence:null, blinkScore};
+          const invalidQuality=sourcePoints.some(p=>['visibility','presence'].some(k=>p?.[k]!=null&&(!Number.isFinite(p[k])||p[k]<0||p[k]>1)));
+          if(invalidQuality)return {valid:false,reason:'landmark_quality_invalid',confidence:null,blinkScore};
+          if(sourcePoints.some(p=>['visibility','presence'].some(k=>Number.isFinite(p?.[k])&&p[k]<.5)))return {valid:false,reason:'landmark_visibility_low',confidence:null,blinkScore};
+          const eyeSpan=Math.hypot(b.x-a.x,b.y-a.y),irisSpan=Math.max(...points.flatMap((p,i)=>points.slice(i+1).map(q=>Math.hypot(p.x-q.x,p.y-q.y))));
+          if(eyeSpan<4||irisSpan<1)return {valid:false,reason:'landmarks_degenerate',confidence:null,blinkScore};
           const center = {x:points.reduce((n,p)=>n+p.x,0)/points.length, y:points.reduce((n,p)=>n+p.y,0)/points.length};
           const crop = eyeCrop(a,b,{x:0,y:0,width,height});
           return {valid:!!crop && blinkScore !== null && blinkScore < blinkThreshold, reason:blinkScore === null ? 'blink_unknown' : blinkScore >= blinkThreshold ? 'blink' : crop ? null : 'crop_unavailable', confidence:null, blinkScore, corners:[a,b], iris:center, crop};

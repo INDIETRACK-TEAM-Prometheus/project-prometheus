@@ -16,7 +16,7 @@ test('server serves only explicit integration modules and rejects unknown paths'
 test('application wiring rejects unaligned samples and leaves provider integration blocked',async()=>{
   const memory=await MemoryService.open({sessionId:'wiring',now:0});
   const runtime=new RuntimeFacade({sessionId:'wiring',now:()=>100});
-  const controller={start:async options=>{assert.deepEqual(options,{userInitiated:true,cameraConsent:true});return {width:640};},stop(){}};
+  const controller={start:async options=>{assert.deepEqual(options,{userInitiated:true,cameraConsent:true,videoConstraints:{width:{ideal:1280},height:{ideal:720}}});return {width:640};},stop(){}};
   const app=createCoordinator({controller,memory,runtime});
   assert.equal((await app.start()).started,true);
   assert.equal((await app.acceptSample({valid:true,viewportXY:{x:.5,y:.5},timestampMs:10,sceneAssociationEligible:true,timestampKind:'browser_capture_estimate',syncUncertaintyMs:1},{frameId:'f',presentTsEstimateMs:null})).reason,'alignment_unavailable');

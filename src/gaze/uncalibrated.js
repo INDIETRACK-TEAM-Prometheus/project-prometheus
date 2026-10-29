@@ -13,13 +13,14 @@ function irisOffset(eye) {
 // A demo-only heuristic: it uses iris position relative to the eye corners,
 // with arbitrary gains; it is not a calibrated or accuracy-validated gaze model.
 export function estimateUncalibratedGaze({leftEye, rightEye} = {}) {
-  const left = irisOffset(leftEye), right = irisOffset(rightEye);
-  if (!left || !right) return {status:'unavailable', calibrationStatus:'uncalibrated', reason:'both_eye_iris_landmarks_required', point:null};
-  const feature = {x:(left.x + right.x) / 2, y:(left.y + right.y) / 2};
+  const observations=[['left',irisOffset(leftEye)],['right',irisOffset(rightEye)]].filter(([,offset])=>offset);
+  if (!observations.length) return {status:'unavailable', calibrationStatus:'uncalibrated', reason:'visible_eye_iris_landmarks_required', point:null};
+  const feature = {x:observations.reduce((sum,[,offset])=>sum+offset.x,0)/observations.length, y:observations.reduce((sum,[,offset])=>sum+offset.y,0)/observations.length};
   return {
     status:'uncalibrated_estimate',
     calibrationStatus:'uncalibrated',
-    method:'iris_relative_to_eye_corners',
+    method:observations.length===1?'single_eye_iris_relative_to_eye_corners':'iris_relative_to_eye_corners',
+    eyesUsed:observations.map(([side])=>side),
     feature,
     // Raw front-camera x runs opposite to viewer screen x; fitted calibration learns its own direction.
     point:{x:clamp(.5 - 2 * feature.x), y:clamp(.5 + 4 * feature.y)}
@@ -42,6 +43,8 @@ export function selectProvisionalIrisGaze({estimate, sample, frame, canvasRect, 
   return {
     status:'ready',
     calibrationStatus:'uncalibrated',
+    method:estimate.method,
+    eyesUsed:estimate.eyesUsed,
     frameId:frame.frameId,
     point:{x:(screenPoint.x-canvasRect.left)/canvasRect.width,y:(screenPoint.y-canvasRect.top)/canvasRect.height},
     sampleAtMs:sample.timestampMs,
