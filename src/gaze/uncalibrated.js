@@ -21,7 +21,8 @@ export function estimateUncalibratedGaze({leftEye, rightEye} = {}) {
     calibrationStatus:'uncalibrated',
     method:'iris_relative_to_eye_corners',
     feature,
-    point:{x:clamp(.5 + 2 * feature.x), y:clamp(.5 + 4 * feature.y)}
+    // Raw front-camera x runs opposite to viewer screen x; fitted calibration learns its own direction.
+    point:{x:clamp(.5 - 2 * feature.x), y:clamp(.5 + 4 * feature.y)}
   };
 }
 

@@ -14,6 +14,13 @@ test('calibration predicts independent points and reports normalized validation 
   assert.equal(calibrationMetrics(model, training,{x:0,y:0,width:1000,height:500},{independent:false}).validCount,4);
   assert.throws(() => fitCalibration(training.map(s => ({...s,features:[1,1]}))),/degenerate/);
 });
+
+test('calibrated mapping keeps the screen direction learned from its targets',()=>{
+  const samples=[-1,-.5,0,.5,1].map((x,i)=>({id:`mirror-${i}`,features:[x],target:{x:500-100*x,y:300}}));
+  const model=fitCalibration(samples);
+  assert.ok(predictCalibration(model,[.5]).x<500);
+  assert.ok(predictCalibration(model,[-.5]).x>500);
+});
 test('window offsets and diagnostic panel do not become world gaze', () => {
   const screen={x:0,y:0,width:1920,height:1080}, app={x:100,y:50,width:1000,height:700}, world={x:0,y:0,width:700,height:700};
   const a=mapCoordinates({x:450,y:400},screen,app,world);

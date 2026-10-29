@@ -17,8 +17,15 @@ test('estimate responds to iris movement relative to both eye corners',()=>{
   const result=estimateUncalibratedGaze({leftEye:eye(.1,.05),rightEye:eye(.2,.1)});
   assert.ok(Math.abs(result.feature.x-.15)<1e-12);
   assert.ok(Math.abs(result.feature.y-.075)<1e-12);
-  assert.ok(Math.abs(result.point.x-.8)<1e-12);
+  assert.ok(Math.abs(result.point.x-.2)<1e-12);
   assert.ok(Math.abs(result.point.y-.8)<1e-12);
+});
+
+test('raw-camera horizontal iris movement maps to the opposite screen direction',()=>{
+  const cameraRight=estimateUncalibratedGaze({leftEye:eye(.1,0),rightEye:eye(.1,0)});
+  const cameraLeft=estimateUncalibratedGaze({leftEye:eye(-.1,0),rightEye:eye(-.1,0)});
+  assert.ok(cameraRight.point.x<.5);
+  assert.ok(cameraLeft.point.x>.5);
 });
 
 test('missing, blink-invalid or malformed iris landmarks are withheld',()=>{
