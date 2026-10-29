@@ -39,7 +39,7 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
   let inFlight = 0;
   return http.createServer(async (req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
-    if (['/api/sam/segment','/api/analyze','/api/reason'].includes(pathname) && req.method === 'POST') {
+    if (['/api/sam/segment','/api/analyze','/api/reason','/api/reason-provisional'].includes(pathname) && req.method === 'POST') {
       if (!localRequest(req)) { json(res, 403, {error:'forbidden'}); req.resume(); return; }
       if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type'] || '')) { json(res, 415, {error:'unsupported_media_type'}); req.resume(); return; }
       const length = req.headers['content-length'];
@@ -53,6 +53,18 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
         let size = 0, chunks = [];
         for await (const chunk of req) { size += chunk.length; if (size > maxBody) { json(res,413,{error:'request_too_large'}); req.resume(); return; } chunks.push(chunk); }
         let input; try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { json(res,400,{error:'invalid_request'}); return; }
+        if (pathname === '/api/reason-provisional') {
+          const exact=(value,keys)=>value && typeof value==='object' && !Array.isArray(value) && Object.keys(value).sort().join(',')===keys.slice().sort().join(',');
+          const frame=input?.frame, gaze=input?.gazePoint, boxes=input?.masks;
+          const validBoxes=Array.isArray(boxes) && boxes.length<=10 && boxes.every(box=>exact(box,['left','top','right','bottom']) && [box.left,box.top,box.right,box.bottom].every(Number.isInteger) && box.left>=0 && box.top>=0 && box.right<=frame?.width && box.bottom<=frame?.height && box.right>box.left && box.bottom>box.top);
+          if (!exact(input,['consentScope','timingStatus','frame','imageDataUrl','gazePoint','issuedAtMs','masks']) || input.consentScope!=='provisional_spark' || input.timingStatus!=='provisional' || !exact(frame,['frameId','observedAt','width','height']) || typeof frame.frameId!=='string' || !frame.frameId.trim() || frame.frameId.length>128 || !Number.isFinite(frame.observedAt) || frame.observedAt<0 || !Number.isInteger(frame.width) || !Number.isInteger(frame.height) || frame.width<1 || frame.height<1 || frame.width*frame.height>1048576 || !exact(gaze,['x','y','captureAtMs','processedAtMs']) || !Number.isFinite(gaze.x) || gaze.x<0 || gaze.x>=1 || !Number.isFinite(gaze.y) || gaze.y<0 || gaze.y>=1 || !Number.isFinite(gaze.captureAtMs) || gaze.captureAtMs<0 || !Number.isFinite(gaze.processedAtMs) || gaze.processedAtMs<gaze.captureAtMs || !Number.isFinite(input.issuedAtMs) || input.issuedAtMs<Math.max(frame.observedAt,gaze.processedAtMs) || !validBoxes || !validInput({frame:{frameId:frame.frameId,observedAt:frame.observedAt},imageDataUrl:input.imageDataUrl,prompt:'provisional scene'})) { json(res,400,{error:'invalid_request'}); return; }
+          const observedUntil=Math.max(frame.observedAt,gaze.captureAtMs);
+          const evidence=[{id:frame.frameId,kind:'scene',text:JSON.stringify({timingStatus:'provisional',timestampBasis:'browser_estimates',gazePoint:{x:gaze.x,y:gaze.y,captureAtMs:gaze.captureAtMs,processedAtMs:gaze.processedAtMs},sam:{maskCount:boxes.length,bounds:boxes}}),observedAt:frame.observedAt,processedAt:input.issuedAtMs,causalStatus:'provisional'}];
+          const result=await reasoner({timingStatus:'provisional',observedUntil,issuedAt:input.issuedAtMs,evidence,imageDataUrl:input.imageDataUrl,signal:controller.signal});
+          if (!Array.isArray(result.scenarios)) throw new Error('invalid provisional reasoner response');
+          if (!controller.signal.aborted) json(res,200,{timingStatus:'provisional',frame:{frameId:frame.frameId,observedAt:frame.observedAt},scenarios:result.scenarios,reasoner:{provider:result.provider,model:result.model,requestId:result.requestId,latencyMs:result.latencyMs,usage:result.usage,estimatedCostUsd:result.estimatedCostUsd}});
+          return;
+        }
         if (pathname === '/api/analyze' || pathname === '/api/reason') {
           if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).sort().join(',') !== (pathname === '/api/analyze' ? 'input,prompt' : 'input') || !input.input?.frame) { json(res,400,{error:'invalid_request'}); return; }
           let safe;

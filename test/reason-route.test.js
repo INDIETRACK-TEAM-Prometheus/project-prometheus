@@ -27,3 +27,13 @@ test('reason-only endpoint respects explicit gaze-time cutoff while preserving f
  data.observedUntil=105;assert.equal((await post()).status,400);data.observedUntil=110;data.frame.observedAt=111;assert.equal((await post()).status,400);data.frame.observedAt=100;data.context.memory=[{evidenceId:'future',text:'x',observedAt:111,processedAt:120,causalStatus:'online_causal'}];assert.equal((await post()).status,400);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
+
+test('provisional follow-up requires its own scope and never upgrades estimated timing to causal',async()=>{
+ let calls=0,received;const server=createLocalServer({reasoner:async args=>{calls++;received=args;return {scenarios:[scenario],model:'muse-spark-1.3',usage:null,estimatedCostUsd:null};}});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ try {
+  const base=`http://127.0.0.1:${server.address().port}`;const post=value=>fetch(base+'/api/reason-provisional',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(value)});
+  const request={consentScope:'provisional_spark',timingStatus:'provisional',frame:{frameId:'frozen-1',observedAt:100,width:4,height:2},imageDataUrl:'data:image/png;base64,iVBORw0KGgo=',gazePoint:{x:.4,y:.3,captureAtMs:1600,processedAtMs:1650},issuedAtMs:1700,masks:[{left:1,top:0,right:3,bottom:2}]};
+  const response=await post(request);assert.equal(response.status,200);const body=await response.json();assert.equal(body.timingStatus,'provisional');assert.deepEqual(body.scenarios,[scenario]);assert.equal(received.timingStatus,'provisional');assert.equal(received.evidence[0].causalStatus,'provisional');assert.equal(received.imageDataUrl,request.imageDataUrl);assert.deepEqual(JSON.parse(received.evidence[0].text),{timingStatus:'provisional',timestampBasis:'browser_estimates',gazePoint:request.gazePoint,sam:{maskCount:1,bounds:request.masks}});
+  for(const mutate of [value=>delete value.consentScope,value=>value.timingStatus='online_causal',value=>value.issuedAtMs=1600,value=>value.masks[0].right=5]){const invalid=structuredClone(request);mutate(invalid);assert.equal((await post(invalid)).status,400);}assert.equal(calls,1);
+ }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});

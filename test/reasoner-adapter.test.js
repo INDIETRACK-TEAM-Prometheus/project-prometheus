@@ -15,6 +15,15 @@ test('rejects future, noncausal and unlisted input before network', async () => 
   globalThis.fetch=async () => { throw Error('unexpected network'); };
   for (const evidence of [[{...input.evidence[0],observedAt:11}], [{...input.evidence[0],processedAt:13}], [{...input.evidence[0],causalStatus:'offline_assisted'}], [{...input.evidence[0],future:'hidden'}]]) await assert.rejects(reasonScenarios({...input,evidence}),{code:'REASONER_INVALID_INPUT'});
 });
+test('accepts explicitly tagged provisional evidence without presenting it as causal',async()=>{
+ const evidence=[{...input.evidence[0],causalStatus:'provisional'}];let body;
+ globalThis.fetch=async(_url,options)=>{body=JSON.parse(options.body);return reply([]);};
+ const result=await reasonScenarios({...input,evidence,timingStatus:'provisional'});
+ assert.equal(result.timingStatus,'provisional');assert.equal(body.input[0].content.includes('Timing is provisional and unverified'),true);assert.equal(JSON.parse(body.input[1].content).timingStatus,'provisional');
+ globalThis.fetch=async()=>{throw Error('unexpected network');};
+ await assert.rejects(reasonScenarios({...input,evidence}),{code:'REASONER_INVALID_INPUT'});
+ await assert.rejects(reasonScenarios({...input,evidence,timingStatus:'verified'}),{code:'REASONER_INVALID_INPUT'});
+});
 test('rejects unknown grounding, malformed and wrong model; allows abstention', async () => {
   for (const [response,code] of [[reply([{...scenario,grounding_refs:['unknown']}]),'REASONER_GROUNDING_INVALID'],[reply(Array(6).fill(scenario)),'REASONER_JSON_INVALID'],[reply([scenario],{model:'other'}),'REASONER_WRONG_MODEL'],[reply([scenario],{output:[null]}),'REASONER_LANE_INVALID']]) { globalThis.fetch=async()=>response; await assert.rejects(reasonScenarios(input),{code}); }
   globalThis.fetch=async()=>reply([]); assert.deepEqual((await reasonScenarios(input)).scenarios,[]);
