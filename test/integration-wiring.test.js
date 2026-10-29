@@ -8,7 +8,7 @@ import {createLocalServer} from '../server.js';
 test('server serves only explicit integration modules and rejects unknown paths',async()=>{
   const server=createLocalServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   try { const base=`http://127.0.0.1:${server.address().port}`;
-    for(const path of ['/','/src/app.js','/src/gaze/webcam.js','/src/spatial/world.js','/src/memory/index.js','/src/memory/session.js','/src/evaluation/ledger.js','/src/runtime/facade.js','/src/runtime/provider-journal.js']) assert.equal((await fetch(base+path)).status,200,path);
+    for(const path of ['/','/src/app.js','/src/gaze/webcam.js','/src/gaze/overlay.js','/src/spatial/world.js','/src/memory/index.js','/src/memory/session.js','/src/evaluation/ledger.js','/src/runtime/facade.js','/src/runtime/provider-journal.js']) assert.equal((await fetch(base+path)).status,200,path);
     for(const path of ['/README.md','/%2e%2e/server.js','/src/not-listed.js','/vendor/not-allowed.js','/server/reasoner-adapter.js','/server.js','/.env','/data/session.json','/artifacts/result.json']) assert.equal((await fetch(base+path)).status,404,path);
   } finally {await new Promise(resolve=>server.close(resolve));}
 });
