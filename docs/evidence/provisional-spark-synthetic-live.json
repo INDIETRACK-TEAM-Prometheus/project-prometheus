@@ -1,0 +1,11 @@
+{
+  "scenario": "synthetic image with synthetic gaze and synthetic mask bounds",
+  "endpoint": "/api/reason-provisional",
+  "status": "passed",
+  "httpStatus": 200,
+  "timingStatus": "provisional",
+  "model": "muse-spark-1.3",
+  "scenarioCount": 4,
+  "limitations": "Synthetic fixture only; no real gaze, SAM linkage, optical timing, user QA or gate validation.",
+  "completedAtUtc": "2026-10-29T11:01:13.5827370Z"
+}

@@ -12,6 +12,10 @@
 4. 담당자들이 bounded 큐, 종료 drain, glimpse 종료, 시점별 기하, RGB 복사, 주입 시계, revision 선택, 저장 quota, context allowlist·시간 검사 및 근거 검사로 보완했다. 추가 부정 사례 시험을 작성하고 CTO가 전체 테스트를 재실행했다.
 5. 표시 시각·캡처 시계 불확실성은 실측되지 않았으므로 라이브 공간 연결을 보류한다. 임의의 신뢰도를 부여하여 Gate를 통과시키지 않는다.
 
+### 잠정 Spark 합성 실호출
+
+합성 이미지, 합성 시선점과 합성 마스크 경계를 새 `/api/reason-provisional`에 전달해 실제 Spark 응답 HTTP 200, `muse-spark-1.3`, 시나리오 4개 및 `provisional` 표기를 확인했다 (`evidence/provisional-spark-synthetic-live.json`). 이 실험은 SAM 결과 연결, 실제 사람의 시선, 광학 시간 정렬, 사용자 QA를 검증하지 않으므로 Gate 판정은 유지한다.
+
 ## Gate 판정
 
 ### 2026-10-29 SAM point 실호출
