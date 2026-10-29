@@ -26,3 +26,5 @@ footer.session-panel{display:block;margin-top:16px;padding:20px;background:#121d
 footer.session-panel{display:none}
 
 #scenarioStatus,#scenarios,#nextGazeStatus{display:none}
+
+.eyes{display:grid}
