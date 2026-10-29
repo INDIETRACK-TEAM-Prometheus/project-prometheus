@@ -40,3 +40,11 @@ test('provisional follow-up requires its own scope and never upgrades estimated 
   for(const mutate of [value=>delete value.consentScope,value=>value.timingStatus='online_causal',value=>value.issuedAtMs=1600,value=>value.masks[0].right=5,value=>value.gazePoint.timestampKind='capture_time',value=>value.gazePoint.estimateStatus='calibrated']){const invalid=structuredClone(request);mutate(invalid);assert.equal((await post(invalid)).status,400);}assert.equal(calls,3);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
+
+test('provisional Spark failures expose only an allowlisted provider reason',async()=>{
+ const server=createLocalServer({reasoner:async()=>{throw Object.assign(new Error('secret provider key'),{code:'PROVIDER_BUDGET_EXCEEDED'});}});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ try{
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/api/reason-provisional`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({consentScope:'provisional_spark',timingStatus:'provisional',frame:{frameId:'f',observedAt:100,width:4,height:2},imageDataUrl:'data:image/png;base64,iVBORw0KGgo=',gazePoint:{x:.4,y:.3,sampleAtMs:1600,processedAtMs:1650,timestampKind:'browser_capture_estimate',estimateStatus:'uncalibrated_estimate'},issuedAtMs:1700,masks:[]})});
+  const body=await response.json();assert.equal(response.status,429);assert.deepEqual(body,{error:'provider_limited',providerCode:'PROVIDER_BUDGET_EXCEEDED'});assert.equal(JSON.stringify(body).includes('secret'),false);
+ }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});

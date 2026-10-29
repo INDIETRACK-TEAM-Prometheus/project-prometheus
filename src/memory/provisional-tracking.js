@@ -6,6 +6,7 @@ const time = value => Number.isFinite(value) && value >= 0;
 const text = (value, max=2000) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
 const point = (value, size) => Number.isFinite(value) && value >= 0 && value < size;
 const sparkStatuses = ['pending','complete','failed','cancelled','withheld','skipped'];
+const sparkFailureReasons = ['network_error','request_failed','timeout','rate_limited','budget_exceeded','provider_busy','service_unavailable','not_configured','access_denied','incomplete_response','invalid_response','request_rejected','provider_failed'];
 const estimateStatuses = ['uncalibrated_estimate','validated_calibration_estimate'];
 const provisionalClass = estimateStatus => estimateStatus==='uncalibrated_estimate'?'uncalibrated_provisional':'calibrated_provisional';
 const calibrationClass = estimateStatus => estimateStatus==='uncalibrated_estimate'?'uncalibrated':'calibrated_estimate';
@@ -22,7 +23,12 @@ function cleanScenario(value) {
   return {scenario_id,possible_next_action,horizon_ms,grounding_refs:[...grounding_refs],assumptions:[...assumptions],status};
 }
 
-function cleanRecord({frame,gazePoint,gazeTiming,masks,scenarios,sparkStatus='complete',recordedAt}) {
+function cleanSpark({status,scenarios=[],reason}={}) {
+  if (!sparkStatuses.includes(status) || !Array.isArray(scenarios) || scenarios.length>5 || (reason!==undefined && (status!=='failed' || !sparkFailureReasons.includes(reason)))) throw new TypeError('invalid provisional Spark result');
+  return {status,scenarios:scenarios.map(cleanScenario),...(reason===undefined?{}:{reason})};
+}
+
+function cleanRecord({frame,gazePoint,gazeTiming,masks,scenarios,sparkStatus='complete',sparkReason,recordedAt}) {
   if (!text(frame?.frameId,128) || !time(frame.observedAt) || !Number.isInteger(frame.width) || !Number.isInteger(frame.height) || frame.width < 1 || frame.height < 1 || frame.width*frame.height > 1048576) throw new TypeError('invalid provisional frame');
   if (!point(gazePoint?.x,1) || !point(gazePoint?.y,1) || !time(gazeTiming?.sampleAtMs) || !time(gazeTiming?.processedAtMs) || gazeTiming.processedAtMs < gazeTiming.sampleAtMs || !['browser_capture_estimate','callback_time_not_capture'].includes(gazeTiming.timestampKind) || !estimateStatuses.includes(gazeTiming.estimateStatus) || gazeTiming.timestampKind==='callback_time_not_capture'&&gazeTiming.estimateStatus!=='uncalibrated_estimate') throw new TypeError('invalid provisional gaze estimate');
   if (!Array.isArray(masks) || masks.length > 1024 || !Array.isArray(scenarios) || scenarios.length > 5 || !sparkStatuses.includes(sparkStatus) || !time(recordedAt)) throw new TypeError('invalid provisional tracking result');
@@ -35,7 +41,7 @@ function cleanRecord({frame,gazePoint,gazeTiming,masks,scenarios,sparkStatus='co
     frame:{frameId:frame.frameId,observedAt:frame.observedAt,width:frame.width,height:frame.height},
     gaze:{x:gazePoint.x,y:gazePoint.y,sampleAtMs:gazeTiming.sampleAtMs,processedAtMs:gazeTiming.processedAtMs,timestampKind:gazeTiming.timestampKind,estimateStatus:gazeTiming.estimateStatus},
     sam:{maskCount:masks.length,bounds},
-    spark:{status:sparkStatus,scenarios:scenarios.map(cleanScenario)}
+    spark:cleanSpark({status:sparkStatus,scenarios,reason:sparkReason})
   };
 }
 
@@ -44,11 +50,11 @@ function cleanStoredRecord(record) {
   const frame=record.frame, gaze=record.gaze, sam=record.sam, spark=record.spark;
   if (!text(frame?.frameId,128) || !time(frame.observedAt) || !Number.isInteger(frame.width) || !Number.isInteger(frame.height) || frame.width<1 || frame.height<1 || frame.width*frame.height>1048576 || !point(gaze?.x,1) || !point(gaze?.y,1) || !time(gaze.sampleAtMs) || !time(gaze.processedAtMs) || gaze.processedAtMs<gaze.sampleAtMs || !['browser_capture_estimate','callback_time_not_capture'].includes(gaze.timestampKind) || !estimateStatuses.includes(gaze.estimateStatus) || gaze.estimateStatus!== (record.calibrationStatus==='uncalibrated'?'uncalibrated_estimate':'validated_calibration_estimate') || record.classification!==provisionalClass(gaze.estimateStatus) || gaze.timestampKind==='callback_time_not_capture'&&gaze.estimateStatus!=='uncalibrated_estimate' || !Number.isInteger(sam?.maskCount) || sam.maskCount<0 || sam.maskCount>1024 || !Array.isArray(sam.bounds) || sam.bounds.length>10 || !sparkStatuses.includes(spark?.status) || !Array.isArray(spark?.scenarios) || spark.scenarios.length>5) throw new Error('invalid stored provisional tracking record');
   return {
-    id:record.id,classification:'uncalibrated_provisional',timingStatus:'provisional',calibrationStatus:'uncalibrated',recordedAt:record.recordedAt,
+    id:record.id,classification:record.classification,timingStatus:'provisional',calibrationStatus:record.calibrationStatus,recordedAt:record.recordedAt,
     frame:{frameId:frame.frameId,observedAt:frame.observedAt,width:frame.width,height:frame.height},
     gaze:{x:gaze.x,y:gaze.y,sampleAtMs:gaze.sampleAtMs,processedAtMs:gaze.processedAtMs,timestampKind:gaze.timestampKind,estimateStatus:gaze.estimateStatus},
     sam:{maskCount:sam.maskCount,bounds:sam.bounds.map(bound=>cleanBounds(bound,frame))},
-    spark:{status:spark.status,scenarios:spark.scenarios.map(cleanScenario)}
+    spark:cleanSpark(spark)
   };
 }
 
@@ -96,12 +102,12 @@ export class ProvisionalTrackingStore {
     if (this.closed) throw new Error('provisional tracking store closed');
     return clone(this.records);
   }
-  appendDemoResult({frame,gazePoint,gazeTiming,masks,scenarios=[],sparkStatus='complete'}={}, {signal}={}) {
+  appendDemoResult({frame,gazePoint,gazeTiming,masks,scenarios=[],sparkStatus='complete',sparkReason}={}, {signal}={}) {
     if (this.closing || this.closed) return Promise.reject(new Error('provisional tracking store closed'));
     const operation=this.queue.then(async()=>{
       if (this.closed) throw new Error('provisional tracking store closed');
       if (signal?.aborted) throw new Error('operation cancelled');
-      const record={id:`demo-${this.records.length+1}`,...cleanRecord({frame,gazePoint,gazeTiming,masks,scenarios,sparkStatus,recordedAt:this.now()})};
+      const record={id:`demo-${this.records.length+1}`,...cleanRecord({frame,gazePoint,gazeTiming,masks,scenarios,sparkStatus,sparkReason,recordedAt:this.now()})};
       const next=[...this.records,record];
       if (next.length>this.maxRecords) throw new Error('provisional tracking record quota exceeded');
       const snapshot={schemaVersion:1,records:next};
@@ -114,15 +120,15 @@ export class ProvisionalTrackingStore {
     this.queue=operation.catch(()=>{});
     return operation;
   }
-  updateSparkResult(recordId,{status,scenarios=[]}={}) {
+  updateSparkResult(recordId,{status,scenarios=[],reason}={}) {
     if (this.closing || this.closed) return Promise.reject(new Error('provisional tracking store closed'));
-    if (!text(recordId,32) || !sparkStatuses.includes(status) || !Array.isArray(scenarios) || scenarios.length>5) return Promise.reject(new TypeError('invalid provisional Spark result'));
+    if (!text(recordId,32)) return Promise.reject(new TypeError('invalid provisional Spark result'));
     const operation=this.queue.then(async()=>{
       if (this.closed) throw new Error('provisional tracking store closed');
       const index=this.records.findIndex(record=>record.id===recordId);
       if (index<0) throw new Error('provisional SAM result unavailable');
       const next=[...this.records];
-      next[index]={...next[index],spark:{status,scenarios:scenarios.map(cleanScenario)}};
+      next[index]={...next[index],spark:cleanSpark({status,scenarios,reason})};
       const snapshot={schemaVersion:1,records:next};
       if (new TextEncoder().encode(JSON.stringify(snapshot)).byteLength>this.maxSnapshotBytes) throw new Error('provisional tracking snapshot quota exceeded');
       await this.storage.save(this.key,snapshot);

@@ -58,7 +58,10 @@ test('calibrated gaze demo remains explicitly provisional while preserving its c
   assert.equal(calibrated.timingStatus,'provisional');
   await store.close();
   const restored=await ProvisionalTrackingStore.open(options);
-  assert.equal((await restored.list())[0].gaze.estimateStatus,'validated_calibration_estimate');
+  const record=(await restored.list())[0];
+  assert.equal(record.gaze.estimateStatus,'validated_calibration_estimate');
+  assert.equal(record.classification,'calibrated_provisional');
+  assert.equal(record.calibrationStatus,'calibrated_estimate');
   await restored.close({remove:true});
 });
 
@@ -66,12 +69,14 @@ test('SAM summaries survive Spark failure and Spark outcomes update the same rec
   const storage=sharedStorage(),exclusive=locks(),options={sessionId:'local-research',retentionConsent:true,storage,locks:exclusive};
   const store=await ProvisionalTrackingStore.open(options);
   const samRecord=await store.appendDemoResult({...validInput(),scenarios:[],sparkStatus:'pending'});
-  await store.updateSparkResult(samRecord.id,{status:'failed'});
+  await assert.rejects(store.updateSparkResult(samRecord.id,{status:'failed',reason:'provider key: secret'}),/invalid provisional Spark result/);
+  await store.updateSparkResult(samRecord.id,{status:'failed',reason:'budget_exceeded'});
   assert.equal((await store.list())[0].sam.maskCount,1);
   assert.equal((await store.list())[0].spark.status,'failed');
   await store.close();
   const restored=await ProvisionalTrackingStore.open(options);
   assert.equal((await restored.list())[0].spark.status,'failed');
+  assert.equal((await restored.list())[0].spark.reason,'budget_exceeded');
   assert.equal((await restored.list())[0].sam.bounds[0].left,1);
   await restored.close({remove:true});
 });

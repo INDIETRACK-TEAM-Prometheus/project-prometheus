@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {selectFrozenSceneGaze} from '../src/gaze/frozen-demo.js';
-import {gazeSamPrompt,sendProvisionalSparkRequest,provisionalSparkMinIntervalMs} from '../src/app.js';
+import {gazeSamPrompt,sendProvisionalSparkRequest,provisionalSparkMinIntervalMs,provisionalGazeFailureReason} from '../src/app.js';
 import {createSceneDiagnostic,flipRgba} from '../src/spatial/scene-diagnostic.js';
 
 const frame={frameId:'synthetic-42',observedAt:42,width:4,height:2};
@@ -48,6 +48,8 @@ test('provisional Spark follow-up sends the same frame, estimated point and boun
  let callbackPayload;const callback=await sendProvisionalSparkRequest({consent:true,frame,imageDataUrl:'png',gazePoint:selectedPoint(),gazeTiming:{sampleAtMs:1600,processedAtMs:1650,timestampKind:'callback_time_not_capture',estimateStatus:'uncalibrated_estimate'},masks:[],issuedAtMs:1700,fetchImpl:async(url,options)=>{callbackPayload=JSON.parse(options.body);return {ok:true,json:async()=>({timingStatus:'provisional',frame:{frameId:frame.frameId,observedAt:frame.observedAt},scenarios:[]})};}});assert.equal(callback.status,'ok');assert.equal(callbackPayload.gazePoint.timestampKind,'callback_time_not_capture');assert.equal(callbackPayload.gazePoint.sampleAtMs,1600);assert.equal('captureAtMs'in callbackPayload.gazePoint,false);
  let calls=0;const withheld=await sendProvisionalSparkRequest({consent:false,fetchImpl:async()=>{calls++;}});assert.deepEqual(withheld,{status:'withheld',reason:'consent_required'});assert.equal(calls,0);
  const mismatched=await sendProvisionalSparkRequest({consent:true,frame,imageDataUrl:'png',gazePoint:{x:.5,y:.25},gazeTiming:{sampleAtMs:1600,processedAtMs:1650,timestampKind:'browser_capture_estimate',estimateStatus:'uncalibrated_estimate'},masks:[],issuedAtMs:1700,fetchImpl:async()=>({ok:true,json:async()=>({timingStatus:'provisional',frame:{frameId:'other',observedAt:frame.observedAt},scenarios:[]})})});assert.equal(mismatched.status,'failed');
+ const limited=await sendProvisionalSparkRequest({consent:true,frame,imageDataUrl:'png',gazePoint:selectedPoint(),gazeTiming:{sampleAtMs:1600,processedAtMs:1650,timestampKind:'browser_capture_estimate',estimateStatus:'uncalibrated_estimate'},masks:[],issuedAtMs:1700,fetchImpl:async()=>({ok:false,status:429,json:async()=>({error:'provider_limited',providerCode:'PROVIDER_BUDGET_EXCEEDED',secret:'never display'})})});assert.deepEqual(limited,{status:'failed',reason:'budget_exceeded'});
+ assert.equal(provisionalGazeFailureReason({reason:'both_eye_iris_landmarks_required'},'uncalibrated_iris_estimate_required'),'양쪽 눈 홍채 랜드마크 없음');
  const controller=new AbortController();controller.abort();const aborted=await sendProvisionalSparkRequest({consent:true,frame,imageDataUrl:'png',gazePoint:{x:.5,y:.25},gazeTiming:{sampleAtMs:1600,processedAtMs:1650,timestampKind:'browser_capture_estimate',estimateStatus:'uncalibrated_estimate'},masks:[],issuedAtMs:1700,signal:controller.signal,fetchImpl:async()=>{calls++;}});assert.equal(aborted.status,'cancelled');assert.equal(calls,0);
 });
 function selectedPoint(){return {x:.5,y:.25};}
