@@ -16,3 +16,5 @@ footer.session-panel{display:block;margin-top:16px;padding:20px;background:#121d
 .demo-internal{display:none!important}.demo-disclosure{color:#9bb5aa;font-size:11px;line-height:1.5;margin:4px 0}#provisionalSparkStatus,#provisionalSparkScenarios{display:block}
 
 .provisional-history{border-top:1px solid #263735;margin-top:16px;padding-top:12px}.provisional-history h3{font-size:13px;margin:0 0 8px}.provisional-history p,.provisional-history li{font-size:11px;line-height:1.5;color:#9cb2a9;overflow-wrap:anywhere}.provisional-history ul{max-height:220px;overflow:auto;padding-left:18px}.provisional-history li+li{margin-top:8px}.provisional-history li div+div{margin-left:8px}.provisional-history button{margin-top:4px}
+
+.primary-controls #pause{display:inline-flex}.primary-controls #start,.primary-controls #pause,.primary-controls #stop{align-items:center;justify-content:center;font-size:14px;font-weight:700;min-width:90px}
