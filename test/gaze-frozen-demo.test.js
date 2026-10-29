@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {selectFrozenSceneGaze} from '../src/gaze/frozen-demo.js';
-import {gazeSamPrompt} from '../src/app.js';
+import {gazeSamPrompt,sendProvisionalSparkRequest,provisionalSparkMinIntervalMs} from '../src/app.js';
 import {createSceneDiagnostic,flipRgba} from '../src/spatial/scene-diagnostic.js';
 
 const frame={frameId:'synthetic-42',observedAt:42,width:4,height:2};
@@ -38,3 +38,13 @@ test('gaze-point SAM request and displayed mask stay attached to the exact froze
   assert.deepEqual(Object.keys(requestBody).sort(),['frame','imageDataUrl','prompt']);assert.deepEqual(requestBody.frame,{frameId:frame.frameId,observedAt:frame.observedAt});assert.equal(requestBody.prompt,prompt);
   assert.equal(shown.frame.frameId,frame.frameId);assert.deepEqual([...shown.pixels],[...flipRgba(raw,4,2)]);assert.equal(shown.overlay[(0*4+1)*4+3],120);
 });
+
+test('provisional Spark follow-up sends the same frame, estimated point and bounded SAM boxes only with explicit consent',async()=>{
+ const masks=Array.from({length:12},(_,i)=>({bounds:{left:i,top:0,right:i+1,bottom:1}}));let sent;
+ const result=await sendProvisionalSparkRequest({consent:true,frame,imageDataUrl:'data:image/png;base64,iVBORw0KGgo=',gazePoint:selectedPoint(),gazeTiming:{captureAtMs:1600,processedAtMs:1650},masks,issuedAtMs:1700,fetchImpl:async(url,options)=>{sent={url,body:JSON.parse(options.body),signal:options.signal};return {ok:true,json:async()=>({timingStatus:'provisional',frame:{frameId:frame.frameId,observedAt:frame.observedAt},scenarios:[]})};}});
+ assert.equal(result.status,'ok');assert.equal(sent.url,'/api/reason-provisional');assert.equal(sent.body.consentScope,'provisional_spark');assert.equal(sent.body.timingStatus,'provisional');assert.deepEqual(sent.body.frame,frame);assert.equal(sent.body.imageDataUrl,'data:image/png;base64,iVBORw0KGgo=');assert.deepEqual(sent.body.gazePoint,{x:.5,y:.25,captureAtMs:1600,processedAtMs:1650});assert.equal(sent.body.masks.length,10);assert.deepEqual(sent.body.masks[0],masks[0].bounds);assert.equal(provisionalSparkMinIntervalMs,30000);
+ let calls=0;const withheld=await sendProvisionalSparkRequest({consent:false,fetchImpl:async()=>{calls++;}});assert.deepEqual(withheld,{status:'withheld',reason:'consent_required'});assert.equal(calls,0);
+ const mismatched=await sendProvisionalSparkRequest({consent:true,frame,imageDataUrl:'png',gazePoint:{x:.5,y:.25},gazeTiming:{captureAtMs:1600,processedAtMs:1650},masks:[],issuedAtMs:1700,fetchImpl:async()=>({ok:true,json:async()=>({timingStatus:'provisional',frame:{frameId:'other',observedAt:frame.observedAt},scenarios:[]})})});assert.equal(mismatched.status,'failed');
+ const controller=new AbortController();controller.abort();const aborted=await sendProvisionalSparkRequest({consent:true,frame,imageDataUrl:'png',gazePoint:{x:.5,y:.25},gazeTiming:{captureAtMs:1600,processedAtMs:1650},masks:[],issuedAtMs:1700,signal:controller.signal,fetchImpl:async()=>{calls++;}});assert.equal(aborted.status,'cancelled');assert.equal(calls,0);
+});
+function selectedPoint(){return {x:.5,y:.25};}

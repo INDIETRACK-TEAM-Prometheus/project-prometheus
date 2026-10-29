@@ -13,9 +13,10 @@ test('rejects mismatched frames and never displays a cancelled late result',asyn
  pending=runner.run(frame,new Uint8Array(4));await Promise.resolve();assert.equal((await runner.run(frame,new Uint8Array(4))).status,'busy');runner.cancel();finish({frame:{frameId:'f',observedAt:1},masks:[]});assert.equal((await pending).status,'cancelled');assert.equal(displayed,0);
 });
 test('successful response renders only its matching frozen frame',async()=>{
- let rendered;const frame={frameId:'f',observedAt:10,width:1,height:1};
- const runner=createSceneDiagnostic({sampleDepth:f=>({frameId:f.frameId,observedAt:f.observedAt,values:new Float32Array([4]),width:1,height:1}),encode:async()=> 'png',request:async(body)=>{assert.deepEqual(body.frame,{frameId:'f',observedAt:10});return {frame:body.frame,masks:[],provider:'Meta',model:'sam-3.1'};},display:value=>rendered=value});
+ let rendered;const frame={frameId:'f',observedAt:10,width:1,height:1},masks=[];
+ const runner=createSceneDiagnostic({sampleDepth:f=>({frameId:f.frameId,observedAt:f.observedAt,values:new Float32Array([4]),width:1,height:1}),encode:async()=> 'png',request:async(body)=>{assert.deepEqual(body.frame,{frameId:'f',observedAt:10});return {frame:body.frame,masks,provider:'Meta',model:'sam-3.1'};},display:value=>rendered=value});
  assert.equal((await runner.run(frame,Uint8Array.from([1,2,3,4]))).status,'ok');assert.deepEqual(rendered.frame,frame);assert.deepEqual([...rendered.pixels],[1,2,3,4]);
+ assert.equal(rendered.imageDataUrl,'png');assert.equal(rendered.masks,masks);
 });
 
 test('unavailable, failing or mismatched depth does not suppress the RGB and mask result',async()=>{
