@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "scenario": "synthetic PNG with synthetic gaze, depth and pose",
+  "inputHashSha256": "3afe0b9eb0fd4a04a52416f56d380e9affae8eb782361f9c309e07885174ac74",
+  "criteria": {
+    "samModel": "sam-3.1",
+    "reasonerModel": "muse-spark-1.3",
+    "minimumBestMaskIoU": 0.8,
+    "requiresStoredObservationAndReferencedMemory": true,
+    "maxGroundedScenarios": 5,
+    "deliveryState": "silent_ready",
+    "submitAfterStop": "stopped",
+    "stopNoStalePublication": "in-flight case separately tested, not verified by this successful real call"
+  },
+  "status": "passed",
+  "result": {
+    "sam": {
+      "model": "sam-3.1",
+      "requestId": "resp_6ae12b7f4caba8a6993e4a7f",
+      "providerLatencyMs": 2256,
+      "maskCount": 1,
+      "bestIoU": 0.999375,
+      "error": null
+    },
+    "reasoner": {
+      "provider": "Meta",
+      "model": "muse-spark-1.3",
+      "requestId": "resp_6ae12b873d559e3d6ca54a2a",
+      "latencyMs": 7628,
+      "usage": {
+        "inputTokens": 670,
+        "outputTokens": 1528,
+        "cachedInputTokens": 0
+      },
+      "estimatedCostUsd": 0.0073315
+    },
+    "reasonerError": null,
+    "observationCount": 1,
+    "retrievedObservationIds": [
+      "synthetic-perception-frame:0"
+    ],
+    "memoryReferencePresent": true,
+    "scenarioCount": 3,
+    "outcome": "scenarios",
+    "deliveryState": "silent_ready",
+    "runtimeError": null,
+    "perceptionError": null,
+    "elapsedMs": 10242,
+    "submitAfterStop": "stopped",
+    "inFlightStopTest": "not_evaluated"
+  },
+  "finishedAtUtc": "2026-10-27T22:53:59.375Z"
+}

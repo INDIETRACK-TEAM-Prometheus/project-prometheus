@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "description": "Synthetic red-square scene and synthetic gaze; mask summary from a prior actual SAM 3.1 call.",
+  "startedAtUtc": "2026-10-27T06:08:17.521Z",
+  "entitlement": {
+    "httpStatus": 200,
+    "exactModelPresent": false
+  },
+  "status": "blocked",
+  "errorCode": "WONDER_MODEL_UNAVAILABLE",
+  "finishedAtUtc": "2026-10-27T06:08:18.386Z"
+}

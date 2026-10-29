@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "description": "Synthetic image and synthetic gaze through local SAM and Spark pipeline",
+  "startedAtUtc": "2026-10-27T13:33:12.555Z",
+  "inputSha256": "bc7e5b80e3b31c0708a2b1562a4d68369706934028ae55f119974c92837b74c5",
+  "criteria": {
+    "samModel": "sam-3.1",
+    "reasonerModel": "muse-spark-1.3",
+    "maxScenarios": 5,
+    "groundingEvidenceIds": [
+      "synthetic-frame",
+      "synthetic-event",
+      "synthetic-memory"
+    ]
+  },
+  "status": "passed",
+  "syntheticInput": {
+    "gaze": {
+      "x": 0.28,
+      "y": 0.34,
+      "observedAt": 1000,
+      "processedAt": 1001
+    },
+    "events": [
+      {
+        "eventId": "synthetic-event",
+        "type": "fixated",
+        "observedAt": 800,
+        "endAt": 990,
+        "dwellValidMs": 190,
+        "x": 0.28,
+        "y": 0.34,
+        "processedAt": 1001
+      }
+    ],
+    "memory": [
+      {
+        "evidenceId": "synthetic-memory",
+        "text": "Earlier, the gaze crossed the left side of this scene.",
+        "observedAt": 600,
+        "processedAt": 700,
+        "causalStatus": "online_causal"
+      }
+    ],
+    "prompt": "red square",
+    "imageIncluded": true
+  },
+  "httpStatus": 200,
+  "latencyMs": 15094,
+  "scenarioGenerationDemonstrated": true,
+  "result": {
+    "frame": {
+      "frameId": "synthetic-frame",
+      "observedAt": 1000
+    },
+    "sam": {
+      "provider": "Meta",
+      "model": "sam-3.1",
+      "requestId": "resp_6ae0a81eb8312b75814640aa",
+      "latencyMs": 6353,
+      "parserVersion": "0.1.0",
+      "maskCount": 1,
+      "bounds": [
+        {
+          "left": 32,
+          "top": 48,
+          "right": 112,
+          "bottom": 128
+        }
+      ]
+    },
+    "reasoner": {
+      "provider": "Meta",
+      "model": "muse-spark-1.3",
+      "requestId": "resp_6ae0a8275f9a20b11e3040f1",
+      "latencyMs": 8715
+    },
+    "scenarios": [
+      {
+        "assumptions": [
+          "Gaze coordinate frame remains comparable"
+        ],
+        "grounding_refs": [
+          "synthetic-frame",
+          "synthetic-event"
+        ],
+        "horizon_ms": 2000,
+        "possible_next_action": "Could continue dwelling near x 0.28 y 0.34",
+        "scenario_id": "s1",
+        "status": "active"
+      },
+      {
+        "assumptions": [
+          "Segmentation remains valid"
+        ],
+        "grounding_refs": [
+          "synthetic-frame"
+        ],
+        "horizon_ms": 3000,
+        "possible_next_action": "Could re-examine single segmented region at bounds 32,48,112,128",
+        "scenario_id": "s2",
+        "status": "active"
+      },
+      {
+        "assumptions": [
+          "Earlier left-side crossing context still applies"
+        ],
+        "grounding_refs": [
+          "synthetic-event",
+          "synthetic-memory"
+        ],
+        "horizon_ms": 5000,
+        "possible_next_action": "Could shift gaze after fixation ending at 990 with 190ms dwell",
+        "scenario_id": "s3",
+        "status": "active"
+      }
+    ]
+  },
+  "finishedAtUtc": "2026-10-27T13:33:27.699Z"
+}

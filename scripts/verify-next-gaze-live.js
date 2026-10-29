@@ -1,0 +1,8 @@
+import {open} from 'node:fs/promises';
+import {reasonScenarios} from '../server/reasoner-adapter.js';
+import {makeScene} from './sam-scene.js';
+const file=await open('docs/evidence/next-gaze-spark-live-v2.json','wx');
+const started=performance.now(); const result={status:'started',synthetic:true,model:'muse-spark-1.3',horizonMs:1000};
+try {const scene=makeScene(); const output=await reasonScenarios({imageDataUrl:`data:image/png;base64,${scene.png.toString('base64')}`,observedUntil:1000,issuedAt:1001,horizonMs:1000,evidence:[{id:'frame',kind:'scene',text:'Synthetic scene with red square and blue circle.',observedAt:1000,processedAt:1001,causalStatus:'online_causal'},{id:'gaze',kind:'gaze',text:'Synthetic gaze previously on red square.',observedAt:990,processedAt:1001,causalStatus:'online_causal'}],candidates:[{objectId:'red',bounds:{left:32,top:48,right:112,bottom:128}},{objectId:'blue',bounds:{left:150,top:54,right:222,bottom:126}}]});Object.assign(result,{status:'completed',model:output.model,latencyMs:output.latencyMs,scenarioCount:output.scenarios.length,rankingCount:output.nextGaze.rankedTargetIds.length,ranking:output.nextGaze.rankedTargetIds,estimatedCostUsd:output.estimatedCostUsd,usage:output.usage});} catch(error) {result.status='failed';if(error?.diagnostic)result.diagnostic=error.diagnostic;result.errorCode=typeof error?.code==='string'&&/^[A-Z0-9_]{1,80}$/.test(error.code)?error.code:'PROBE_FAILED';}
+result.elapsedMs=Math.round(performance.now()-started);result.finishedAtUtc=new Date().toISOString();await file.writeFile(JSON.stringify(result,null,2)+'\n');await file.close();console.log(JSON.stringify(result));if(result.status!=='completed')process.exitCode=1;
+

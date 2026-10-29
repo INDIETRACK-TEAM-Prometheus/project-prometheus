@@ -1,0 +1,109 @@
+import http from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { segmentSam } from './server/sam-adapter.js';
+import { reasonScenarios } from './server/reasoner-adapter.js';
+import { project } from './src/runtime/facade.js';
+import { validateNextGaze } from './src/runtime/next-gaze.js';
+
+const root = path.dirname(fileURLToPath(import.meta.url));
+const files = new Map([['/', ['index.html', 'text/html; charset=utf-8']], ['/style.css', ['style.css', 'text/css; charset=utf-8']]]);
+for (const file of ['app.js','core.js','gaze/index.js','gaze/webcam.js','gaze/frozen-demo.js','spatial/world.js','spatial/geometry.js','spatial/tracker.js','spatial/scene-diagnostic.js','memory/index.js','memory/session.js','evaluation/ledger.js','runtime/facade.js','runtime/perception.js','runtime/exploration.js','runtime/server-providers.js','runtime/provider-journal.js','runtime/cache.js','runtime/clock.js','runtime/contracts.js','runtime/next-gaze.js','runtime/scheduler.js']) files.set(`/src/${file}`, [`src/${file}`, 'text/javascript; charset=utf-8']);
+// Optional user-provided local assets. Never proxy arbitrary URLs or expose paths.
+for (const [name,type] of [['vision_bundle.mjs','text/javascript; charset=utf-8'],['vision_wasm_internal.js','text/javascript; charset=utf-8'],['vision_wasm_internal.wasm','application/wasm'],['vision_wasm_nosimd_internal.js','text/javascript; charset=utf-8'],['vision_wasm_nosimd_internal.wasm','application/wasm'],['face_landmarker.task','application/octet-stream']]) files.set(`/vendor/${name}`,[`vendor/${name}`,type]);
+const maxBody = 8 * 1024 * 1024;
+const loopback = address => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address);
+function json(res, status, body) {
+  if (!res.destroyed && !res.writableEnded) { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}); res.end(JSON.stringify(body)); }
+}
+function localRequest(req) {
+  if (!loopback(req.socket.remoteAddress) || !loopback(req.socket.localAddress)) return false;
+  const host = req.headers.host;
+  const port = req.socket.localPort;
+  if (!['127.0.0.1', 'localhost', '[::1]'].some(h => host === `${h}:${port}`)) return false;
+  if (req.headers.origin && req.headers.origin !== `http://${host}`) return false;
+  return !req.headers['sec-fetch-site'] || ['same-origin','none'].includes(req.headers['sec-fetch-site']);
+}
+function validInput(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k=>!['frame','imageDataUrl','prompt'].includes(k))) return false;
+  const f = value.frame;
+  if (!f || typeof f !== 'object' || Array.isArray(f) || Object.keys(f).sort().join(',') !== 'frameId,observedAt' || typeof f.frameId !== 'string' || !f.frameId.trim() || f.frameId.length > 128 || !Number.isFinite(f.observedAt) || f.observedAt < 0) return false;
+  if (typeof value.prompt !== 'string' || !value.prompt.trim() || value.prompt.length > 256 || typeof value.imageDataUrl !== 'string') return false;
+  const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value.imageDataUrl);
+  if (!match || match[2].length % 4 || Buffer.from(match[2], 'base64').toString('base64') !== match[2]) return false;
+  const bytes = Buffer.from(match[2], 'base64');
+  return match[1] === 'png' ? bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) : bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+}
+export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000} = {}) {
+  let inFlight = 0;
+  return http.createServer(async (req, res) => {
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+    if (['/api/sam/segment','/api/analyze','/api/reason'].includes(pathname) && req.method === 'POST') {
+      if (!localRequest(req)) { json(res, 403, {error:'forbidden'}); req.resume(); return; }
+      if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type'] || '')) { json(res, 415, {error:'unsupported_media_type'}); req.resume(); return; }
+      const length = req.headers['content-length'];
+      if (length && (!/^\d+$/.test(length) || Number(length) > maxBody)) { json(res, 413, {error:'request_too_large'}); req.resume(); return; }
+      if (inFlight >= 2) { json(res, 429, {error:'busy'}); req.resume(); return; }
+      inFlight++;
+      const controller = new AbortController();
+      const timer = setTimeout(() => { controller.abort(); json(res,504,{error:'timeout'}); req.resume(); }, pathname !== '/api/sam/segment' ? 100000 : samTimeoutMs);
+      res.on('close', () => { if (!res.writableEnded) controller.abort(); });
+      try {
+        let size = 0, chunks = [];
+        for await (const chunk of req) { size += chunk.length; if (size > maxBody) { json(res,413,{error:'request_too_large'}); req.resume(); return; } chunks.push(chunk); }
+        let input; try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { json(res,400,{error:'invalid_request'}); return; }
+        if (pathname === '/api/analyze' || pathname === '/api/reason') {
+          if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).sort().join(',') !== (pathname === '/api/analyze' ? 'input,prompt' : 'input') || !input.input?.frame) { json(res,400,{error:'invalid_request'}); return; }
+          let safe;
+          try {
+            const source = input.input;
+            const times = [source.frame.processedAt, source.gaze?.processedAt, ...(source.events || []).map(e=>e.processedAt), ...(source.context?.memory || []).map(m=>m.processedAt)];
+            const issuedAt = Math.max(...times);
+            safe = project(source, issuedAt);
+            if (safe.frame.causalStatus !== 'online_causal' || !['synthetic','sensor'].includes(safe.frame.provenanceKind) || !validInput({frame:{frameId:safe.frame.frameId,observedAt:safe.frame.observedAt},imageDataUrl:safe.frame.imageData,prompt:pathname === '/api/analyze' ? input.prompt : 'scene'})) throw new Error();
+            const evidenceItems = [...safe.events.filter(e=>safe.dependencies.evidenceIds.includes(e.eventId)).map(e=>e.eventId),...safe.context.memory.filter(m=>safe.dependencies.evidenceIds.includes(m.evidenceId)).map(m=>m.evidenceId),...(safe.dependencies.evidenceIds.includes(safe.frame.frameId)?[safe.frame.frameId]:[])];
+            if (evidenceItems.length > 100 || new Set(evidenceItems).size !== evidenceItems.length || evidenceItems.some(id=>id.length>128) || (safe.frame.sceneText?.length ?? 0)>800 || safe.context.memory.some(m=>!m.text.trim() || m.text.length>2000)) throw new Error();
+          } catch { json(res,400,{error:'invalid_request'}); return; }
+          const segmented = pathname === '/api/analyze' ? await sam({imageDataUrl:safe.frame.imageData,prompt:input.prompt,signal:controller.signal}) : null;
+          if (controller.signal.aborted) return;
+          const allowed = new Set(safe.dependencies.evidenceIds), evidence = [];
+          const issuedAt = Math.max(safe.frame.processedAt,safe.gaze.processedAt,...safe.events.map(e=>e.processedAt),...safe.context.memory.map(m=>m.processedAt));
+          if (allowed.has(safe.frame.frameId)) {
+            const boxes = segmented?.masks.slice(0,10).map(m=>m.bounds) ?? null;
+            evidence.push({id:safe.frame.frameId,kind:'scene',text:JSON.stringify({sceneText:safe.frame.sceneText ?? null,gaze:{x:safe.gaze.x,y:safe.gaze.y},segmentationBounds:boxes,segmentationCount:segmented?.masks.length ?? null,provenanceKind:safe.frame.provenanceKind}),observedAt:safe.frame.observedAt,processedAt:issuedAt,causalStatus:'online_causal'});
+          }
+          for (const e of safe.events) if (allowed.has(e.eventId)) evidence.push({id:e.eventId,kind:'gaze',text:JSON.stringify({type:e.type??null,endAt:e.endAt??null,dwellValidMs:e.dwellValidMs??null,x:e.x??null,y:e.y??null,candidateObjectIds:e.candidateObjectIds??[]}),observedAt:e.observedAt,processedAt:e.processedAt,causalStatus:'online_causal'});
+          for (const m of safe.context.memory) if (allowed.has(m.evidenceId)) evidence.push({id:m.evidenceId,kind:'memory',text:m.text,observedAt:m.observedAt,processedAt:m.processedAt,causalStatus:'online_causal'});
+          const result = await reasoner({observedUntil:safe.observedUntil,issuedAt,evidence,imageDataUrl:safe.frame.imageData,signal:controller.signal,...(safe.candidates?.length ? {candidates:safe.candidates} : {})});
+          const nextGaze=result.nextGaze ?? null; validateNextGaze(nextGaze,safe.candidates ?? []); if (!safe.candidates?.length && nextGaze!==null) throw new Error('no candidate space');
+          if (!controller.signal.aborted) json(res,200,{nextGaze,frame:{frameId:safe.frame.frameId,observedAt:safe.frame.observedAt},scenarios:result.scenarios,...(segmented ? {sam:{provider:segmented.provider,model:segmented.model,requestId:segmented.requestId,latencyMs:segmented.latencyMs,parserVersion:segmented.parserVersion,maskCount:segmented.masks.length,bounds:segmented.masks.map(m=>m.bounds)}} : {}),reasoner:{provider:result.provider,model:result.model,requestId:result.requestId,latencyMs:result.latencyMs,usage:result.usage,estimatedCostUsd:result.estimatedCostUsd}});
+          return;
+        }
+        if (!validInput(input)) { json(res,400,{error:'invalid_request'}); return; }
+        const result = await sam({imageDataUrl:input.imageDataUrl,prompt:input.prompt,signal:controller.signal});
+        if (controller.signal.aborted) { json(res,504,{error:'timeout'}); return; }
+        json(res,200,{frame:input.frame,masks:result.masks,provider:result.provider,model:result.model,requestId:result.requestId,latencyMs:result.latencyMs,parserVersion:result.parserVersion});
+      } catch (error) {
+        const code = error?.code;
+        const status = ['PROVIDER_RATE_LIMITED','PROVIDER_BUSY','PROVIDER_MIN_INTERVAL','PROVIDER_BUDGET_EXCEEDED','PROVIDER_CIRCUIT_OPEN'].includes(code) ? 429 : ['SAM_NOT_CONFIGURED','REASONER_NOT_CONFIGURED'].includes(code) ? 503 : ['SAM_TIMEOUT','REASONER_TIMEOUT'].includes(code) || controller.signal.aborted ? 504 : 502;
+        const body={error:status === 429 ? 'provider_limited' : status === 503 ? 'provider_unavailable' : status === 504 ? 'timeout' : 'provider_failed'};
+        if (['REASONER_INCOMPLETE','REASONER_WRONG_MODEL','REASONER_LANE_INVALID','REASONER_JSON_INVALID','REASONER_GROUNDING_INVALID','REASONER_INVALID_RESPONSE','REASONER_TIMEOUT','REASONER_ACCESS_DENIED','REASONER_NOT_CONFIGURED','SAM_INVALID_RESPONSE','SAM_TIMEOUT','SAM_NOT_CONFIGURED'].includes(code)) body.providerCode=code;
+        const d=error?.diagnostic;
+        if (body.providerCode?.startsWith('REASONER_') && d && ['completed','incomplete','failed','in_progress','cancelled','unknown'].includes(d.responseStatus) && (d.incompleteReason===null || ['max_output_tokens','content_filter','other'].includes(d.incompleteReason)) && Array.isArray(d.outputTypes) && d.outputTypes.length<=10 && d.outputTypes.every(x=>['message','reasoning','other'].includes(x)) && (d.textLength===null || Number.isInteger(d.textLength) && d.textLength>=0 && d.textLength<=262144)) body.diagnostic={responseStatus:d.responseStatus,incompleteReason:d.incompleteReason,outputTypes:d.outputTypes,textLength:d.textLength};
+        if (['PROVIDER_HTTP_ERROR','PROVIDER_RATE_LIMITED'].includes(code) && Number.isInteger(error.status) && error.status>=400 && error.status<=599) body.upstreamStatus=error.status;
+        json(res,status,body);
+      } finally { clearTimeout(timer); inFlight--; }
+      return;
+    }
+    const entry = files.get(pathname);
+    if (req.method !== 'GET' || !entry) { res.writeHead(404); res.end('Not found'); return; }
+    try { const data = await readFile(path.join(root, entry[0])); res.writeHead(200, {'Content-Type': entry[1], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}); res.end(data); }
+    catch (error) { res.writeHead(error.code === 'ENOENT' ? 404 : 500); res.end('Unavailable'); }
+  });
+}
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) createLocalServer().listen(4173, '127.0.0.1', () => console.log('Prometheus: http://127.0.0.1:4173'));
+
+
+
+

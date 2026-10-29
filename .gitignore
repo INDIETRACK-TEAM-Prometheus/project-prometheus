@@ -1,0 +1,10 @@
+node_modules/
+data/aria/
+.env
+.env.*
+!.env.example
+
+.asset-tmp/
+__pycache__/
+*.pyc
+artifacts/*.zip

@@ -1,0 +1,23 @@
+# Integration status
+
+## Current integrated provider path
+
+User-approved Standard `muse-spark-1.3` replaces unavailable Wonder (SRS 20.8). `/api/analyze` passes real SAM results, the same scene image, bounded observed gaze history and prior memory to Spark. The v2 and v4 actual calls produced three grounded scenarios; v3 failed and remains preserved. Latest live token/cost metadata is in `evidence/reasoner-live-v4.json`. Shared provider limits, fixed diagnostic error categories and cancellation remain separate from product acceptance.
+
+The app now has local-only pilot export and separate scene-only transfer consent. SAM results render on their own captured frame; unverified webcam timing still withholds live gaze/scene association. A distinct provisional QA path freezes the actual canvas framebuffer, admits only fresh browser-estimated gaze samples, and lets the user send a gaze-point SAM prompt on that frame; it records optical uncertainty as unknown and does not write gaze memory, claim online-causal status, or change T15/Gate state. `spatial/tracker.js` links masks across time without engine truth IDs and supports revision timestamps; memory keeps historical revisions and retracts derived references. Actual four-image SAM tracking and actual offline Aria MPS records have been checked. Full Pilot replay, actual optical timing, human acceptance and crash recovery remain unverified. See CTO_REVIEW.md for current Gates; older entries below are historical.
+
+## SAM server adapter — 2026-10-27
+
+`server/sam-adapter.js` calls the official Meta Responses endpoint with `sam-3.1`; the local POST route validates frame provenance and image input, restricts loopback/Host/Origin, and bounds request size, concurrency and timeout. The pinned official parser decodes cropped binary masks with source dimensions. Only the server reads `META_API_KEY`; static serving excludes server modules, dependencies and evidence.
+
+The actual HTTP route → Meta → parser synthetic run passed: one red-square mask, IoU 0.999375, round trip 1,916ms and provider/parse 1,868ms, one sample. See `evidence/sam-live.json` and `sam-api-contract.md`. Full tests: 58/58 passed in Node 24.13.0 with loopback access outside the restricted sandbox. This verifies an image adapter, not gaze/Depth alignment, tracking, video, Wonder or product acceptance. The browser/runtime provider status remains blocked for those unfinished integration requirements. Earlier entries below describe the checkpoint before this adapter was added.
+
+## Test discovery correction
+
+An interrupted earlier edit created a duplicate `prometheus/prometheus/` tree: the patch paths were prefixed with `prometheus/` while the working directory was already `prometheus/`. The duplicate README and test were byte-identical to their canonical counterparts at verification. Node's unrestricted test discovery also picked up the nested test, whose relative import resolved to the nonexistent `prometheus/prometheus/src/core.js`, causing `ERR_MODULE_NOT_FOUND`. The earlier 5/5 result was valid only before that duplicate reappeared; it did not establish that the later complete tree passed.
+
+The duplicate files were moved, not deleted, to `docs/archive/duplicate-nested-project/`; the archived test has a `.txt` suffix to prevent accidental test discovery. The canonical `test/core.test.js` remains in place. The npm test command explicitly runs `test/*.test.js`, including the current feature unit tests while excluding archived artifacts. This change does not claim any product gate has passed.
+
+## Browser integration
+
+`src/app.js` imports the WebGL world, gaze controller and calibration, memory service and runtime facade. Explicit server allowlisting serves their transitive modules. User-provided MediaPipe assets are local and absent by default; no camera or model is loaded before explicit start. Independent training and validation points are administered in the UI. RGBA framebuffer snapshots are bounded, copied and matched to the latest past presentation estimate. The next render callback and a 100ms provisional withholding value are not validated optical presentation or a measured error bound. Camera clock uncertainty is unknown, so live frame-to-gaze association and memory event recording are withheld. The injectable integration test exercises a synthetic aligned evidence path, not a claim that live synchronization is solved. Sample handling is serialized and bounded, and stop drains pending memory work; an asynchronous start cannot reactivate the runtime after stop. SAM and Wonder remain blocked; no fixture is presented as a provider result. Real browser, hardware, calibration and timing acceptance remain untested.

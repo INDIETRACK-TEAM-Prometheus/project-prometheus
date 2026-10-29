@@ -1,0 +1,21 @@
+{
+  "scenario": "One synthetic scene; red square, blue circle, green rectangle",
+  "prompt": "objects",
+  "input": {
+    "width": 256,
+    "height": 256,
+    "sha256": "bc7e5b80e3b31c0708a2b1562a4d68369706934028ae55f119974c92837b74c5"
+  },
+  "estimatedCostUsd": 0.0025,
+  "costBasis": "local provider policy reservation; not actual billing",
+  "status": "completed",
+  "startedAtUtc": "2026-10-28T07:38:29.081Z",
+  "maskCount": 0,
+  "validMaskCount": 0,
+  "redBestIoU": null,
+  "blueBestIoU": null,
+  "providerLatencyMs": 1245,
+  "model": "sam-3.1",
+  "elapsedMs": 1245,
+  "finishedAtUtc": "2026-10-28T07:38:30.329Z"
+}

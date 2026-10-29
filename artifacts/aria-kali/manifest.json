@@ -1,0 +1,28 @@
+{
+  "containsMetaApiKey": false,
+  "createdAtUtc": "2026-10-27T22:50:57.1323261Z",
+  "sample": "official Gen2 public sample, not Pilot",
+  "files": [
+    {
+      "sha256": "993d762a8d68b40a46825ca7154b21f237a3262cde7d25f253fd324fc216c23c",
+      "path": "scripts/aria_verify_vrs.py",
+      "bytes": 6857
+    },
+    {
+      "sha256": "d18c468a563b8f626da3e64525ba8b29452d3447c3ac3ee78c1b7b2535ec4317",
+      "path": "src/aria/mps_csv.py",
+      "bytes": 3108
+    },
+    {
+      "sha256": "52e78d73dfc12b1d551292e0598b2babc7851c83297ebaab318686fb372f5c7f",
+      "path": "data/aria/aria_gen2_sample_data_1.vrs",
+      "bytes": 268194147
+    },
+    {
+      "sha256": "3eee67ec3ae83fff1ccfffba02774d27e2179b02fbd48154a076e260c5c1eb01",
+      "path": "data/aria/closed_loop_trajectory.csv",
+      "bytes": 12024930
+    }
+  ],
+  "schemaVersion": 1
+}

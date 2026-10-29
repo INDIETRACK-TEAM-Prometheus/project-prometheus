@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "scenario": "synthetic point prompt on red square",
+  "input": {
+    "sha256": "bc7e5b80e3b31c0708a2b1562a4d68369706934028ae55f119974c92837b74c5",
+    "width": 256,
+    "height": 256,
+    "groundTruth": {
+      "x": 32,
+      "y": 48,
+      "width": 80,
+      "height": 80
+    }
+  },
+  "criteria": {
+    "minimumBestMaskIoU": 0.8,
+    "minimumMaskCount": 1,
+    "model": "sam-3.1"
+  },
+  "status": "passed",
+  "result": {
+    "accepted": true,
+    "httpStatus": 200,
+    "requestCount": 1,
+    "model": "sam-3.1",
+    "maskCount": 1,
+    "bestIoU": 0.99984375,
+    "pipeline": {
+      "active": true,
+      "running": false,
+      "pending": false,
+      "dropped": 0,
+      "commits": 1,
+      "lastError": null
+    },
+    "observationCount": 1,
+    "retrievedObservationCount": 1,
+    "eventCount": 0,
+    "runtimeCalls": 0,
+    "noGaze": true
+  }
+}

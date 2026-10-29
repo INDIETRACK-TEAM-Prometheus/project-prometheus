@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "scenario": "synthetic image; explicit store:false requests",
+  "criteria": {
+    "models": [
+      "sam-3.1",
+      "muse-spark-1.3"
+    ],
+    "retrieval": "Record only HTTP status, no retrieval bodies; 404 is not proof of zero retention"
+  },
+  "status": "observed",
+  "samples": [
+    {
+      "model": "sam-3.1",
+      "providerLatencyMs": 1144,
+      "retrievalHttpStatus": 404
+    },
+    {
+      "model": "muse-spark-1.3",
+      "providerLatencyMs": 5597,
+      "retrievalHttpStatus": 404
+    }
+  ],
+  "finishedAtUtc": "2026-10-27T23:03:45.245Z"
+}

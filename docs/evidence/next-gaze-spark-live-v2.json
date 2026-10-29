@@ -1,0 +1,21 @@
+{
+  "status": "completed",
+  "synthetic": true,
+  "model": "muse-spark-1.3",
+  "horizonMs": 1000,
+  "latencyMs": 6560,
+  "scenarioCount": 2,
+  "rankingCount": 2,
+  "ranking": [
+    "red",
+    "blue"
+  ],
+  "estimatedCostUsd": 0.00639255,
+  "usage": {
+    "inputTokens": 584,
+    "outputTokens": 1461,
+    "cachedInputTokens": 497
+  },
+  "elapsedMs": 6571,
+  "finishedAtUtc": "2026-10-28T12:18:48.034Z"
+}

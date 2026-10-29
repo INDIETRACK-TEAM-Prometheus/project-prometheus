@@ -1,0 +1,18 @@
+{
+  "checkedAtUtc": "2026-10-27T13:44:51.6711192Z",
+  "sourceAndEvidenceCredentialValueFound": false,
+  "total": 92,
+  "excludedFromCredentialScan": [
+    "node_modules",
+    "data",
+    "vendor",
+    ".asset-tmp"
+  ],
+  "command": "npm test",
+  "failed": 0,
+  "passed": 92,
+  "pythonAriaVerifierTests": 2,
+  "runtime": "v24.22.1",
+  "execution": "loopback-enabled outside restricted sandbox",
+  "productGatePassed": false
+}

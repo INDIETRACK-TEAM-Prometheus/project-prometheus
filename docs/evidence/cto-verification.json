@@ -1,0 +1,21 @@
+{
+  "checkedAtUtc": "2026-10-29T07:26:52.7388613Z",
+  "testLog": "unit-tests-20261029-qa-demo.txt",
+  "failed": 0,
+  "excludedFromCredentialScan": [
+    "node_modules",
+    "data",
+    "vendor",
+    ".asset-tmp",
+    "binary archives"
+  ],
+  "newHistoryAndLedgerRealUserEvaluation": false,
+  "total": 187,
+  "productGatePassed": false,
+  "runtime": "v24.22.1",
+  "storeFalseEvidence": "store-false-live.json",
+  "command": "npm test",
+  "subagentEffort": "GPT-6-Luna max",
+  "passed": 187,
+  "sourceAndEvidenceCredentialValueFound": false
+}

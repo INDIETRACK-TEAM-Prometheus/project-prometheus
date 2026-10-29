@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "scenario": "synthetic moving red square, fully occluded then reappearing",
+  "criteria": {
+    "minimumBestMaskIoU": 0.8,
+    "negativeMaxMasks": 0,
+    "requiredModel": "sam-3.1",
+    "identity": "same persistent object id for all visible frames",
+    "frozenBeforeCalls": true
+  },
+  "status": "passed",
+  "frames": [
+    {
+      "name": "initial",
+      "sha256": "f9d206ead7aa67413ca11b25c900ac4d54349d6ef79804b966d4ef7e344fb007",
+      "status": "passed",
+      "model": "sam-3.1",
+      "requestId": "resp_6ae0413d50167c62737d4481",
+      "providerLatencyMs": 2574,
+      "maskCount": 1,
+      "validMaskCount": 1,
+      "bestIoU": 1,
+      "selectedObjectId": "object-1",
+      "selectedIdentityStatus": "tentative",
+      "ambiguousCount": 0,
+      "lastSeen": null
+    },
+    {
+      "name": "moving",
+      "sha256": "3169d2a1c27e9b6066e0de2b2c5e60f2e260848bc83c4cc0c16f19ceb1ee192c",
+      "status": "passed",
+      "model": "sam-3.1",
+      "requestId": "resp_6ae0413fd223f9bdfe9d4e25",
+      "providerLatencyMs": 1481,
+      "maskCount": 1,
+      "validMaskCount": 1,
+      "bestIoU": 1,
+      "selectedObjectId": "object-1",
+      "selectedIdentityStatus": "linked",
+      "ambiguousCount": 0,
+      "lastSeen": null
+    },
+    {
+      "name": "occluded",
+      "sha256": "6d7e5c8b6e1bc7ba1420a9f7a4081fb4ff5c85750c4f58bfd65181a9dea226dc",
+      "status": "passed",
+      "model": "sam-3.1",
+      "requestId": "resp_6ae041404ebb8173eb3f41f4",
+      "providerLatencyMs": 562,
+      "maskCount": 0,
+      "validMaskCount": 0,
+      "bestIoU": null,
+      "selectedObjectId": null,
+      "selectedIdentityStatus": null,
+      "ambiguousCount": 0,
+      "lastSeen": {
+        "objectId": "object-1",
+        "visibilityState": "unknown",
+        "lastSeenAt": 100,
+        "lastSeenFrameId": "synthetic-moving",
+        "positionMeaning": "last_seen_not_current"
+      }
+    },
+    {
+      "name": "reappearance",
+      "sha256": "2252b8f57acaaa75af2cff564ccce1e2132c9135eac3eb9aa6e18cb0b705136b",
+      "status": "passed",
+      "model": "sam-3.1",
+      "requestId": "resp_6ae04141379ce05eab3e4bf1",
+      "providerLatencyMs": 1165,
+      "maskCount": 1,
+      "validMaskCount": 1,
+      "bestIoU": 1,
+      "selectedObjectId": "object-1",
+      "selectedIdentityStatus": "linked",
+      "ambiguousCount": 0,
+      "lastSeen": null
+    }
+  ]
+}

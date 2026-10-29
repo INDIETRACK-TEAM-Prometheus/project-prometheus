@@ -1,0 +1,9 @@
+{
+  "status": "failed",
+  "synthetic": true,
+  "model": "muse-spark-1.3",
+  "horizonMs": 1000,
+  "errorCode": "REASONER_INCOMPLETE",
+  "elapsedMs": 10874,
+  "finishedAtUtc": "2026-10-28T12:18:05.568Z"
+}
