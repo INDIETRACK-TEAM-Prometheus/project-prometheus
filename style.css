@@ -22,3 +22,5 @@ footer.session-panel{display:block;margin-top:16px;padding:20px;background:#121d
 .primary-controls #calibrate,.provisional-history{display:none}
 
 #calibrationStatus,.demo-disclosure,#message,.secondary-consent{display:none!important}
+
+footer.session-panel{display:none}
