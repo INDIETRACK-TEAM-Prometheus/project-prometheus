@@ -24,3 +24,32 @@ export function estimateUncalibratedGaze({leftEye, rightEye} = {}) {
     point:{x:clamp(.5 + 2 * feature.x), y:clamp(.5 + 4 * feature.y)}
   };
 }
+
+// Freshness and canvas checks are demo-only. Callback timestamps stay explicitly
+// distinct from browser capture estimates and neither kind passes a timing gate.
+export function selectProvisionalIrisGaze({estimate, sample, frame, canvasRect, viewport, stableAfterMs, nowMs, maxSampleProcessingLagMs=250, maxProcessingAgeMs=100} = {}) {
+  if (sample?.faceDetected !== true) return {status:'withheld',reason:'face_not_detected'};
+  if (estimate?.status !== 'uncalibrated_estimate' || !finite(estimate.point?.x) || !finite(estimate.point?.y) || estimate.point.x < 0 || estimate.point.x >= 1 || estimate.point.y < 0 || estimate.point.y >= 1) return {status:'withheld',reason:'uncalibrated_iris_estimate_required'};
+  if (!['browser_capture_estimate','callback_time_not_capture'].includes(sample.timestampKind) || !finite(sample.timestampMs) || !finite(sample.processedMs) || sample.timestampMs < 0 || sample.processedMs < sample.timestampMs) return {status:'withheld',reason:'sample_time_unavailable'};
+  if (!frame?.frameId || !Number.isInteger(frame.width) || frame.width < 1 || !Number.isInteger(frame.height) || frame.height < 1) return {status:'withheld',reason:'frozen_frame_unavailable'};
+  if (![canvasRect?.left,canvasRect?.top,canvasRect?.width,canvasRect?.height,viewport?.width,viewport?.height,stableAfterMs,nowMs,maxSampleProcessingLagMs,maxProcessingAgeMs].every(finite) || canvasRect.width <= 0 || canvasRect.height <= 0 || viewport.width <= 0 || viewport.height <= 0 || maxSampleProcessingLagMs < 0 || maxProcessingAgeMs < 0) return {status:'withheld',reason:'invalid_provisional_window'};
+  const sampleProcessingLagMs=sample.processedMs-sample.timestampMs, processingAgeMs=nowMs-sample.processedMs;
+  if (sample.timestampMs < stableAfterMs || sample.processedMs < stableAfterMs) return {status:'withheld',reason:'sample_before_stable_window'};
+  if (sampleProcessingLagMs < 0 || sampleProcessingLagMs > maxSampleProcessingLagMs || processingAgeMs < 0 || processingAgeMs > maxProcessingAgeMs) return {status:'withheld',reason:'sample_stale_or_lagged'};
+  const screenPoint={x:estimate.point.x*viewport.width,y:estimate.point.y*viewport.height};
+  if (screenPoint.x < canvasRect.left || screenPoint.x >= canvasRect.left+canvasRect.width || screenPoint.y < canvasRect.top || screenPoint.y >= canvasRect.top+canvasRect.height) return {status:'withheld',reason:'gaze_outside_frozen_scene'};
+  return {
+    status:'ready',
+    calibrationStatus:'uncalibrated',
+    frameId:frame.frameId,
+    point:{x:(screenPoint.x-canvasRect.left)/canvasRect.width,y:(screenPoint.y-canvasRect.top)/canvasRect.height},
+    sampleAtMs:sample.timestampMs,
+    processedAtMs:sample.processedMs,
+    sampleProcessingLagMs,
+    maxSampleProcessingLagMs,
+    processingAgeMs,
+    maxAcceptedProcessingAgeMs:maxProcessingAgeMs,
+    timestampKind:sample.timestampKind,
+    timingStatus:sample.timestampKind==='browser_capture_estimate'?'provisional_browser_capture_estimate':'provisional_callback_time_not_capture'
+  };
+}

@@ -81,6 +81,7 @@ test('perception browser module and its spatial dependency are served, server co
  await withServer(async()=>({masks:[]}),async base=>{
   for(const path of ['/src/runtime/perception.js','/src/spatial/tracker.js','/src/spatial/geometry.js']) assert.equal((await fetch(base+path)).status,200,path);
   assert.equal((await fetch(base+'/src/gaze/frozen-demo.js')).status,200);
+   assert.equal((await fetch(base+'/src/gaze/uncalibrated.js')).status,200);
   for(const path of ['/server/reasoner-adapter.js','/server/sam-adapter.js','/.env']) assert.equal((await fetch(base+path)).status,404,path);
  });
 });
