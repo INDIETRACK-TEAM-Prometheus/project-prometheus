@@ -800,4 +800,4 @@ async function boot() {
   void ensureProvisionalTracking().catch(()=>{});
   $('#runtimeStatus').textContent='카메라 시작 동의 대기 · Spark 별도 동의 필요';
 }
-if(typeof document!=='undefined') boot().catch(()=>{const el=document.querySelector('#message');if(el)el.textContent='초기화 실패. 브라우저 콘솔과 로컬 자산을 확인하세요.';});
+if(typeof document!=='undefined') boot().catch(()=>{const text='앱 초기화 실패 · 페이지를 새로고침해 주세요';for(const selector of ['#message','#gazeStatus','#provisionalSparkStatus']){const el=document.querySelector(selector);if(el)el.textContent=text;}});
