@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {gazeViewportPoint,gazeMarkerPosition} from '../src/gaze/overlay.js';
+import {remapGazePointToViewport} from '../src/gaze/persistence.js';
 
 const rect={left:100,top:50,width:400,height:200,right:500,bottom:250};
 const valid=rawScreenXY=>({valid:true,rawScreenXY});
@@ -25,4 +26,13 @@ test('centers the fixed-size marker at the exact normalized point and hides it o
   for (const state of [{active:false},{active:true,paused:true},{active:true,calibrating:true}]) assert.equal(gazeMarkerPosition({x:.5,y:.5},state),null);
   assert.equal(gazeMarkerPosition({x:1,y:.5},{active:true}),null);
   assert.equal(gazeMarkerPosition({x:.5,y:NaN},{active:true}),null);
+});
+
+test('saved calibration point keeps its relative marker position after viewport resize',()=>{
+  const saved={viewport:{width:1280,height:720,devicePixelRatio:1},screen:{width:1920,height:1080},camera:{width:640,height:480,frameRate:30}};
+  const current={...saved,viewport:{...saved.viewport,width:1920,height:1080}};
+  const mapped=remapGazePointToViewport({x:640,y:360},saved,current);
+  const normalized=gazeViewportPoint(valid(mapped),{left:0,top:0,width:1920,height:1080});
+  assert.deepEqual(normalized,{x:.5,y:.5});
+  assert.deepEqual(gazeMarkerPosition(normalized,{active:true}),{left:'50%',top:'50%'});
 });
