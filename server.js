@@ -1,4 +1,5 @@
 import http from 'node:http';
+import https from 'node:https';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -25,7 +26,7 @@ function localRequest(req) {
   const host = req.headers.host;
   const port = req.socket.localPort;
   if (!['127.0.0.1', 'localhost', '[::1]'].some(h => host === `${h}:${port}`)) return false;
-  if (req.headers.origin && req.headers.origin !== `http://${host}`) return false;
+  if (req.headers.origin && req.headers.origin !== `${req.socket.encrypted ? 'https' : 'http'}://${host}`) return false;
   return !req.headers['sec-fetch-site'] || ['same-origin','none'].includes(req.headers['sec-fetch-site']);
 }
 function validInput(value) {
@@ -38,9 +39,9 @@ function validInput(value) {
   const bytes = Buffer.from(match[2], 'base64');
   return match[1] === 'png' ? bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) : bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
 }
-export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000} = {}) {
+export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions} = {}) {
   let inFlight = 0;
-  return http.createServer(async (req, res) => {
+  const handler = async (req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
     if (['/api/sam/segment','/api/analyze','/api/reason','/api/reason-provisional'].includes(pathname) && req.method === 'POST') {
       if (!localRequest(req)) { json(res, 403, {error:'forbidden'}); req.resume(); return; }
@@ -118,9 +119,18 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
     if (req.method !== 'GET' || !entry) { res.writeHead(404); res.end('Not found'); return; }
     try { const data = await readFile(path.join(root, entry[0])); res.writeHead(200, {'Content-Type': entry[1], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}); res.end(data); }
     catch (error) { res.writeHead(error.code === 'ENOENT' ? 404 : 500); res.end('Unavailable'); }
-  });
+  };
+  return httpsOptions ? https.createServer(httpsOptions, handler) : http.createServer(handler);
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) createLocalServer().listen(4173, '127.0.0.1', () => console.log('Prometheus: http://127.0.0.1:4173'));
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const certPath = process.env.PROMETHEUS_HTTPS_CERT;
+  const keyPath = process.env.PROMETHEUS_HTTPS_KEY;
+  if (Boolean(certPath) !== Boolean(keyPath)) throw new Error('Set both PROMETHEUS_HTTPS_CERT and PROMETHEUS_HTTPS_KEY to enable HTTPS.');
+  const httpsOptions = certPath ? {cert: await readFile(certPath), key: await readFile(keyPath)} : undefined;
+  const server = createLocalServer({httpsOptions});
+  const url = httpsOptions ? 'https://127.0.0.1:4173' : 'http://127.0.0.1:4173';
+  server.listen(4173, '127.0.0.1', () => console.log(`Prometheus: ${url}`));
+}
 
 
 

@@ -14,6 +14,22 @@ npm start
 
 브라우저에서 http://127.0.0.1:4173 을 엽니다. WebGL 동적 3D 장면은 시선과 관계없이 움직입니다. 통합 동의 체크와 브라우저 권한 허용 뒤 카메라가 켜집니다. 원시 눈·얼굴 영상, 랜드마크, API 키는 저장하지 않으며, SAM에는 WebGL 가상 장면 이미지만 보냅니다. 시선 시연의 좌표(교정 여부를 표시), SAM 마스크 경계, Spark 결과는 이 기기에 자동 저장되고 **잠정 시연 기록 삭제** 또는 **세션 삭제**를 누를 때까지 보존됩니다. **정지**는 카메라 트랙을 닫고 교정과 자동 분석을 취소합니다. 진단 패널은 숨길 수 있습니다.
 
+HTTPS가 필요한 카메라·브라우저 통합 QA는 기본 HTTP 대신 선택적으로 켤 수 있습니다. PowerShell 7.2 이상에서 아래 명령을 실행하면 `localhost` DNS SAN 및 `127.0.0.1` IP SAN이 포함된 30일짜리 인증서가 `%LOCALAPPDATA%\Prometheus\https`에 생성됩니다. PEM 개인키는 서버 시작 로그에 출력하지 않으며 프로젝트/OneDrive 폴더 밖에 둡니다. 인증서 생성은 사용자 인증서 저장소나 신뢰 저장소를 변경하지 않습니다.
+
+```powershell
+pwsh -NoProfile -File scripts\new-local-https-certificate.ps1
+$env:PROMETHEUS_HTTPS_CERT = Join-Path $env:LOCALAPPDATA 'Prometheus\https\localhost-cert.pem'
+$env:PROMETHEUS_HTTPS_KEY = Join-Path $env:LOCALAPPDATA 'Prometheus\https\localhost-key.pem'
+npm start
+```
+
+브라우저에서 `https://127.0.0.1:4173`을 엽니다. 자체 서명 인증서는 브라우저에서 신뢰되지 않으므로, 신뢰하려면 `localhost-cert.cer`의 지문을 확인한 뒤 Windows `certmgr.msc`에서 **현재 사용자 → 신뢰할 수 있는 루트 인증 기관 → 인증서**로 직접 가져오세요. 지문 확인은 PowerShell에서 다음처럼 할 수 있습니다. 인증서는 이 기기의 loopback 이름에서만 쓰고, 개인키를 공유하거나 저장소에 추가하지 마세요. 원치 않는 인증서라면 같은 인증서 관리 화면에서 해당 인증서만 제거합니다. 서버는 HTTP/HTTPS 모두 `127.0.0.1`에만 바인딩하며 환경변수가 없으면 HTTP로 시작합니다.
+
+```powershell
+$cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new((Join-Path $env:LOCALAPPDATA 'Prometheus\https\localhost-cert.cer'))
+$cert.Thumbprint
+```
+
 ## 웹캠 자산과 교정
 
 `webeyetrack@0.0.2`와 공식 WebEyeTrack gaze model은 로컬 설치·제공됩니다. 기존 Face Landmarker의 WASM 실행 파일과 `face_landmarker.task`는 계속 `vendor/`에 준비해야 합니다. 공식 [Web 가이드](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker/web_js)에서 호환 자산의 라이선스와 출처를 확인하고, 아래 이름으로 배치하세요: `vision_bundle.mjs`, `vision_wasm_internal.js`, `vision_wasm_internal.wasm`, `vision_wasm_nosimd_internal.js`, `vision_wasm_nosimd_internal.wasm`, `face_landmarker.task`. WebEyeTrack 모델은 `vendor/webeyetrack-model/`에 포함되고 local server의 `/web/` 경로로만 로드됩니다. 런타임은 외부 CDN을 요청하지 않습니다. 상세한 출처, 해시, 라이선스, 제약은 [WebEyeTrack 통합 기록](docs/webeyetrack-integration.md)을 참조하세요. 모델이나 MediaPipe 자산이 빠지면 카메라를 열기 전에 시작이 실패합니다. 브라우저는 `requestVideoFrameCallback`을 지원해야 합니다.

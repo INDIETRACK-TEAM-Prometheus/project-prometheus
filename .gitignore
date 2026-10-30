@@ -5,6 +5,7 @@ data/aria/
 !.env.example
 
 .asset-tmp/
+.local-https/
 __pycache__/
 *.pyc
 artifacts/*.zip
