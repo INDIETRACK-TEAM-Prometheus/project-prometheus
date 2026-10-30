@@ -788,11 +788,11 @@ async function boot() {
       if(screenSize.width!==innerWidth||screenSize.height!==innerHeight){handleCalibrationEnvironmentChange('화면 크기');return;}
       const target=points(calibrationStage==='validation')[sequence], now=performance.now();
       if(now-calibrationTargetShownAt<500){$('#calibrationInfo').textContent='표적이 바뀐 뒤 0.5초 이상 응시한 다음 다시 클릭 또는 Enter/Space를 누르세요.';return;}
-      const fresh=latest?.features && latest.processedMs>=calibrationTargetShownAt+500 && now-latest.processedMs<250;
+      const fresh=latest?.features && Number.isFinite(latest.callbackTimestampMs) && latest.callbackTimestampMs>=calibrationTargetShownAt+500 && now-latest.callbackTimestampMs>=0 && now-latest.callbackTimestampMs<250;
       if(pilot?.calibration)pilot.calibration.attempts.push({phase:calibrationStage,index:sequence,target:{...target},sampleAvailable:!!fresh,atUtc:new Date().toISOString()});
       if(calibrationStage==='training'){
         if(!fresh){$('#calibrationInfo').textContent='열린 눈의 최신 WebEyeTrack 표본이 없습니다. 눈 검출 뒤 다시 클릭하세요.';return;}
-        try{await controller.calibrate(target);}catch(error){
+        try{await controller.calibrate(target,calibrationTargetShownAt+500);}catch(error){
           calibrationStage=null;candidate=null;controller.cancelCalibration();restorePreviousCalibration();if(pilot?.calibration?.passed)pilot.calibration.lastRecalibrationStatus='failed';else if(pilot)pilot.calibration={...pilot.calibration,passed:false,status:'failed'};$('#calibration').hidden=true;message.textContent=`WebEyeTrack 적응 실패: ${error.message}`;showCalibrationStatus(activeCalibration?'재교정 실패 · 이전 현재 세션 적응 유지':'교정 실패 · 버튼으로 다시 시도');calibrate.focus();updateFrozenGazeControls();return;
         }
         training.push({id:`train-${sequence}`,target});

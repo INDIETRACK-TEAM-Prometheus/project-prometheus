@@ -30,7 +30,7 @@ export function createWebcamGazeController({
 
   let stream = null, running = false, starting = false, generation = 0, callbackId = null;
   let activeWorker = null, candidateWorker = null, timing = null, clockMonitor = null;
-  let lastTime = -1, lastTimestamp = -1, requestNumber = 0, captureCanvas = null;
+  let lastTime = -1, lastTimestamp = -1, requestNumber = 0, frameNumber = 0, captureCanvas = null;
 
   function diagnose(code) { try { onDiagnostic(code); } catch {} }
 
@@ -90,6 +90,7 @@ export function createWebcamGazeController({
         const calibrated = record.calibrated && faceDetected && gazeOpen && !!features && !!rawScreenXY;
         const processedMs = receivedAt;
         const sample = {
+          frameId:message.frameId,
           timestampMs:timestamp,
           captureSourceMs:sourceTimestamp,
           callbackTimestampMs:message.callbackTimestampMs,
@@ -185,6 +186,7 @@ export function createWebcamGazeController({
     const pixels = imageData.data.slice();
     record.worker.postMessage({
       type:'frame',
+      frameId:++frameNumber,
       width:imageData.width,
       height:imageData.height,
       pixels:pixels.buffer,
@@ -304,15 +306,17 @@ export function createWebcamGazeController({
         throw error;
       }
     },
-    async calibrate(target) {
+    async calibrate(target, notBeforeTimestampMs = -Infinity) {
       const record = candidateWorker;
       const sample = record?.latestSample;
-      if (!record || !running || !sample?.faceDetected || sample.gazeState !== 'open' || !sample.features || clockNow()-sample.processedMs>250) throw new Error('fresh open-eye WebEyeTrack sample required');
+      if (notBeforeTimestampMs !== -Infinity && !finite(notBeforeTimestampMs)) throw new Error('invalid calibration timestamp');
+      const sampleAgeMs = sample?.callbackTimestampMs===undefined ? Infinity : clockNow()-sample.callbackTimestampMs;
+      if (!record || !running || !Number.isSafeInteger(sample?.frameId) || !sample?.faceDetected || sample.gazeState !== 'open' || !sample.features || !finite(sample.callbackTimestampMs) || sample.callbackTimestampMs<notBeforeTimestampMs || sampleAgeMs<0 || sampleAgeMs>250) throw new Error('fresh open-eye WebEyeTrack sample required');
       const viewport = getViewport();
       if (!finite(target?.x) || !finite(target?.y) || !finite(viewport?.width) || !finite(viewport?.height) || viewport.width<=0 || viewport.height<=0) throw new Error('invalid calibration target');
       const requestId = `adapt-${++requestNumber}`;
       const promise = new Promise((resolve,reject)=>record.pending.set(requestId,{resolve,reject}));
-      record.worker.postMessage({type:'adapt',requestId,target:{x:target.x/viewport.width-.5,y:target.y/viewport.height-.5}});
+      record.worker.postMessage({type:'adapt',requestId,frameId:sample.frameId,target:{x:target.x/viewport.width-.5,y:target.y/viewport.height-.5}});
       return promise;
     },
     commitCalibration() {

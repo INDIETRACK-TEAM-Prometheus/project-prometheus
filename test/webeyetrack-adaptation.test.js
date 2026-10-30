@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createWebEyeTrackCalibrationAdapter,handleWebEyeTrackAdaptation,WEBEYETRACK_CALIBRATION_POINTS} from '../src/gaze/webeyetrack-adaptation.js';
+import {createWebEyeTrackCalibrationAdapter,handleWebEyeTrackAdaptation,retainWebEyeTrackCalibrationResult,takeWebEyeTrackCalibrationResult,WEBEYETRACK_CALIBRATION_POINTS,WEBEYETRACK_CALIBRATION_RESULT_LIMIT} from '../src/gaze/webeyetrack-adaptation.js';
 
 test('WebEyeTrack calibration retains patches and adapts once with all 27 targets',async()=>{
   const calls=[];
@@ -22,10 +22,10 @@ test('WebEyeTrack calibration retains patches and adapts once with all 27 target
 test('calibration acknowledgment waits for upstream adaptation and maps rejection to an error response',async()=>{
   let finishAdaptation;
   const result={gazeState:'open',eyePatch:{},headVector:[0,0,0],faceOrigin3D:[0,0,0]};
-  const tracker={latestGazeResult:result,adapt(){return new Promise(resolve=>{finishAdaptation=resolve;});}};
+  const tracker={adapt(){return new Promise(resolve=>{finishAdaptation=resolve;});}};
   const addSample=createWebEyeTrackCalibrationAdapter(tracker,1);
   const posted=[];
-  const acknowledgment=handleWebEyeTrackAdaptation(tracker,addSample,{x:0,y:0},'adapt-1').then(response=>posted.push(response));
+  const acknowledgment=handleWebEyeTrackAdaptation(result,addSample,{x:0,y:0},'adapt-1').then(response=>posted.push(response));
 
   await Promise.resolve();
   assert.equal(typeof finishAdaptation,'function');
@@ -34,9 +34,23 @@ test('calibration acknowledgment waits for upstream adaptation and maps rejectio
   await acknowledgment;
   assert.deepEqual(posted,[{type:'adapted',requestId:'adapt-1',points:1}]);
 
-  const failedTracker={latestGazeResult:result,adapt(){return Promise.reject(new Error('private upstream failure'));}};
+  const failedTracker={adapt(){return Promise.reject(new Error('private upstream failure'));}};
   const failedSample=createWebEyeTrackCalibrationAdapter(failedTracker,1);
-  assert.deepEqual(await handleWebEyeTrackAdaptation(failedTracker,failedSample,{x:0,y:0},'adapt-2'),{
+  assert.deepEqual(await handleWebEyeTrackAdaptation(result,failedSample,{x:0,y:0},'adapt-2'),{
     type:'adaptError',requestId:'adapt-2',code:'worker_adaptation_failed',step:'worker_adaptation'
   });
+});
+
+test('calibration results are selected by exact frame ID and retained in a bounded ring',()=>{
+  const results=new Map();
+  const expected={gazeState:'open',eyePatch:{pixels:[7]},headVector:[1,2,3],faceOrigin3D:[4,5,6]};
+  retainWebEyeTrackCalibrationResult(results,7,{...expected,facialLandmarks:[{x:.5,y:.5}]});
+  retainWebEyeTrackCalibrationResult(results,8,{gazeState:'open',eyePatch:{pixels:[8]},headVector:[8,0,0],faceOrigin3D:[0,8,0]});
+  assert.deepEqual(takeWebEyeTrackCalibrationResult(results,7),expected);
+  assert.equal(results.has(7),false);
+  assert.equal(takeWebEyeTrackCalibrationResult(results,99),undefined);
+  for(let frameId=0;frameId<WEBEYETRACK_CALIBRATION_RESULT_LIMIT+2;frameId++) retainWebEyeTrackCalibrationResult(results,frameId,expected);
+  assert.equal(results.size,WEBEYETRACK_CALIBRATION_RESULT_LIMIT);
+  assert.equal(results.has(0),false);
+  assert.equal(results.has(WEBEYETRACK_CALIBRATION_RESULT_LIMIT+1),true);
 });

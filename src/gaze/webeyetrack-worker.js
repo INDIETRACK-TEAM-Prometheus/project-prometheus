@@ -2,7 +2,10 @@ let tracker = null;
 let eyeCrop;
 let addCalibrationSample;
 let handleAdaptation;
+let retainCalibrationResult;
+let takeCalibrationResult;
 let calibrationPoints;
+const calibrationResults = new Map();
 
 function fail(code, step, requestId) {
   self.postMessage({type:'error',fatal:true,code,step,...(requestId?{requestId}:{})});
@@ -19,6 +22,8 @@ async function initialize() {
   eyeCrop = cropEye;
   calibrationPoints = adaptation.WEBEYETRACK_CALIBRATION_POINTS;
   handleAdaptation = adaptation.handleWebEyeTrackAdaptation;
+  retainCalibrationResult = adaptation.retainWebEyeTrackCalibrationResult;
+  takeCalibrationResult = adaptation.takeWebEyeTrackCalibrationResult;
   tracker = await initializeWebEyeTrack({
     WebEyeTrack:self.WebEyeTrack,
     FaceLandmarkerClient:self.FaceLandmarkerClient,
@@ -34,6 +39,7 @@ async function initialize() {
 async function processFrame(message) {
   const frame = new ImageData(new Uint8ClampedArray(message.pixels),message.width,message.height);
   const result = await tracker.step(frame,message.captureTimestampMs);
+  retainCalibrationResult(calibrationResults,message.frameId,result);
   const points = result?.facialLandmarks;
   const pixel = index => {
     const point = points?.[index];
@@ -56,6 +62,7 @@ async function processFrame(message) {
     durations:result?.durations??null,
     width:message.width,
     height:message.height,
+    frameId:message.frameId,
     captureTimestampMs:message.captureTimestampMs,
     callbackTimestampMs:message.callbackTimestampMs,
     timestampKind:message.timestampKind,
@@ -78,6 +85,7 @@ self.onmessage = event => {
     return;
   }
   if (message?.type === 'adapt') {
-    handleAdaptation(tracker,addCalibrationSample,message.target,message.requestId).then(response=>self.postMessage(response));
+    const result = takeCalibrationResult(calibrationResults,message.frameId);
+    handleAdaptation(result,addCalibrationSample,message.target,message.requestId).then(response=>self.postMessage(response));
   }
 };

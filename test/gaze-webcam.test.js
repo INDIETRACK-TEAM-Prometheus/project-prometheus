@@ -20,7 +20,7 @@ function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null,autoReady=t
         this.messages.push({message,transfer});
         if(message.type==='init'&&autoReady)queueMicrotask(()=>this.onmessage?.({data:{type:'ready'}}));
         if(message.type==='frame')queueMicrotask(()=>this.onmessage?.({data:{
-          type:'result',faceDetected:true,gazeState:'open',normPog,
+          type:'result',frameId:message.frameId,faceDetected:true,gazeState:'open',normPog,
           eyeCrops:{left:{x:0,y:0,width:1,height:1},right:{x:1,y:0,width:1,height:1}},
           durations:{total:.01},width:message.width,height:message.height,
           captureTimestampMs:message.captureTimestampMs,callbackTimestampMs:message.callbackTimestampMs,
@@ -44,7 +44,7 @@ function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null,autoReady=t
     clockNow:()=>nowMs++,getViewport:()=>({width:800,height:600}),
     onSample:sample=>samples.push(sample),onError:error=>errors.push(error),onDiagnostic:code=>diagnostics.push(code)
   });
-  return {controller,video,workers,samples,diagnostics,errors,counters:()=>({cameraOpens,trackStops}),async flush(){await new Promise(resolve=>setImmediate(resolve));}};
+  return {controller,video,workers,samples,diagnostics,errors,counters:()=>({cameraOpens,trackStops}),advanceClock(ms){nowMs+=ms;},async flush(){await new Promise(resolve=>setImmediate(resolve));}};
 }
 
 test('camera opens only after explicit consent and sends a local worker sample',async()=>{
@@ -138,10 +138,13 @@ test('official adapt targets use normalized screen coordinates and commit valida
   assert.equal(h.workers[0].messages.filter(entry=>entry.message.type==='frame').length,0,'the previous tracker is idle during calibration');
   assert.equal(h.workers[1].messages.filter(entry=>entry.message.type==='frame').length,1,'only the calibration candidate processes frames');
   assert.equal(h.samples.at(-1).valid,false);
+  const calibrationSample=h.samples.at(-1);
+  await assert.rejects(h.controller.calibrate({x:600,y:150},calibrationSample.callbackTimestampMs+1),/fresh open-eye/);
   const adapted=await h.controller.calibrate({x:600,y:150});
   assert.deepEqual(adapted,{adapted:true,points:1});
   const adaptation=h.workers[1].messages.find(entry=>entry.message.type==='adapt').message;
   assert.deepEqual(adaptation.target,{x:.25,y:-.25});
+  assert.equal(adaptation.frameId,calibrationSample.frameId);
   h.controller.commitCalibration();
   h.video.emit({captureTime:120});await h.flush();
   assert.equal(h.samples.at(-1).valid,true);
@@ -149,6 +152,18 @@ test('official adapt targets use normalized screen coordinates and commit valida
   assert.equal(h.counters().cameraOpens,1,'candidate worker reuses the page-owned stream');
   h.controller.stop();
   assert.ok(h.workers.every(worker=>worker.terminated));
+});
+
+test('calibration rejects samples older than the callback-time freshness window',async()=>{
+  const h=harness();
+  await h.controller.start({userInitiated:true,cameraConsent:true});
+  await h.controller.beginCalibration();
+  h.video.emit();await h.flush();
+  const sample=h.samples.at(-1);
+  h.advanceClock(251);
+  await assert.rejects(h.controller.calibrate({x:400,y:300},sample.callbackTimestampMs),/fresh open-eye/);
+  assert.equal(h.workers[1].messages.filter(entry=>entry.message.type==='adapt').length,0);
+  h.controller.stop();
 });
 
 test('cancelled recalibration restores the prior in-memory tracker without reopening camera',async()=>{
