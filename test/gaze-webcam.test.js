@@ -54,6 +54,7 @@ test('camera opens only after explicit consent and sends a local worker sample',
   const settings=await h.controller.start({userInitiated:true,cameraConsent:true});
   assert.deepEqual(settings,{width:2,height:2,frameRate:30});
   assert.equal(h.counters().cameraOpens,1);assert.equal(h.workers.length,1);
+  assert.deepEqual(h.workers[0].options,{name:'prometheus-webeyetrack'});
   h.video.emit();await h.flush();
   assert.equal(h.samples.length,1);
   assert.equal(h.samples[0].invalidReason,'calibration_required');

@@ -1,16 +1,19 @@
-import '/vendor/webeyetrack.js';
-import {eyeCrop} from './index.js';
-import {initializeWebEyeTrack} from './webeyetrack-bootstrap.js';
-
 let tracker = null;
 let adaptedPoints = 0;
+let eyeCrop;
 
 function fail(code, step, requestId) {
   self.postMessage({type:'error',fatal:true,code,step,...(requestId?{requestId}:{})});
 }
 
 async function initialize() {
-  const vision = await import('/vendor/vision_bundle.mjs');
+  importScripts('/vendor/webeyetrack.js');
+  const [{eyeCrop:cropEye}, {initializeWebEyeTrack}, vision] = await Promise.all([
+    import('/src/gaze/index.js'),
+    import('/src/gaze/webeyetrack-bootstrap.js'),
+    import('/vendor/vision_bundle.mjs')
+  ]);
+  eyeCrop = cropEye;
   tracker = await initializeWebEyeTrack({
     WebEyeTrack:self.WebEyeTrack,
     FaceLandmarkerClient:self.FaceLandmarkerClient,

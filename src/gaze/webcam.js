@@ -47,7 +47,7 @@ export function createWebcamGazeController({
 
   function createRecord(calibrated = false) {
     let worker;
-    try { worker = workerFactory('/src/gaze/webeyetrack-worker.js', {type:'module', name:'prometheus-webeyetrack'}); }
+    try { worker = workerFactory('/src/gaze/webeyetrack-worker.js', {name:'prometheus-webeyetrack'}); }
     catch { diagnose('worker_load_failed'); throw startupError('worker_load_failed'); }
     const record = {worker, calibrated, ready:false, busy:false, pending:new Map(), latestSample:null, fatal:false};
     diagnose('worker_created');
