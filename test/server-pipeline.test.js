@@ -37,10 +37,26 @@ test('remote runtime publishes valid response and rejects unknown grounding',asy
 });
 
 test('pipeline returns a sanitized error when the reasoner fails after SAM',async()=>{
- const server=createLocalServer({sam:async()=>({masks:[]}),reasoner:async()=>{throw Object.assign(new Error('secret'),{code:'REASONER_UPSTREAM_ERROR'});}});
+ const logs=[];const server=createLocalServer({logger:line=>logs.push(JSON.parse(line)),sam:async()=>({masks:[]}),reasoner:async()=>{throw Object.assign(new Error('API_KEY_SENTINEL'),{code:'REASONER_UPSTREAM_ERROR'});}});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
- try { const response=await fetch(`http://127.0.0.1:${server.address().port}/api/analyze`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({input,prompt:'cup'})});assert.equal(response.status,502);assert.deepEqual(await response.json(),{error:'provider_failed'}); }
+ try { const response=await fetch(`http://127.0.0.1:${server.address().port}/api/analyze`,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer HEADER_KEY_SENTINEL'},body:JSON.stringify({input,prompt:'BODY_SENTINEL'})});assert.equal(response.status,502);assert.deepEqual(await response.json(),{error:'provider_failed'});assert.deepEqual(logs.map(({stage})=>stage),['request_received','request_validated','sam_started','sam_completed','reasoner_started','request_failed']);assert.equal(logs.at(-1).status,502);assert.equal(JSON.stringify(logs).includes('SENTINEL'),false); }
  finally {server.closeAllConnections();await new Promise(r=>server.close(r));}
+});
+
+test('API stage logs include only fixed route, stage, and status fields',async()=>{
+ const logs=[];const sensitiveInput=structuredClone(input);sensitiveInput.frame.frameId='FRAME_ID_SENTINEL';sensitiveInput.dependencies.evidenceIds=['FRAME_ID_SENTINEL','e'];sensitiveInput.gaze.x=0.123456789;sensitiveInput.gaze.y=0.987654321;
+ Object.assign(sensitiveInput.events[0],{type:'fixated',endAt:4,dwellValidMs:1,x:0.123456789,y:0.987654321,candidateObjectIds:[]});
+ const server=createLocalServer({logger:line=>logs.push(JSON.parse(line)),sam:async()=>({masks:[{bounds:{left:11,top:22,right:33,bottom:44}}]}),reasoner:async()=>({scenarios:[scenario]})});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ try {
+  const body=JSON.stringify({input:sensitiveInput,prompt:'PROMPT_SENTINEL'});
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/api/analyze`,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer API_KEY_SENTINEL','x-api-key':'HEADER_KEY_SENTINEL'},body});
+  assert.equal(response.status,200);
+  assert.deepEqual(logs.map(({stage})=>stage),['request_received','request_validated','sam_started','sam_completed','reasoner_started','reasoner_completed','request_completed']);
+  assert.ok(logs.every(event=>Object.keys(event).sort().join(',')==='event,route,stage,status'&&event.event==='api_stage'&&event.route==='analyze'&&(event.status===null||Number.isInteger(event.status))));
+  const serialized=JSON.stringify(logs);
+  for(const secret of ['API_KEY_SENTINEL','HEADER_KEY_SENTINEL','FRAME_ID_SENTINEL','PROMPT_SENTINEL','iVBORw0KGgo=','0.123456789','0.987654321','11','22','33','44']) assert.equal(serialized.includes(secret),false,`logs omit ${secret}`);
+ } finally {server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
 
 test('gaze history preserves observed event details',async()=>{
