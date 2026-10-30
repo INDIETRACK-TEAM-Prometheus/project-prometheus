@@ -16,7 +16,7 @@ function apertureRatio(landmarks, upperIndices, lowerIndices, a, b) {
   return Math.abs((upper.x-lower.x)*(-dy/span)+(upper.y-lower.y)*(dx/span))/span;
 }
 
-function createBlinkState() { return {openAperture:null,openScore:null}; }
+function createBlinkState() { return {openAperture:null,openScore:null,upperLidBaseline:null}; }
 
 function assessBlink(state, score, aperture, fallbackThreshold) {
   if(Number.isFinite(aperture)&&aperture>=MIN_EYE_APERTURE_RATIO) {
@@ -84,7 +84,16 @@ export function createWebcamGazeController({video, mediaDevices, loadVision, was
           if(blinkScore===null||blink.closed)return {valid:false,reason:blinkScore===null?'blink_unknown':'blink',confidence:null,blinkScore,blinkScoreThreshold:blink.threshold,apertureRatio:aperture,apertureBaseline:blink.apertureBaseline,irisLandmarkCount:usable.length};
           const center = {x:usable.reduce((n,p)=>n+p.x,0)/usable.length, y:usable.reduce((n,p)=>n+p.y,0)/usable.length};
           const crop = eyeCrop(a,b,{x:0,y:0,width,height});
-          return {valid:!!crop,reason:crop?null:'crop_unavailable',confidence:null,blinkScore,blinkScoreThreshold:blink.threshold,apertureRatio:aperture,apertureBaseline:blink.apertureBaseline,irisLandmarkCount:usable.length,corners:[a,b],iris:center,crop};
+          const upperPoints=upperLid.map(pixel).filter(Boolean);
+          const upperCenter=upperPoints.length?{x:upperPoints.reduce((n,p)=>n+p.x,0)/upperPoints.length,y:upperPoints.reduce((n,p)=>n+p.y,0)/upperPoints.length}:null;
+          // Use image y so the cue has the same sign for both eye-corner orders.
+          const upperLidY=upperCenter?(upperCenter.y-(a.y+b.y)/2)/eyeSpan:null;
+          let upperLidDeltaY=null;
+          if(upperLidY!==null&&crop){
+            if(state.upperLidBaseline===null)state.upperLidBaseline=upperLidY;
+            upperLidDeltaY=upperLidY-state.upperLidBaseline;
+          }
+          return {valid:!!crop,reason:crop?null:'crop_unavailable',confidence:null,blinkScore,blinkScoreThreshold:blink.threshold,apertureRatio:aperture,apertureBaseline:blink.apertureBaseline,irisLandmarkCount:usable.length,corners:[a,b],iris:center,upperLidDeltaY,crop};
         }
         const leftEye = eye([263,362],[474,475,476,477],[385,386],[373,374],'eyeBlinkLeft',blinkStates.left);
         const rightEye = eye([33,133],[469,470,471,472],[158,159],[144,145],'eyeBlinkRight',blinkStates.right);

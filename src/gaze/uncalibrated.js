@@ -7,21 +7,27 @@ function irisOffset(eye) {
   if (eye?.valid !== true || eye.corners?.length !== 2 || !a || !b || !iris || ![a.x, a.y, b.x, b.y, iris.x, iris.y].every(finite)) return null;
   const span = Math.hypot(b.x - a.x, b.y - a.y);
   if (span < 1) return null;
-  return {x:(iris.x - (a.x + b.x) / 2) / span, y:(iris.y - (a.y + b.y) / 2) / span};
+  return {x:(iris.x - (a.x + b.x) / 2) / span, y:(iris.y - (a.y + b.y) / 2) / span, upperLidDeltaY:finite(eye.upperLidDeltaY)?eye.upperLidDeltaY:null};
 }
 
-// A demo-only heuristic: it uses iris position relative to the eye corners,
-// with arbitrary gains; it is not a calibrated or accuracy-validated gaze model.
+// The session-relative upper-lid cue and screen gains are fixed assumptions,
+// not a calibrated or accuracy-validated gaze model.
 export function estimateUncalibratedGaze({leftEye, rightEye} = {}) {
   const observations=[['left',irisOffset(leftEye)],['right',irisOffset(rightEye)]].filter(([,offset])=>offset);
   if (!observations.length) return {status:'unavailable', calibrationStatus:'uncalibrated', reason:'visible_eye_iris_landmarks_required', point:null};
-  const feature = {x:observations.reduce((sum,[,offset])=>sum+offset.x,0)/observations.length, y:observations.reduce((sum,[,offset])=>sum+offset.y,0)/observations.length};
+  const irisY=observations.reduce((sum,[,offset])=>sum+offset.y,0)/observations.length;
+  const upperLidObservations=observations.filter(([,offset])=>finite(offset.upperLidDeltaY));
+  const upperLidDeltaY=upperLidObservations.length?upperLidObservations.reduce((sum,[,offset])=>sum+offset.upperLidDeltaY,0)/upperLidObservations.length:null;
+  const verticalY=observations.reduce((sum,[,offset])=>sum+offset.y+(finite(offset.upperLidDeltaY)?offset.upperLidDeltaY:0),0)/observations.length;
+  const feature = {x:observations.reduce((sum,[,offset])=>sum+offset.x,0)/observations.length, y:verticalY};
+  const usesUpperLid=upperLidObservations.length>0;
   return {
     status:'uncalibrated_estimate',
     calibrationStatus:'uncalibrated',
-    method:observations.length===1?'single_eye_iris_relative_to_eye_corners':'iris_relative_to_eye_corners',
+    method:usesUpperLid?(observations.length===1?'single_eye_iris_plus_upper_lid_session_delta':'iris_plus_upper_lid_session_delta'):(observations.length===1?'single_eye_iris_relative_to_eye_corners':'iris_relative_to_eye_corners'),
     eyesUsed:observations.map(([side])=>side),
     feature,
+    verticalCue:{irisY,upperLidDeltaY,upperLidEyes:upperLidObservations.map(([side])=>side),combination:usesUpperLid?'iris_plus_session_delta':'iris_only'},
     // Raw front-camera x runs opposite to viewer screen x; fitted calibration learns its own direction.
     point:{x:clamp(.5 - 2 * feature.x), y:clamp(.5 + 4 * feature.y)}
   };

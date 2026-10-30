@@ -14,7 +14,7 @@ function harness(result = {faceLandmarks:[],faceBlendshapes:[]}) {
 }
 function openEyes() {
   const marks=Array.from({length:478},()=>({x:.5,y:.5}));
-  marks[263]={x:.6,y:.4}; marks[362]={x:.8,y:.4}; marks[33]={x:.2,y:.4}; marks[133]={x:.4,y:.4};
+  marks[263]={x:.8,y:.4}; marks[362]={x:.6,y:.4}; marks[33]={x:.2,y:.4}; marks[133]={x:.4,y:.4};
   [[474,.694,.4],[475,.706,.4],[476,.7,.396],[477,.7,.404],[469,.294,.4],[470,.306,.4],[471,.3,.396],[472,.3,.404]].forEach(([i,x,y])=>marks[i]={x,y});
   setAperture(marks,'left',.22);setAperture(marks,'right',.22);
   return marks;
@@ -51,8 +51,10 @@ test('webcam loads and captures only after explicit consent; no face means no ga
 });
 test('anatomical eye crop and iris indices follow MediaPipe topology', async()=>{
   const sample=await detectEyeSample(openEyes());
-  assert.equal(sample.leftEye.corners[0].x,384); assert.equal(sample.rightEye.corners[0].x,128);
+  assert.equal(sample.leftEye.corners[0].x,512); assert.equal(sample.rightEye.corners[0].x,128);
   assert.equal(sample.leftEye.iris.x,448); assert.equal(sample.rightEye.iris.x,192);
+  assert.equal(sample.leftEye.upperLidDeltaY,0);assert.equal(sample.rightEye.upperLidDeltaY,0);
+  assert.deepEqual(estimateUncalibratedGaze({leftEye:sample.leftEye,rightEye:sample.rightEye}).point,{x:.5,y:.5});
   assert.equal(sample.valid,true); assert.deepEqual(sample.rawScreenXY,{x:.5,y:.5});
 });
 test('zero-valued optional landmark quality is unknown; one weak iris point can be excluded',async()=>{
@@ -83,7 +85,15 @@ test('one valid eye can drive only the separate uncalibrated estimate, never bin
   assert.equal(sample.rightEye.reason,'blink');
   assert.equal(sample.features,null);assert.equal(sample.rawScreenXY,null);assert.equal(sample.valid,false);
   const estimate=estimateUncalibratedGaze({leftEye:sample.leftEye,rightEye:sample.rightEye});
-  assert.equal(estimate.status,'uncalibrated_estimate');assert.equal(estimate.method,'single_eye_iris_relative_to_eye_corners');assert.deepEqual(estimate.eyesUsed,['left']);
+  assert.equal(estimate.status,'uncalibrated_estimate');assert.equal(estimate.method,'single_eye_iris_plus_upper_lid_session_delta');assert.deepEqual(estimate.eyesUsed,['left']);
+});
+test('session-relative upper-lid deltas keep the same image-y sign for both corner orders',async()=>{
+  const baseline=openEyes(),moved=openEyes();
+  for(const i of [385,386,158,159])moved[i].y-=.01;
+  const [first,second]=await detectEyeSamples([{marks:baseline},{marks:moved}]);
+  assert.equal(first.leftEye.upperLidDeltaY,0);assert.equal(first.rightEye.upperLidDeltaY,0);
+  assert.ok(second.leftEye.upperLidDeltaY<0);assert.ok(second.rightEye.upperLidDeltaY<0);
+  assert.ok(Math.abs(second.leftEye.upperLidDeltaY-second.rightEye.upperLidDeltaY)<1e-12);
 });
 test('narrow open eyes adapt the blink score baseline and closed eyes never yield a gaze sample',async()=>{
   const narrow=openEyes();setAperture(narrow,'left',.045);setAperture(narrow,'right',.045);

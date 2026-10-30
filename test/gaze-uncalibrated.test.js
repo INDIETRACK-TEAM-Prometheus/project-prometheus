@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {estimateUncalibratedGaze,selectProvisionalIrisGaze} from '../src/gaze/uncalibrated.js';
 
-const eye = (x, y, valid=true) => ({valid, corners:[{x:0,y:0},{x:100,y:0}], iris:{x:50+x*100,y:y*100}});
+const eye = (x, y, valid=true, upperLidDeltaY=null, reversedCorners=false) => ({valid, corners:reversedCorners?[{x:100,y:0},{x:0,y:0}]:[{x:0,y:0},{x:100,y:0}], iris:{x:50+x*100,y:y*100},upperLidDeltaY});
 
 test('iris-only heuristic emits a clearly uncalibrated normalized estimate',()=>{
   const result=estimateUncalibratedGaze({leftEye:eye(0,0),rightEye:eye(0,0)});
@@ -19,6 +19,17 @@ test('estimate responds to iris movement relative to both eye corners',()=>{
   assert.ok(Math.abs(result.feature.y-.075)<1e-12);
   assert.ok(Math.abs(result.point.x-.2)<1e-12);
   assert.ok(Math.abs(result.point.y-.8)<1e-12);
+});
+
+test('session baseline keeps the initial estimate centered and bilateral lid deltas preserve direction with reversed corners',()=>{
+  const baseline=estimateUncalibratedGaze({leftEye:eye(0,0,true,0),rightEye:eye(0,0,true,0,true)});
+  assert.equal(baseline.method,'iris_plus_upper_lid_session_delta');assert.equal(baseline.feature.y,0);assert.equal(baseline.point.y,.5);
+  const both=estimateUncalibratedGaze({leftEye:eye(0,-.04,true,-.02),rightEye:eye(0,-.04,true,-.02,true)});
+  const one=estimateUncalibratedGaze({leftEye:eye(0,-.04,true,-.02)});
+  assert.deepEqual(both.verticalCue,{irisY:-.04,upperLidDeltaY:-.02,upperLidEyes:['left','right'],combination:'iris_plus_session_delta'});
+  assert.ok(Math.abs(both.feature.y+.06)<1e-12);assert.ok(Math.abs(both.point.y-.26)<1e-12);assert.deepEqual(both.point,one.point);
+  const legacy=estimateUncalibratedGaze({leftEye:eye(0,-.04),rightEye:eye(0,-.04)});
+  assert.equal(legacy.method,'iris_relative_to_eye_corners');assert.ok(Math.abs(legacy.point.y-.34)<1e-12);
 });
 test('single visible eye is isolated to a labeled uncalibrated estimate',()=>{
   const leftOnly=estimateUncalibratedGaze({leftEye:eye(.1,.05),rightEye:eye(0,0,false)});

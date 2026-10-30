@@ -399,7 +399,7 @@ async function boot() {
         $('#sceneStatus').textContent=`시작 장면 전용 SAM · 시선점 미사용 · ${provider==='Meta'?'Meta':'provider unknown'} ${model==='sam-3.1'?'SAM 3.1':'model unknown'} · 마스크 ${count}개 (0개는 물체 부재를 뜻하지 않음)`;
       }else if(diagnosticPurpose==='frozen-gaze-demo'||diagnosticPurpose==='uncalibrated-gaze-demo'){
         $('#worldSceneState').textContent=count?`시선 SAM 마스크 ${count}개`:'시선 SAM · 마스크 0개';
-        const label=diagnosticPurpose==='uncalibrated-gaze-demo'?'미교정 iris 추정':'보정된 브라우저 추정';
+        const label=diagnosticPurpose==='uncalibrated-gaze-demo'?'미교정 홍채·윗눈꺼풀 휴리스틱':'보정된 브라우저 추정';
         $('#sceneStatus').textContent=`잠정 고정 장면 시험 · ${frame.frameId} · ${label} ${diagnosticGazePoint.x.toFixed(3)}, ${diagnosticGazePoint.y.toFixed(3)} · 해당 프레임 기록 전용 · 현재 장면/시선 재사용 불가 · 물리적 시간 정렬 미검증 · ${provider==='Meta'?'Meta':'provider unknown'} ${model==='sam-3.1'?'SAM 3.1':'model unknown'} · 같은 프레임 마스크 ${count}개`;
       }else $('#sceneStatus').textContent=
         `고정 프레임 ${frame.frameId} · 관측 ${frame.observedAt.toFixed(1)} ms · 처리 ${performance.now().toFixed(1)} ms · ${provider==='Meta'?'Meta':'provider unknown'} ${model==='sam-3.1'?'SAM 3.1':'model unknown'} · 마스크 ${count}개`;
@@ -501,7 +501,7 @@ async function boot() {
   async function runUncalibratedGazeSample(){
     if(!sceneFrozen||!frozenScene||!provisionalGazeAllowed()||frozenGazeRequest)return;
     const token=++frozenGazeGeneration,sampleAfterMs=Math.max(frozenScene.stableAfterMs,performance.now()+1500),delay=Math.max(0,sampleAfterMs-performance.now());
-    $('#gazeSamDemoStatus').textContent='미교정 추정 · 고정 장면에서 신선한 iris 표본을 기다립니다. 캡처/콜백 시각은 잠정이며 물리적 시간 정렬은 미검증입니다.';
+    $('#gazeSamDemoStatus').textContent='미교정 홍채·윗눈꺼풀 휴리스틱 · 고정 장면에서 신선한 표본을 기다립니다. 정확도와 물리적 시간 정렬은 미검증입니다.';
     await new Promise(resolve=>{frozenGazeResolve=resolve;frozenGazeExpiry=setTimeout(()=>{frozenGazeExpiry=null;frozenGazeResolve=null;resolve();},delay);});
     if(token!==frozenGazeGeneration||!sceneFrozen||!frozenScene||!provisionalGazeAllowed())return;
     if(initialScenePending){$('#gazeSamDemoStatus').textContent='시작 장면 SAM 처리 완료 후 미교정 시선 SAM을 시작합니다.';return;}
@@ -511,11 +511,11 @@ async function boot() {
     frozenGazeRequest=true;diagnosticPurpose='uncalibrated-gaze-demo';diagnosticGazePoint=selected.point;diagnosticGazeTiming={sampleAtMs:selected.sampleAtMs,processedAtMs:selected.processedAtMs,timestampKind:selected.timestampKind,estimateStatus:'uncalibrated_estimate'};$('#sceneSnapshot').hidden=true;$('#runScene').disabled=true;$('#worldGazeState').textContent='미교정 추정 시선 SAM 요청 중';$('#worldSceneState').textContent='미교정 시선 SAM 요청 중';
     const timingLabel=selected.timestampKind==='browser_capture_estimate'?'브라우저 캡처 추정 시각':'콜백 시각(캡처 시각 아님)';
     const eyeBasis=selected.eyesUsed?.length===1?'한쪽 눈 기반':'양안 기반';
-    $('#gazeSamDemoStatus').textContent=`미교정 iris 추정 (${eyeBasis}) ${Math.floor(selected.point.x*frozenScene.frame.width)}, ${Math.floor(selected.point.y*frozenScene.frame.height)} px · ${timingLabel} · Meta SAM 유료 요청 · 물리적 시간 정렬 미검증`;updateFrozenGazeControls();
+    $('#gazeSamDemoStatus').textContent=`미교정 홍채·윗눈꺼풀 휴리스틱 (${eyeBasis}) ${Math.floor(selected.point.x*frozenScene.frame.width)}, ${Math.floor(selected.point.y*frozenScene.frame.height)} px · ${timingLabel} · Meta SAM 유료 요청 · 정확도와 물리적 시간 정렬 미검증`;updateFrozenGazeControls();
     let result;try{result=await diagnostic.run(frozenScene.frame,frozenScene.rgba.slice(),gazeSamPrompt(frozenScene.frame,selected.point));}catch{result={status:'failed'};}
     if(token!==frozenGazeGeneration)return;
     frozenGazeRequest=false;diagnosticPurpose='scene';diagnosticGazePoint=null;diagnosticGazeTiming=null;$('#runScene').disabled=false;
-    if(result.status==='ok'){$('#worldGazeState').textContent=`미교정 추정 (${eyeBasis}) · SAM 응답 · 시간 미검증`;$('#gazeSamDemoStatus').textContent=`SAM 결과 표시됨 · 미교정 iris 추정점 (${eyeBasis}) · ${timingLabel} · 고정 프레임 ${frozenScene.frame.frameId} · 물리적 시간 정렬 미검증 · 다음 호출은 5초 이상 후`;}
+    if(result.status==='ok'){$('#worldGazeState').textContent=`미교정 추정 (${eyeBasis}) · SAM 응답 · 시간 미검증`;$('#gazeSamDemoStatus').textContent=`SAM 결과 표시됨 · 미교정 홍채·윗눈꺼풀 휴리스틱 (${eyeBasis}) · ${timingLabel} · 고정 프레임 ${frozenScene.frame.frameId} · 정확도와 물리적 시간 정렬 미검증 · 다음 호출은 5초 이상 후`;}
     else {$('#worldGazeState').textContent=result.status==='cancelled'?'중단됨':'미교정 추정 SAM 실패';$('#worldSceneState').textContent=result.status==='cancelled'?'중단됨':'미교정 시선 SAM 실패';$('#gazeSamDemoStatus').textContent=result.status==='cancelled'?'SAM 요청 취소됨 · 동의/세션 확인 후 다시 시작합니다.':'미교정 추정 SAM 요청 실패 · 원격 서비스 또는 네트워크를 확인하세요. 물리적 시간 정렬은 미검증입니다.';}
     updateFrozenGazeControls();
   }
@@ -526,8 +526,8 @@ async function boot() {
     const bytes=source.viewport.width*source.viewport.height*4;if(bytes>history.maxBytes){$('#gazeSamDemoStatus').textContent='장면이 메모리 한도를 초과해 시선 SAM을 보류했습니다.';return false;}
     try{const gl=canvas.getContext('webgl');if(!gl)throw new Error('webgl unavailable');const rgba=new Uint8Array(bytes);gl.readPixels(0,0,source.viewport.width,source.viewport.height,gl.RGBA,gl.UNSIGNED_BYTE,rgba);const frozenAtMs=performance.now();frozenScene={frame:{frameId:source.frameId,observedAt:source.renderTsMs,width:source.viewport.width,height:source.viewport.height},rgba,frozenAtMs,stableAfterMs:frozenAtMs+500};sceneFrozen=true;}
     catch{sceneFrozen=false;frozenScene=null;$('#gazeSamDemoStatus').textContent='가상 장면 프레임 보존 실패 · 시선 SAM을 보류했습니다.';updateFrozenGazeControls();return false;}
-    diagnosticPurpose='scene';diagnosticGazePoint=null;diagnosticLayers=null;$('#sceneSnapshot').hidden=true;$('#sceneStatus').textContent=provisional?'미교정 iris 추정 전용 · 시선점은 데모 휴리스틱이며 정확도를 검증하지 않았습니다.':'교정 완료 · 다음 요청부터 보정된 브라우저 추정 시선점을 사용합니다. 시간 정렬은 미검증입니다.';$('#worldGazeState').textContent=provisional?'미교정 추정 표본 대기':'시선점 표본 대기';
-    $('#gazeSamDemoStatus').textContent=provisional?'미교정 추정 세션 · 고정 장면에서 신선한 iris 표본을 기다립니다.':'교정된 세션 · 고정 장면에서 최근 시선 표본을 기다립니다.';updateFrozenGazeControls();return true;
+    diagnosticPurpose='scene';diagnosticGazePoint=null;diagnosticLayers=null;$('#sceneSnapshot').hidden=true;$('#sceneStatus').textContent=provisional?'미교정 홍채·윗눈꺼풀 휴리스틱 전용 · 시선점 정확도를 검증하지 않았습니다.':'교정 완료 · 다음 요청부터 보정된 브라우저 추정 시선점을 사용합니다. 시간 정렬은 미검증입니다.';$('#worldGazeState').textContent=provisional?'미교정 추정 표본 대기':'시선점 표본 대기';
+    $('#gazeSamDemoStatus').textContent=provisional?'미교정 휴리스틱 세션 · 고정 장면에서 신선한 눈 랜드마크 표본을 기다립니다.':'교정된 세션 · 고정 장면에서 최근 시선 표본을 기다립니다.';updateFrozenGazeControls();return true;
   }
   async function runSceneOnlyAnalysis(){
     if(!samSessionAllowed()||initialScenePending)return {status:'withheld'};
@@ -647,7 +647,7 @@ async function boot() {
         if(screenPoint.x>=r.left&&screenPoint.x<r.left+r.width&&screenPoint.y>=r.top&&screenPoint.y<r.top+r.height)markerXY={x:(screenPoint.x-r.left)/r.width,y:(screenPoint.y-r.top)/r.height};
       }
       const timingLabel=sample.timestampKind==='callback_time_not_capture'?'콜백 시각(캡처 시각 아님)':'브라우저 캡처 추정 시각',eyeBasis=uncalibratedEstimate.eyesUsed?.length===1?'한쪽 눈':'양안';
-      gazeStatus.textContent=markerXY?`미교정 iris 추정 (${eyeBasis}) · ${timingLabel} · 시간 정렬 미검증`:sample.faceDetected===true?'미교정 추정점이 장면 밖입니다.':'얼굴/유효 홍채 미검출 · 미교정 추정 보류';
+      gazeStatus.textContent=markerXY?`미교정 홍채·윗눈꺼풀 휴리스틱 (${eyeBasis}) · ${timingLabel} · 정확도와 시간 정렬 미검증`:sample.faceDetected===true?'미교정 추정점이 장면 밖입니다.':'얼굴/유효 홍채 미검출 · 미교정 추정 보류';
       $('#worldGazeState').textContent=markerXY?`미교정 추정 (${eyeBasis}) · 데모 전용`:sample.faceDetected===true?'장면 밖 · 미교정 추정':'얼굴/유효 홍채 미검출';
     }else{
       gazeStatus.textContent=sample.valid?'시선 추정 · 시간 정렬 보류':`추적 보류 · ${sample.invalidReason}`;
@@ -713,8 +713,8 @@ async function boot() {
         message.textContent=environmentChanged?'저장 교정 모델을 재사용합니다. 화면/카메라 환경이 달라져 정확도를 보장할 수 없습니다. 재교정은 버튼으로 시작하세요.':'저장 교정 모델을 재사용합니다. 실사용 시선 정확도와 시간 정렬은 보장되지 않습니다.';
         gazeStatus.textContent=environmentChanged?'환경 변경 · 저장 교정 추정 · 정확도 보장 안 됨':'저장 교정 추정 · 정확도 보장 안 됨';
         $('#worldGazeState').textContent=environmentChanged?'환경 변경 · 정확도 미보장':'저장 교정 · 정확도 미보장';
-      }else {showCalibrationStatus('저장 교정 모델 없음 · 자동 교정 안 함 · 교정 버튼으로 시작');message.textContent='카메라 활성 · 미교정 iris 추정만 표시합니다. 시선 SAM과 선택 동의된 provisional 분석은 정확도·시간 정렬 미검증입니다.';gazeStatus.textContent='미교정 추정 대기';$('#worldGazeState').textContent='미교정 추정 대기';}
-      $('#gazeSamDemoStatus').textContent=activeCalibration?'저장 교정 사용 · 화면/환경 변경 시 정확도는 보장되지 않습니다.':'미교정 iris 추정 · 정확도와 물리적 시간 정렬은 검증되지 않았습니다.';
+      }else {showCalibrationStatus('저장 교정 모델 없음 · 자동 교정 안 함 · 교정 버튼으로 시작');message.textContent='카메라 활성 · 미교정 홍채·윗눈꺼풀 휴리스틱을 표시합니다. 시선 SAM과 선택 동의된 provisional 분석은 정확도·시간 정렬 미검증입니다.';gazeStatus.textContent='미교정 추정 대기';$('#worldGazeState').textContent='미교정 추정 대기';}
+      $('#gazeSamDemoStatus').textContent=activeCalibration?'저장 교정 사용 · 화면/환경 변경 시 정확도는 보장되지 않습니다.':'미교정 홍채·윗눈꺼풀 휴리스틱 · 정확도와 물리적 시간 정렬은 검증되지 않았습니다.';
       maybeStartFrozenGazeAutomation();
     }
     else if(result.reason==='start_failed') message.textContent='시작 실패: 로컬 MediaPipe 자산, 카메라 권한 및 브라우저 지원을 확인하세요. README 참조.';
