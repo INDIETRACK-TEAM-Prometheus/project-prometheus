@@ -1,6 +1,7 @@
 let tracker = null;
-let adaptedPoints = 0;
 let eyeCrop;
+let addCalibrationSample;
+let calibrationPoints;
 
 function fail(code, step, requestId) {
   self.postMessage({type:'error',fatal:true,code,step,...(requestId?{requestId}:{})});
@@ -8,20 +9,23 @@ function fail(code, step, requestId) {
 
 async function initialize() {
   importScripts('/vendor/webeyetrack.js');
-  const [{eyeCrop:cropEye}, {initializeWebEyeTrack}, vision] = await Promise.all([
+  const [{eyeCrop:cropEye}, {initializeWebEyeTrack}, adaptation, vision] = await Promise.all([
     import('/src/gaze/index.js'),
     import('/src/gaze/webeyetrack-bootstrap.js'),
+    import('/src/gaze/webeyetrack-adaptation.js'),
     import('/vendor/vision_bundle.mjs')
   ]);
   eyeCrop = cropEye;
+  calibrationPoints = adaptation.WEBEYETRACK_CALIBRATION_POINTS;
   tracker = await initializeWebEyeTrack({
     WebEyeTrack:self.WebEyeTrack,
     FaceLandmarkerClient:self.FaceLandmarkerClient,
     vision,
     wasmRoot:'/vendor',
     modelAssetPath:'/vendor/face_landmarker.task',
-    maxPoints:27
+    maxPoints:calibrationPoints
   });
+  addCalibrationSample = adaptation.createWebEyeTrackCalibrationAdapter(tracker,calibrationPoints);
   self.postMessage({type:'ready'});
 }
 
@@ -75,9 +79,8 @@ self.onmessage = event => {
     try {
       const result = tracker.latestGazeResult;
       if (!result || result.gazeState !== 'open' || !result.eyePatch || !Array.isArray(result.headVector) || !Array.isArray(result.faceOrigin3D)) throw new Error('fresh open-eye WebEyeTrack result required');
-      tracker.adapt([result.eyePatch],[result.headVector],[result.faceOrigin3D],[[message.target.x,message.target.y]]);
-      adaptedPoints++;
-      self.postMessage({type:'adapted',requestId:message.requestId,points:adaptedPoints});
+      const points = addCalibrationSample(result,message.target);
+      self.postMessage({type:'adapted',requestId:message.requestId,points});
     } catch (error) {
       self.postMessage({type:'adaptError',requestId:message.requestId,code:'worker_adaptation_failed',step:'worker_adaptation'});
     }

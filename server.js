@@ -14,6 +14,7 @@ for (const file of ['app.js','core.js','gaze/index.js','gaze/webcam.js','gaze/we
 // Optional user-provided local assets. Never proxy arbitrary URLs or expose paths.
 for (const [name,type] of [['vision_bundle.mjs','text/javascript; charset=utf-8'],['vision_wasm_internal.js','text/javascript; charset=utf-8'],['vision_wasm_internal.wasm','application/wasm'],['vision_wasm_nosimd_internal.js','text/javascript; charset=utf-8'],['vision_wasm_nosimd_internal.wasm','application/wasm'],['face_landmarker.task','application/octet-stream']]) files.set(`/vendor/${name}`,[`vendor/${name}`,type]);
 files.set('/vendor/webeyetrack.js',['node_modules/webeyetrack/dist/index.js','text/javascript; charset=utf-8']);
+files.set('/src/gaze/webeyetrack-adaptation.js',['src/gaze/webeyetrack-adaptation.js','text/javascript; charset=utf-8']);
 files.set('/web/model.json',['vendor/webeyetrack-model/model.json','application/json; charset=utf-8']);
 files.set('/web/group1-shard1of1.bin',['vendor/webeyetrack-model/group1-shard1of1.bin','application/octet-stream']);
 const maxBody = 8 * 1024 * 1024;

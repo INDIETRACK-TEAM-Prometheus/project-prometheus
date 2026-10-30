@@ -135,6 +135,8 @@ test('official adapt targets use normalized screen coordinates and commit valida
   await h.controller.beginCalibration();
   assert.equal(h.workers.length,2);
   h.video.emit({captureTime:110});await h.flush();
+  assert.equal(h.workers[0].messages.filter(entry=>entry.message.type==='frame').length,0,'the previous tracker is idle during calibration');
+  assert.equal(h.workers[1].messages.filter(entry=>entry.message.type==='frame').length,1,'only the calibration candidate processes frames');
   assert.equal(h.samples.at(-1).valid,false);
   const adapted=await h.controller.calibrate({x:600,y:150});
   assert.deepEqual(adapted,{adapted:true,points:1});

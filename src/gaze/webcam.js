@@ -215,8 +215,8 @@ export function createWebcamGazeController({
       context.drawImage(video,0,0,captureCanvas.width,captureCanvas.height);
       const imageData = context.getImageData(0,0,captureCanvas.width,captureCanvas.height);
       const sentAtMs = clockNow();
-      const records = new Set([activeWorker,candidateWorker].filter(Boolean));
-      for (const record of records) sendFrame(record,imageData,metadata,now,sentAtMs);
+      const record = selectedWorker();
+      if (record) sendFrame(record,imageData,metadata,now,sentAtMs);
     } catch {
       running = false;
       generation++;
