@@ -1,139 +1,287 @@
-import {eyeCrop, predictCalibration, withinCalibrationBounds} from './index.js';
 import {ClockDriftMonitor} from '../runtime/clock.js';
 
-// Unvalidated fallback cutoffs; each eye learns its open baseline from landmarks.
-const BLINK_SCORE_MARGIN = .15;
-const MIN_EYE_APERTURE_RATIO = .025;
-const EYE_CLOSURE_RATIO = .5;
+const finite = Number.isFinite;
 
-function apertureRatio(landmarks, upperIndices, lowerIndices, a, b) {
-  const mean = indices => {
-    const points=indices.map(i=>landmarks?.[i]).filter(p=>Number.isFinite(p?.x)&&Number.isFinite(p?.y)&&p.x>=0&&p.x<=1&&p.y>=0&&p.y<=1);
-    return points.length ? {x:points.reduce((sum,p)=>sum+p.x,0)/points.length,y:points.reduce((sum,p)=>sum+p.y,0)/points.length} : null;
-  };
-  const upper=mean(upperIndices),lower=mean(lowerIndices),dx=b.x-a.x,dy=b.y-a.y,span=Math.hypot(dx,dy);
-  if(!upper||!lower||span===0)return null;
-  return Math.abs((upper.x-lower.x)*(-dy/span)+(upper.y-lower.y)*(dx/span))/span;
-}
+// The page owns the only webcam stream. WebEyeTrack receives copied frame
+// pixels in a worker and never opens its own WebcamClient/getUserMedia stream.
+export function createWebcamGazeController({
+  video,
+  mediaDevices,
+  onSample = () => {},
+  onError = () => {},
+  workerFactory = (url, options) => new Worker(url, options),
+  createCanvas = () => document.createElement('canvas'),
+  clockNow = () => performance.now(),
+  getViewport = () => ({width:innerWidth,height:innerHeight})
+}) {
+  if (!video || !mediaDevices?.getUserMedia) throw new Error('video and mediaDevices required');
 
-function createBlinkState() { return {openAperture:null,openScore:null,upperLidBaseline:null}; }
+  let stream = null, running = false, starting = false, generation = 0, callbackId = null;
+  let activeWorker = null, candidateWorker = null, timing = null, clockMonitor = null;
+  let lastTime = -1, lastTimestamp = -1, requestNumber = 0, captureCanvas = null;
 
-function assessBlink(state, score, aperture, fallbackThreshold) {
-  if(Number.isFinite(aperture)&&aperture>=MIN_EYE_APERTURE_RATIO) {
-    if(state.openAperture===null||aperture>state.openAperture) {
-      state.openAperture=aperture;
-      state.openScore=score;
-    } else if(aperture>=state.openAperture*.75&&score!==null) {
-      state.openScore=state.openScore===null?score:Math.min(state.openScore,score);
-    }
+  function selectedWorker() { return candidateWorker ?? activeWorker; }
+
+  function terminateRecord(record, reason = 'WebEyeTrack worker stopped') {
+    if (!record) return;
+    record.worker.terminate();
+    for (const pending of record.pending.values()) pending.reject(new Error(reason));
+    record.pending.clear();
+    record.busy = false;
   }
-  const threshold=state.openScore===null?fallbackThreshold:Math.min(1,Math.max(fallbackThreshold,state.openScore+BLINK_SCORE_MARGIN));
-  const geometryClosed=Number.isFinite(aperture)&&(aperture<MIN_EYE_APERTURE_RATIO||(state.openAperture!==null&&aperture<state.openAperture*EYE_CLOSURE_RATIO));
-  return {threshold,apertureBaseline:state.openAperture,closed:geometryClosed||(score!==null&&score>=threshold)};
-}
 
-// All dependency/model loading is deferred until start. The integrator supplies
-// local or explicitly approved URLs and the import function; no default CDN.
-export function createWebcamGazeController({video, mediaDevices, loadVision, wasmRoot, modelAssetPath, onSample = () => {}, onError = () => {}, blinkThreshold = .5}) {
-  if (!video || !mediaDevices?.getUserMedia || typeof loadVision !== 'function' || !wasmRoot || !modelAssetPath) throw new Error('video, mediaDevices, loader, wasmRoot and modelAssetPath required');
-  if (!Number.isFinite(blinkThreshold) || blinkThreshold < 0 || blinkThreshold > 1) throw new Error('blink threshold must be between 0 and 1');
-  let stream = null, landmarker = null, running = false, generation = 0, callbackId = null, model = null, timing = null, clockMonitor = null, lastTime = -1, lastTimestamp = -1, starting = false;
-  let blinkStates={left:createBlinkState(),right:createBlinkState()};
-  const dispose = () => { if (callbackId !== null && video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(callbackId); callbackId = null; stream?.getTracks().forEach(t => t.stop()); stream = null; landmarker?.close(); landmarker = null; video.srcObject = null; };
-  const schedule = token => { if (running && token === generation) callbackId = video.requestVideoFrameCallback((now, metadata) => processFrame(token, now, metadata)); };
+  function createRecord(calibrated = false) {
+    const worker = workerFactory('/src/gaze/webeyetrack-worker.js', {type:'module', name:'prometheus-webeyetrack'});
+    const record = {worker, calibrated, ready:false, busy:false, pending:new Map(), latestSample:null, fatal:false};
+    const ready = new Promise((resolve, reject) => {
+      record.resolveReady = resolve;
+      record.rejectReady = reject;
+    });
+    worker.onmessage = event => {
+      const message = event.data;
+      if (message?.type === 'ready') {
+        record.ready = true;
+        record.resolveReady();
+        return;
+      }
+      if (message?.type === 'result') {
+        record.busy = false;
+        if (!running || selectedWorker() !== record) return;
+        const receivedAt = clockNow();
+        const sourceTimestamp = message.captureTimestampMs;
+        const hasCaptureTime = message.timestampKind === 'browser_capture_estimate';
+        const alignment = hasCaptureTime && clockMonitor ? clockMonitor.observe(sourceTimestamp, receivedAt) : null;
+        if (sourceTimestamp <= lastTimestamp && alignment?.reason !== 'clock_jump_detected') return;
+        if (sourceTimestamp > lastTimestamp) lastTimestamp = sourceTimestamp;
+        const timestamp = alignment?.status === 'ok' ? alignment.sessionMs : sourceTimestamp;
+        const faceDetected = message.faceDetected === true;
+        const norm = message.normPog;
+        const validNorm = Array.isArray(norm) && norm.length === 2 && norm.every(finite) && norm.every(value => value >= -.5 && value <= .5);
+        const gazeOpen = message.gazeState === 'open';
+        const features = faceDetected && gazeOpen && validNorm ? [norm[0] + .5, norm[1] + .5] : null;
+        const viewport = getViewport();
+        const rawScreenXY = faceDetected && gazeOpen && validNorm && finite(viewport.width) && finite(viewport.height) && viewport.width>0 && viewport.height>0
+          ? {x:Math.min(1-Number.EPSILON,Math.max(0,norm[0]+.5))*viewport.width,y:Math.min(1-Number.EPSILON,Math.max(0,norm[1]+.5))*viewport.height}
+          : null;
+        const calibrated = record.calibrated && faceDetected && gazeOpen && !!features && !!rawScreenXY;
+        const processedMs = receivedAt;
+        const sample = {
+          timestampMs:timestamp,
+          captureSourceMs:sourceTimestamp,
+          callbackTimestampMs:message.callbackTimestampMs,
+          timestampKind:message.timestampKind,
+          sourceClockId:hasCaptureTime?'browser_video_capture_estimate':null,
+          syncOffsetMs:timing?timing.cameraClockModel.sessionAnchorMs-timing.cameraClockModel.sourceAnchorMs:null,
+          syncDriftPpm:timing?.cameraClockModel.driftPpm??null,
+          syncUncertaintyMs:alignment?.status==='ok'?alignment.uncertaintyMs:null,
+          syncStatus:alignment?.status==='ok'?'measured_active':alignment?.reason??'unmeasured',
+          timingUnavailableReason:alignment?.status==='ok'?null:timing?'clock_alignment_withheld':'optical_reference_measurement_required',
+          scenePresentTsEstimateMs:null,
+          displayUncertaintyMs:null,
+          sceneAssociationEligible:calibrated && alignment?.status==='ok',
+          processedMs,
+          ingestTsMs:processedMs,
+          inferenceMs:Math.max(0,receivedAt-message.sentAtMs),
+          faceDetected,
+          gazeState:message.gazeState,
+          leftEye:{valid:faceDetected&&gazeOpen,reason:!faceDetected?'face_not_detected':gazeOpen?null:'eyes_closed',confidence:null,crop:message.eyeCrops?.left??null},
+          rightEye:{valid:faceDetected&&gazeOpen,reason:!faceDetected?'face_not_detected':gazeOpen?null:'eyes_closed',confidence:null,crop:message.eyeCrops?.right??null},
+          features,
+          normPog:validNorm?[...norm]:null,
+          rawScreenXY,
+          valid:calibrated,
+          invalidReason:!faceDetected?'face_not_detected':!gazeOpen?'eyes_closed':!validNorm?'gaze_unavailable':!record.calibrated?'calibration_required':null,
+          width:message.width,
+          height:message.height,
+          modelDurations:message.durations
+        };
+        record.latestSample = sample;
+        try { onSample(sample); } catch (error) { onError(error); }
+        return;
+      }
+      if (message?.type === 'adapted' || message?.type === 'adaptError') {
+        const pending = record.pending.get(message.requestId);
+        if (!pending) return;
+        record.pending.delete(message.requestId);
+        if (message.type === 'adapted') pending.resolve({adapted:true,points:message.points});
+        else pending.reject(new Error(message.error || 'WebEyeTrack adaptation failed'));
+        return;
+      }
+      if (message?.type === 'error') {
+        const error = new Error(message.error || 'WebEyeTrack worker failed');
+        if (!record.ready) record.rejectReady(error);
+        if (message.requestId && record.pending.has(message.requestId)) {
+          const pending = record.pending.get(message.requestId);
+          record.pending.delete(message.requestId);
+          pending.reject(error);
+        }
+        if (message.fatal) {
+          record.fatal = true;
+          record.busy = false;
+          if (record.ready && running && selectedWorker() === record) onError(error);
+        }
+      }
+    };
+    worker.onerror = event => {
+      const error = new Error(event.message || 'WebEyeTrack worker could not start');
+      if (!record.ready) record.rejectReady(error);
+      if (record.ready && running && selectedWorker() === record) onError(error);
+    };
+    worker.postMessage({type:'init'});
+    return {record, ready};
+  }
+
+  const stopCamera = () => {
+    if (callbackId !== null && video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(callbackId);
+    callbackId = null;
+    stream?.getTracks().forEach(track => track.stop());
+    stream = null;
+    video.pause?.();
+    video.srcObject = null;
+  };
+
+  function sendFrame(record, imageData, metadata, now, sentAtMs) {
+    if (!record?.ready || record.busy || record.fatal) return;
+    record.busy = true;
+    const pixels = imageData.data.slice();
+    record.worker.postMessage({
+      type:'frame',
+      width:imageData.width,
+      height:imageData.height,
+      pixels:pixels.buffer,
+      captureTimestampMs:finite(metadata.captureTime)?metadata.captureTime:now,
+      callbackTimestampMs:now,
+      sentAtMs,
+      timestampKind:finite(metadata.captureTime)?'browser_capture_estimate':'callback_time_not_capture'
+    },[pixels.buffer]);
+  }
+
+  function schedule(token) {
+    if (running && token === generation) callbackId = video.requestVideoFrameCallback((now, metadata) => processFrame(token, now, metadata));
+  }
+
   function processFrame(token, now, metadata = {}) {
     callbackId = null;
     if (!running || token !== generation) return;
     try {
-      if (video.currentTime !== lastTime && video.videoWidth > 0 && video.videoHeight > 0) {
-        lastTime = video.currentTime;
-        // Browser captureTime, when available, is an estimate in the performance clock domain.
-        const hasCaptureTime=Number.isFinite(metadata.captureTime), sourceTimestamp = hasCaptureTime ? metadata.captureTime : now;
-        const alignment=hasCaptureTime && clockMonitor ? clockMonitor.observe(sourceTimestamp,now) : null;
-        if (sourceTimestamp <= lastTimestamp && alignment?.reason!=='clock_jump_detected') { schedule(token); return; }
-        if(sourceTimestamp>lastTimestamp)lastTimestamp = sourceTimestamp;
-        const timestamp=alignment?.status==='ok'?alignment.sessionMs:sourceTimestamp;
-        const inferenceStart=performance.now();
-        const result = landmarker.detectForVideo(video, timestamp);
-        const inferenceMs=performance.now()-inferenceStart;
-        const landmarks = result.faceLandmarks?.[0];
-        const shape = result.faceBlendshapes?.[0]?.categories ?? [];
-        const score = name => { const value=shape.find(s => s.categoryName === name)?.score; return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null; };
-        const width = video.videoWidth, height = video.videoHeight;
-        const pixel = i => { const p = landmarks?.[i]; return p && Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 ? {x:p.x*width,y:p.y*height} : null; };
-        function eye(corners, iris, upperLid, lowerLid, blinkName, state) {
-          const blinkScore=score(blinkName),a=pixel(corners[0]),b=pixel(corners[1]);
-          if(!a||!b)return {valid:false,reason:'landmarks_unavailable',confidence:null,blinkScore};
-          const metadata=[...corners,...iris].map(i=>landmarks?.[i]);
-          if(metadata.some(p=>['visibility','presence'].some(k=>p?.[k]!=null&&(!Number.isFinite(p[k])||p[k]<0||p[k]>1))))return {valid:false,reason:'landmark_quality_invalid',confidence:null,blinkScore};
-          const quality=p=>{
-            // Optional quality fields may arrive as zero when the provider omits them.
-            const values=['visibility','presence'].map(k=>p?.[k]).filter(v=>Number.isFinite(v)&&v>0);
-            return values.length?Math.min(...values):null;
-          };
-          const cornerQuality=corners.map(i=>quality(landmarks?.[i]));
-          if(cornerQuality.some(q=>q!==null&&q<.5))return {valid:false,reason:'landmark_visibility_low',confidence:null,blinkScore};
-          const irisPoints=iris.map(i=>({point:pixel(i),quality:quality(landmarks?.[i])}));
-          const usable=irisPoints.filter(item=>item.point&&(item.quality===null||item.quality>=.5)).map(item=>item.point);
-          if(usable.length<3)return {valid:false,reason:irisPoints.some(item=>item.quality!==null&&item.quality<.5)?'landmark_visibility_low':'landmarks_unavailable',confidence:null,blinkScore};
-          const eyeSpan=Math.hypot(b.x-a.x,b.y-a.y),irisSpan=Math.max(...usable.flatMap((p,i)=>usable.slice(i+1).map(q=>Math.hypot(p.x-q.x,p.y-q.y))));
-          if(eyeSpan<4||irisSpan<1)return {valid:false,reason:'landmarks_degenerate',confidence:null,blinkScore};
-          const aperture=apertureRatio(landmarks,upperLid,lowerLid,{x:a.x/width,y:a.y/height},{x:b.x/width,y:b.y/height});
-          if(aperture===null)return {valid:false,reason:'blink_geometry_unavailable',confidence:null,blinkScore};
-          const blink=assessBlink(state,blinkScore,aperture,blinkThreshold);
-          if(blinkScore===null||blink.closed)return {valid:false,reason:blinkScore===null?'blink_unknown':'blink',confidence:null,blinkScore,blinkScoreThreshold:blink.threshold,apertureRatio:aperture,apertureBaseline:blink.apertureBaseline,irisLandmarkCount:usable.length};
-          const center = {x:usable.reduce((n,p)=>n+p.x,0)/usable.length, y:usable.reduce((n,p)=>n+p.y,0)/usable.length};
-          const crop = eyeCrop(a,b,{x:0,y:0,width,height});
-          const upperPoints=upperLid.map(pixel).filter(Boolean);
-          const upperCenter=upperPoints.length?{x:upperPoints.reduce((n,p)=>n+p.x,0)/upperPoints.length,y:upperPoints.reduce((n,p)=>n+p.y,0)/upperPoints.length}:null;
-          // Use image y so the cue has the same sign for both eye-corner orders.
-          const upperLidY=upperCenter?(upperCenter.y-(a.y+b.y)/2)/eyeSpan:null;
-          let upperLidDeltaY=null;
-          if(upperLidY!==null&&crop){
-            if(state.upperLidBaseline===null)state.upperLidBaseline=upperLidY;
-            upperLidDeltaY=upperLidY-state.upperLidBaseline;
-          }
-          return {valid:!!crop,reason:crop?null:'crop_unavailable',confidence:null,blinkScore,blinkScoreThreshold:blink.threshold,apertureRatio:aperture,apertureBaseline:blink.apertureBaseline,irisLandmarkCount:usable.length,corners:[a,b],iris:center,upperLidDeltaY,crop};
-        }
-        const leftEye = eye([263,362],[474,475,476,477],[385,386],[373,374],'eyeBlinkLeft',blinkStates.left);
-        const rightEye = eye([33,133],[469,470,471,472],[158,159],[144,145],'eyeBlinkRight',blinkStates.right);
-        const feature = e => { const [a,b]=e.corners; const d=Math.hypot(b.x-a.x,b.y-a.y); return [(e.iris.x-(a.x+b.x)/2)/d,(e.iris.y-(a.y+b.y)/2)/d]; };
-        const valid = !!landmarks && leftEye.valid && rightEye.valid;
-        const features = valid ? [...feature(leftEye),...feature(rightEye)] : null;
-        const inBounds = valid && model && withinCalibrationBounds(model,features);
-        const rawScreenXY = inBounds ? predictCalibration(model,features) : null;
-        const processedMs=performance.now();
-        onSample({timestampMs:timestamp,captureSourceMs:sourceTimestamp,callbackTimestampMs:now,timestampKind:hasCaptureTime ? 'browser_capture_estimate' : 'callback_time_not_capture',sourceClockId:hasCaptureTime ? 'browser_video_capture_estimate' : null,syncOffsetMs:timing?timing.cameraClockModel.sessionAnchorMs-timing.cameraClockModel.sourceAnchorMs:null,syncDriftPpm:timing?.cameraClockModel.driftPpm??null,syncUncertaintyMs:alignment?.status==='ok'?alignment.uncertaintyMs:null,syncStatus:alignment?.status==='ok'?'measured_active':alignment?.reason??'unmeasured',timingUnavailableReason:alignment?.status==='ok'?null:timing?'clock_alignment_withheld':'optical_reference_measurement_required',scenePresentTsEstimateMs:null,displayUncertaintyMs:null,sceneAssociationEligible:alignment?.status==='ok',processedMs,ingestTsMs:performance.now(),inferenceMs,faceDetected:!!landmarks,leftEye,rightEye,features,rawScreenXY,valid:!!rawScreenXY,invalidReason:!landmarks ? 'face_not_detected' : !valid ? 'eye_invalid' : !model ? 'calibration_required' : !inBounds ? 'outside_calibration_bounds' : null,width,height});
-      }
-      schedule(token);
-    } catch (error) { running = false; generation++; dispose(); onError(error); }
+      if (video.currentTime === lastTime || video.videoWidth < 1 || video.videoHeight < 1) { schedule(token); return; }
+      lastTime = video.currentTime;
+      const sourceTimestamp = finite(metadata.captureTime)?metadata.captureTime:now;
+      if (sourceTimestamp <= lastTimestamp) { schedule(token); return; }
+      captureCanvas ??= createCanvas();
+      captureCanvas.width = video.videoWidth;
+      captureCanvas.height = video.videoHeight;
+      const context = captureCanvas.getContext('2d',{willReadFrequently:true});
+      if (!context) throw new Error('camera frame canvas unavailable');
+      context.drawImage(video,0,0,captureCanvas.width,captureCanvas.height);
+      const imageData = context.getImageData(0,0,captureCanvas.width,captureCanvas.height);
+      const sentAtMs = clockNow();
+      const records = new Set([activeWorker,candidateWorker].filter(Boolean));
+      for (const record of records) sendFrame(record,imageData,metadata,now,sentAtMs);
+    } catch (error) {
+      running = false;
+      generation++;
+      stopCamera();
+      onError(error);
+      return;
+    }
+    schedule(token);
   }
+
   return {
     async start({userInitiated = false, cameraConsent = false, videoConstraints = true} = {}) {
       if (!userInitiated || !cameraConsent) throw new Error('explicit start and camera consent required');
       if (running || starting) throw new Error('already started or starting');
       if (typeof video.requestVideoFrameCallback !== 'function') throw new Error('requestVideoFrameCallback unavailable');
-      starting = true; const token = ++generation;
+      starting = true;
+      const token = ++generation;
       try {
-        const vision = await loadVision();
-        if (token !== generation) return;
-        const files = await vision.FilesetResolver.forVisionTasks(wasmRoot);
-        if (token !== generation) return;
-        const detector = await vision.FaceLandmarker.createFromOptions(files, {baseOptions:{modelAssetPath},runningMode:'VIDEO',numFaces:1,outputFaceBlendshapes:true});
-        if (token !== generation) { detector.close(); return; }
-        landmarker = detector;
+        const created = createRecord(false);
+        activeWorker = created.record;
+        await created.ready;
+        if (token !== generation) throw new Error('start cancelled');
         const acquired = await mediaDevices.getUserMedia({video:videoConstraints,audio:false});
-        if (token !== generation) { acquired.getTracks().forEach(t=>t.stop()); return; }
-        stream = acquired; video.srcObject = stream; await video.play();
-        if (token !== generation) return;
-        lastTime = -1; lastTimestamp = -1; blinkStates={left:createBlinkState(),right:createBlinkState()};clockMonitor?.reset(); running = true; schedule(token);
+        if (token !== generation) { acquired.getTracks().forEach(track=>track.stop()); throw new Error('start cancelled'); }
+        stream = acquired;
+        video.srcObject = stream;
+        await video.play();
+        if (token !== generation) throw new Error('start cancelled');
+        lastTime = -1;
+        lastTimestamp = -1;
+        clockMonitor?.reset();
+        running = true;
+        schedule(token);
         const settings = stream.getVideoTracks()[0]?.getSettings?.() ?? {};
-        return {width:settings.width ?? null,height:settings.height ?? null,frameRate:settings.frameRate ?? null,deviceId:settings.deviceId ?? null};
-      } catch (error) { if (token === generation) { running = false; dispose(); } throw error; }
-      finally { if (token === generation) starting = false; }
+        return {width:settings.width??null,height:settings.height??null,frameRate:settings.frameRate??null};
+      } catch (error) {
+        if (token === generation) {
+          running = false;
+          stopCamera();
+          terminateRecord(candidateWorker,error.message);
+          terminateRecord(activeWorker,error.message);
+          candidateWorker = null;
+          activeWorker = null;
+        }
+        throw error;
+      } finally {
+        if (token === generation) starting = false;
+      }
     },
-    setCalibration(calibration) { if (calibration && calibration.dimension !== 4) throw new Error('four-feature calibration required'); model = calibration; },
-    setTimingCalibration(calibration) { if(calibration && (calibration.status!=='measurement_record_validated' || !calibration.cameraClockModel || !calibration.displayModels)) throw new Error('validated optical timing calibration required');timing=calibration;clockMonitor=calibration?new ClockDriftMonitor(calibration.cameraClockModel,calibration.cameraCallbackLagMs):null; },
-    stop() { generation++; starting = false; running = false; model = null; timing=null;clockMonitor=null;blinkStates={left:createBlinkState(),right:createBlinkState()};dispose(); }
+    async beginCalibration() {
+      if (!running || starting || candidateWorker) throw new Error('calibration unavailable');
+      const created = createRecord(false);
+      candidateWorker = created.record;
+      try {
+        await created.ready;
+        if (!running || candidateWorker !== created.record) throw new Error('calibration cancelled');
+      } catch (error) {
+        if (candidateWorker === created.record) candidateWorker = null;
+        terminateRecord(created.record,error.message);
+        throw error;
+      }
+    },
+    async calibrate(target) {
+      const record = candidateWorker;
+      const sample = record?.latestSample;
+      if (!record || !running || !sample?.faceDetected || sample.gazeState !== 'open' || !sample.features || clockNow()-sample.processedMs>250) throw new Error('fresh open-eye WebEyeTrack sample required');
+      const viewport = getViewport();
+      if (!finite(target?.x) || !finite(target?.y) || !finite(viewport?.width) || !finite(viewport?.height) || viewport.width<=0 || viewport.height<=0) throw new Error('invalid calibration target');
+      const requestId = `adapt-${++requestNumber}`;
+      const promise = new Promise((resolve,reject)=>record.pending.set(requestId,{resolve,reject}));
+      record.worker.postMessage({type:'adapt',requestId,target:{x:target.x/viewport.width-.5,y:target.y/viewport.height-.5}});
+      return promise;
+    },
+    commitCalibration() {
+      if (!candidateWorker || !running) throw new Error('calibration candidate unavailable');
+      const previous = activeWorker;
+      candidateWorker.calibrated = true;
+      activeWorker = candidateWorker;
+      candidateWorker = null;
+      if (previous && previous !== activeWorker) terminateRecord(previous);
+    },
+    cancelCalibration() {
+      const candidate = candidateWorker;
+      candidateWorker = null;
+      terminateRecord(candidate,'calibration cancelled');
+    },
+    setTimingCalibration(calibration) {
+      if (calibration && (calibration.status !== 'measurement_record_validated' || !calibration.cameraClockModel || !calibration.displayModels)) throw new Error('validated optical timing calibration required');
+      timing = calibration;
+      clockMonitor = calibration ? new ClockDriftMonitor(calibration.cameraClockModel,calibration.cameraCallbackLagMs) : null;
+      lastTimestamp = -1;
+    },
+    stop() {
+      generation++;
+      starting = false;
+      running = false;
+      timing = null;
+      clockMonitor = null;
+      stopCamera();
+      terminateRecord(candidateWorker);
+      terminateRecord(activeWorker);
+      candidateWorker = null;
+      activeWorker = null;
+      captureCanvas = null;
+    }
   };
 }

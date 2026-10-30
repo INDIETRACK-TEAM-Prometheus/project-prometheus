@@ -16,9 +16,9 @@ npm start
 
 ## 웹캠 자산과 교정
 
-눈 검출에 필요한 MediaPipe Web Face Landmarker 실행 파일과 모델은 이 소스에 포함되지 않습니다. 공식 [Web 가이드](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker/web_js)에서 호환되는 `@mediapipe/tasks-vision` 패키지 및 Face Landmarker 모델을 직접 확보하고 라이선스와 출처를 확인한 후, 프로젝트의 `vendor/`에 `vision_bundle.mjs`, 해당 패키지의 WASM 런타임 파일들(`vision_wasm_internal.js`, `vision_wasm_internal.wasm`, `vision_wasm_nosimd_internal.js`, `vision_wasm_nosimd_internal.wasm`), 모델을 `face_landmarker.task` 이름으로 배치하세요. 패키지 버전과 모델을 함께 고정하고 호환성을 직접 검증해야 합니다. 서버는 이 이름들만 로컬 제공하며 자동 다운로드하지 않습니다. 자산이 없으면 카메라 시작이 실패하며 카메라를 열지 않습니다. 브라우저는 `requestVideoFrameCallback`을 지원해야 합니다.
+`webeyetrack@0.0.2`와 공식 WebEyeTrack gaze model은 로컬 설치·제공됩니다. 기존 Face Landmarker의 WASM 실행 파일과 `face_landmarker.task`는 계속 `vendor/`에 준비해야 합니다. 공식 [Web 가이드](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker/web_js)에서 호환 자산의 라이선스와 출처를 확인하고, 아래 이름으로 배치하세요: `vision_bundle.mjs`, `vision_wasm_internal.js`, `vision_wasm_internal.wasm`, `vision_wasm_nosimd_internal.js`, `vision_wasm_nosimd_internal.wasm`, `face_landmarker.task`. WebEyeTrack 모델은 `vendor/webeyetrack-model/`에 포함되고 local server의 `/web/` 경로로만 로드됩니다. 런타임은 외부 CDN을 요청하지 않습니다. 상세한 출처, 해시, 라이선스, 제약은 [WebEyeTrack 통합 기록](docs/webeyetrack-integration.md)을 참조하세요. 모델이나 MediaPipe 자산이 빠지면 카메라를 열기 전에 시작이 실패합니다. 브라우저는 `requestVideoFrameCallback`을 지원해야 합니다.
 
-자산과 권한이 준비되면 카메라 동의 후 교정 안내가 자동으로 열립니다. 표적을 보며 클릭합니다. 클릭은 관리 조작이지 의도 입력이 아닙니다. 학습 9개 지점 × 3회 뒤 별도 검증 9개 지점 × 3회가 실행됩니다. 유효율 80% 이상, 화면 대각선 대비 p95 오차 5% 이하여야 추정이 활성화됩니다. 창 크기 변경 시 교정이 폐기됩니다. **교정 / 검증 다시 시작** 버튼으로 다시 할 수 있습니다. 이 프로토타입의 교정, 카메라, 좌우 라벨, 조명·머리 움직임 품질은 실제 사용자·기기에서 아직 검증되지 않았습니다. 검증 결과가 실제 제품 수용이나 일반화를 뜻하지 않습니다.
+사용자가 카메라를 시작한 뒤 **교정 / 검증 다시 시작**을 누르면 WebEyeTrack 공식 `adapt()`가 27개 표적 응시로 개인화를 수행하고, 별도 27개 표적으로 독립 검증합니다. 클릭은 관리 조작이지 의도 입력이 아닙니다. 유효율 80% 이상, 화면 대각선 대비 p95 오차 5% 이하여야 해당 세션에서 추정이 활성화됩니다. upstream에는 교정 저장/복원 API가 없으므로 카메라 정지나 페이지 새로고침 뒤 다시 교정해야 합니다. 기존 수제 교정 저장값은 덮어쓰지 않으며 새 엔진에서는 사용하지 않습니다. 좌우 눈 preview는 현재 카메라 프레임에서 로컬로 그립니다. 영상, crop, raw landmarks는 API로 보내거나 저장하지 않습니다. 교정과 카메라 품질은 실제 사용자·기기에서 QA가 더 필요하며 검증 표본은 제품 정확도나 일반화를 보장하지 않습니다.
 
 ## 현재 한계와 게이트
 

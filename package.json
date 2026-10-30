@@ -11,6 +11,7 @@
     "node": "^20.17.0 || >=22.9.0"
   },
   "dependencies": {
-    "@meta-sam/parser": "0.1.0"
+    "@meta-sam/parser": "0.1.0",
+    "webeyetrack": "0.0.2"
   }
 }

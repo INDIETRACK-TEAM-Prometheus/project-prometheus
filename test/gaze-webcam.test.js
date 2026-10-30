@@ -1,134 +1,123 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWebcamGazeController} from '../src/gaze/webcam.js';
-import {estimateUncalibratedGaze} from '../src/gaze/uncalibrated.js';
 
-function harness(result = {faceLandmarks:[],faceBlendshapes:[]}) {
-  let callback, mediaRequest, currentResult=result, loads=0, captures=0, stops=0, closes=0;
-  const video={videoWidth:640,videoHeight:480,currentTime:1,srcObject:null,play:async()=>{},requestVideoFrameCallback(fn){callback=fn;return 1;},cancelVideoFrameCallback(){callback=null;}};
-  const detector={detectForVideo(){return currentResult;},close(){closes++;}};
-  const loadVision=async()=>{loads++;return {FilesetResolver:{forVisionTasks:async()=>({})},FaceLandmarker:{createFromOptions:async()=>detector}};};
-  const track={stop(){stops++;},getSettings(){return {width:640,height:480,frameRate:30,deviceId:'device'};}};
-  const mediaDevices={getUserMedia:async request=>{mediaRequest=request;captures++;return {getTracks:()=>[track],getVideoTracks:()=>[track]};}};
-  return {video,loadVision,mediaDevices,counts:()=>({loads,captures,stops,closes}),mediaRequest:()=>mediaRequest,setResult:value=>{currentResult=value;},frame:(now=123,metadata={})=>{video.currentTime+=1;callback(now,metadata);}};
+function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null}={}) {
+  let callback=null, currentTime=0, nowMs=100, cameraOpens=0, trackStops=0, frameCounter=0;
+  const workers=[];
+  const track={stop(){trackStops++;},getSettings(){return {width:2,height:2,frameRate:30,deviceId:'private-device-id'};}};
+  const mediaDevices={async getUserMedia(request){cameraOpens++;assert.deepEqual(request.audio,false);return acquireCamera?acquireCamera(request):{getTracks:()=>[track],getVideoTracks:()=>[track]};}};
+  const video={
+    videoWidth:2,videoHeight:2,currentTime:0,srcObject:null,
+    async play(){},pause(){},
+    requestVideoFrameCallback(fn){callback=fn;return ++frameCounter;},
+    cancelVideoFrameCallback(){callback=null;},
+    emit({captureTime}={}){currentTime++;this.currentTime=currentTime;const fn=callback;callback=null;assert.ok(fn,'a video-frame callback should be scheduled');fn(nowMs++,captureTime===undefined?{}:{captureTime});}
+  };
+  const workerFactory=(url,options)=>{
+    const worker={url,options,messages:[],terminated:false,onmessage:null,onerror:null,
+      postMessage(message,transfer=[]){
+        this.messages.push({message,transfer});
+        if(message.type==='init')queueMicrotask(()=>this.onmessage?.({data:{type:'ready'}}));
+        if(message.type==='frame')queueMicrotask(()=>this.onmessage?.({data:{
+          type:'result',faceDetected:true,gazeState:'open',normPog,
+          eyeCrops:{left:{x:0,y:0,width:1,height:1},right:{x:1,y:0,width:1,height:1}},
+          durations:{total:.01},width:message.width,height:message.height,
+          captureTimestampMs:message.captureTimestampMs,callbackTimestampMs:message.callbackTimestampMs,
+          timestampKind:message.timestampKind,sentAtMs:message.sentAtMs
+        }}));
+        if(message.type==='adapt')queueMicrotask(()=>this.onmessage?.({data:{type:'adapted',requestId:message.requestId,points:1}}));
+      },terminate(){this.terminated=true;}
+    };
+    workers.push(worker);return worker;
+  };
+  const createCanvas=()=>{
+    const canvas={width:0,height:0,getContext(){return {
+      drawImage(){},
+      getImageData(_x,_y,width,height){return {width,height,data:new Uint8ClampedArray(width*height*4)}}
+    };}};
+    return canvas;
+  };
+  const samples=[];
+  const controller=createWebcamGazeController({
+    video,mediaDevices,workerFactory,createCanvas,
+    clockNow:()=>nowMs++,getViewport:()=>({width:800,height:600}),
+    onSample:sample=>samples.push(sample),onError:error=>{throw error;}
+  });
+  return {controller,video,workers,samples,counters:()=>({cameraOpens,trackStops}),async flush(){await new Promise(resolve=>setImmediate(resolve));}};
 }
-function openEyes() {
-  const marks=Array.from({length:478},()=>({x:.5,y:.5}));
-  marks[263]={x:.8,y:.4}; marks[362]={x:.6,y:.4}; marks[33]={x:.2,y:.4}; marks[133]={x:.4,y:.4};
-  [[474,.694,.4],[475,.706,.4],[476,.7,.396],[477,.7,.404],[469,.294,.4],[470,.306,.4],[471,.3,.396],[472,.3,.404]].forEach(([i,x,y])=>marks[i]={x,y});
-  setAperture(marks,'left',.22);setAperture(marks,'right',.22);
-  return marks;
-}
-function setAperture(marks,side,ratio) {
-  const upper=side==='left'?[385,386]:[158,159],lower=side==='left'?[373,374]:[144,145],gap=.2*ratio;
-  for(const i of upper)marks[i]={x:marks[i].x,y:.4-gap/2};
-  for(const i of lower)marks[i]={x:marks[i].x,y:.4+gap/2};
-}
-const faceResult=(marks,leftScore=0,rightScore=0)=>({faceLandmarks:[marks],faceBlendshapes:[{categories:[{categoryName:'eyeBlinkLeft',score:leftScore},{categoryName:'eyeBlinkRight',score:rightScore}]}]});
-async function detectEyeSample(marks, leftScore=0, rightScore=0) {
-  const h=harness(faceResult(marks,leftScore,rightScore)), samples=[];
-  const c=createWebcamGazeController({...h,wasmRoot:'/wasm',modelAssetPath:'/model.task',onSample:s=>samples.push(s)});
-  await c.start({userInitiated:true,cameraConsent:true});
-  c.setCalibration({dimension:4,x:[.5,0,0,0,0],y:[.5,0,0,0,0],featureBounds:Array.from({length:4},()=>({min:-1,max:1}))});
-  h.frame(); c.stop(); return samples[0];
-}
-async function detectEyeSamples(frames) {
-  const samples=[],h=harness(faceResult(frames[0].marks,frames[0].leftScore,frames[0].rightScore));
-  const c=createWebcamGazeController({...h,wasmRoot:'/wasm',modelAssetPath:'/model.task',onSample:s=>samples.push(s)});
-  await c.start({userInitiated:true,cameraConsent:true});
-  c.setCalibration({dimension:4,x:[.5,0,0,0,0],y:[.5,0,0,0,0],featureBounds:Array.from({length:4},()=>({min:-1,max:1}))});
-  for(const [index,frame] of frames.entries()){h.setResult(faceResult(frame.marks,frame.leftScore,frame.rightScore));h.frame(123+index);}
-  c.stop();return samples;
-}
-test('webcam loads and captures only after explicit consent; no face means no gaze', async()=>{
-  const h=harness(), samples=[];
-  const c=createWebcamGazeController({...h,wasmRoot:'/wasm',modelAssetPath:'/model.task',onSample:s=>samples.push(s)});
-  await assert.rejects(c.start({userInitiated:true}),/consent/); assert.equal(h.counts().loads,0); assert.equal(h.counts().captures,0);
-  const settings=await c.start({userInitiated:true,cameraConsent:true}); assert.equal(settings.width,640);
-  h.frame(); assert.equal(samples[0].invalidReason,'face_not_detected'); assert.equal(samples[0].rawScreenXY,null); assert.equal(samples[0].timestampKind,'callback_time_not_capture');
-  assert.equal(samples[0].syncUncertaintyMs,null); assert.equal(samples[0].sceneAssociationEligible,false);
-  c.stop(); assert.deepEqual(h.counts(),{loads:1,captures:1,stops:1,closes:1}); assert.equal(h.video.srcObject,null);
+
+test('camera opens only after explicit consent and sends a local worker sample',async()=>{
+  const h=harness();
+  await assert.rejects(h.controller.start({userInitiated:true}),/consent/);
+  assert.equal(h.workers.length,0);assert.deepEqual(h.counters(),{cameraOpens:0,trackStops:0});
+  const settings=await h.controller.start({userInitiated:true,cameraConsent:true});
+  assert.deepEqual(settings,{width:2,height:2,frameRate:30});
+  assert.equal(h.counters().cameraOpens,1);assert.equal(h.workers.length,1);
+  h.video.emit();await h.flush();
+  assert.equal(h.samples.length,1);
+  assert.equal(h.samples[0].invalidReason,'calibration_required');
+  assert.equal(h.samples[0].valid,false);
+  assert.deepEqual(h.samples[0].features,[.25,.75]);
+  assert.deepEqual(h.samples[0].rawScreenXY,{x:200,y:450});
+  assert.deepEqual(h.samples[0].leftEye.crop,{x:0,y:0,width:1,height:1});
+  assert.equal(h.samples[0].timestampKind,'callback_time_not_capture');
+  assert.equal(h.workers[0].url,'/src/gaze/webeyetrack-worker.js');
+  h.controller.stop();
+  assert.deepEqual(h.counters(),{cameraOpens:1,trackStops:1});
+  assert.equal(h.workers[0].terminated,true);assert.equal(h.video.srcObject,null);
 });
-test('anatomical eye crop and iris indices follow MediaPipe topology', async()=>{
-  const sample=await detectEyeSample(openEyes());
-  assert.equal(sample.leftEye.corners[0].x,512); assert.equal(sample.rightEye.corners[0].x,128);
-  assert.equal(sample.leftEye.iris.x,448); assert.equal(sample.rightEye.iris.x,192);
-  assert.equal(sample.leftEye.upperLidDeltaY,0);assert.equal(sample.rightEye.upperLidDeltaY,0);
-  assert.deepEqual(estimateUncalibratedGaze({leftEye:sample.leftEye,rightEye:sample.rightEye}).point,{x:.5,y:.5});
-  assert.equal(sample.valid,true); assert.deepEqual(sample.rawScreenXY,{x:.5,y:.5});
+
+test('official adapt targets use normalized screen coordinates and commit validation state',async()=>{
+  const h=harness();
+  await h.controller.start({userInitiated:true,cameraConsent:true});
+  await h.controller.beginCalibration();
+  assert.equal(h.workers.length,2);
+  h.video.emit({captureTime:110});await h.flush();
+  assert.equal(h.samples.at(-1).valid,false);
+  const adapted=await h.controller.calibrate({x:600,y:150});
+  assert.deepEqual(adapted,{adapted:true,points:1});
+  const adaptation=h.workers[1].messages.find(entry=>entry.message.type==='adapt').message;
+  assert.deepEqual(adaptation.target,{x:.25,y:-.25});
+  h.controller.commitCalibration();
+  h.video.emit({captureTime:120});await h.flush();
+  assert.equal(h.samples.at(-1).valid,true);
+  assert.equal(h.samples.at(-1).timestampMs,120);
+  assert.equal(h.counters().cameraOpens,1,'candidate worker reuses the page-owned stream');
+  h.controller.stop();
+  assert.ok(h.workers.every(worker=>worker.terminated));
 });
-test('zero-valued optional landmark quality is unknown; one weak iris point can be excluded',async()=>{
-  const defaults=openEyes();for(const i of [263,362,33,133,474,475,476,477,469,470,471,472]){defaults[i].visibility=0;defaults[i].presence=0;}
-  const defaultSample=await detectEyeSample(defaults);
-  assert.equal(defaultSample.valid,true);assert.equal(defaultSample.leftEye.irisLandmarkCount,4);
-  const low=openEyes();low[474].visibility=.2;
-  const lowSample=await detectEyeSample(low);
-  assert.equal(lowSample.leftEye.irisLandmarkCount,3);assert.equal(lowSample.leftEye.confidence,null);assert.equal(lowSample.valid,true);
-  const allLow=openEyes();for(const i of [474,475,476,477])allLow[i].visibility=.2;
-  const lowQualitySample=await detectEyeSample(allLow);
-  assert.equal(lowQualitySample.leftEye.reason,'landmark_visibility_low');assert.equal(lowQualitySample.valid,false);assert.equal(lowQualitySample.rawScreenXY,null);
-  const malformed=openEyes();malformed[474].presence=NaN;
-  const malformedSample=await detectEyeSample(malformed);
-  assert.equal(malformedSample.leftEye.reason,'landmark_quality_invalid');assert.equal(malformedSample.rawScreenXY,null);
+
+test('cancelled recalibration restores the prior in-memory tracker without reopening camera',async()=>{
+  const h=harness();
+  await h.controller.start({userInitiated:true,cameraConsent:true});
+  await h.controller.beginCalibration();
+  h.video.emit();await h.flush();
+  await h.controller.calibrate({x:400,y:300});
+  h.controller.commitCalibration();
+  const acceptedWorker=h.workers[1];
+  await h.controller.beginCalibration();
+  h.video.emit();await h.flush();
+  assert.equal(h.samples.at(-1).valid,false);
+  h.controller.cancelCalibration();
+  assert.equal(h.workers[2].terminated,true);
+  h.video.emit();await h.flush();
+  assert.equal(h.samples.at(-1).valid,true);
+  assert.equal(h.workers[1],acceptedWorker);
+  assert.equal(h.counters().cameraOpens,1);
+  h.controller.stop();
 });
-test('collapsed iris landmarks and blink uncertainty withhold gaze',async()=>{
-  const collapsed=openEyes();for(const i of [474,475,476,477])collapsed[i]={x:.7,y:.4};
-  const collapsedSample=await detectEyeSample(collapsed);
-  assert.equal(collapsedSample.leftEye.reason,'landmarks_degenerate');assert.equal(collapsedSample.rawScreenXY,null);
-  const blinkSample=await detectEyeSample(openEyes(),NaN,0);
-  assert.equal(blinkSample.leftEye.reason,'blink_unknown');assert.equal(blinkSample.valid,false);assert.equal(blinkSample.rawScreenXY,null);
-});
-test('one valid eye can drive only the separate uncalibrated estimate, never binocular calibration',async()=>{
-  const marks=openEyes();setAperture(marks,'right',.005);
-  const sample=await detectEyeSample(marks,0,0);
-  assert.equal(sample.leftEye.valid,true);assert.equal(sample.rightEye.valid,false);
-  assert.equal(sample.rightEye.reason,'blink');
-  assert.equal(sample.features,null);assert.equal(sample.rawScreenXY,null);assert.equal(sample.valid,false);
-  const estimate=estimateUncalibratedGaze({leftEye:sample.leftEye,rightEye:sample.rightEye});
-  assert.equal(estimate.status,'uncalibrated_estimate');assert.equal(estimate.method,'single_eye_iris_plus_upper_lid_session_delta');assert.deepEqual(estimate.eyesUsed,['left']);
-});
-test('session-relative upper-lid deltas keep the same image-y sign for both corner orders',async()=>{
-  const baseline=openEyes(),moved=openEyes();
-  for(const i of [385,386,158,159])moved[i].y-=.01;
-  const [first,second]=await detectEyeSamples([{marks:baseline},{marks:moved}]);
-  assert.equal(first.leftEye.upperLidDeltaY,0);assert.equal(first.rightEye.upperLidDeltaY,0);
-  assert.ok(second.leftEye.upperLidDeltaY<0);assert.ok(second.rightEye.upperLidDeltaY<0);
-  assert.ok(Math.abs(second.leftEye.upperLidDeltaY-second.rightEye.upperLidDeltaY)<1e-12);
-});
-test('narrow open eyes adapt the blink score baseline and closed eyes never yield a gaze sample',async()=>{
-  const narrow=openEyes();setAperture(narrow,'left',.045);setAperture(narrow,'right',.045);
-  const closed=openEyes();setAperture(closed,'left',.005);setAperture(closed,'right',.005);
-  const samples=await detectEyeSamples([
-    {marks:narrow,leftScore:.72,rightScore:.72},
-    {marks:narrow,leftScore:.72,rightScore:.72},
-    {marks:closed,leftScore:.95,rightScore:.95}
-  ]);
-  assert.equal(samples[0].leftEye.valid,true);assert.equal(samples[0].leftEye.blinkScoreThreshold,.87);
-  assert.equal(samples[1].valid,true);
-  assert.equal(samples[2].leftEye.reason,'blink');assert.equal(samples[2].rightEye.reason,'blink');
-  assert.equal(samples[2].rawScreenXY,null);assert.equal(samples[2].valid,false);
-  const estimate=estimateUncalibratedGaze({leftEye:samples[2].leftEye,rightEye:samples[2].rightEye});
-  assert.equal(estimate.status,'unavailable');assert.equal(estimate.point,null);
-});
-test('browser captureTime remains unaligned until clock and display timing are measured', async()=>{
-  const h=harness(), samples=[];const c=createWebcamGazeController({...h,wasmRoot:'/wasm',modelAssetPath:'/model.task',onSample:s=>samples.push(s)});
-  await c.start({userInitiated:true,cameraConsent:true});h.frame(130,{captureTime:110});
-  assert.equal(samples[0].timestampMs,110);assert.equal(samples[0].timestampKind,'browser_capture_estimate');assert.equal(samples[0].sourceClockId,'browser_video_capture_estimate');
-  assert.equal(samples[0].syncStatus,'unmeasured');assert.equal(samples[0].syncOffsetMs,null);assert.equal(samples[0].syncDriftPpm,null);assert.equal(samples[0].syncUncertaintyMs,null);
-  assert.equal(samples[0].scenePresentTsEstimateMs,null);assert.equal(samples[0].displayUncertaintyMs,null);assert.equal(samples[0].sceneAssociationEligible,false);c.stop();
-});
-test('camera resolution remains a non-mandatory local preference',async()=>{
-  const h=harness(),c=createWebcamGazeController({...h,wasmRoot:'/wasm',modelAssetPath:'/model.task'});
-  await c.start({userInitiated:true,cameraConsent:true,videoConstraints:{width:{ideal:1280},height:{ideal:720}}});
-  assert.deepEqual(h.mediaRequest(),{video:{width:{ideal:1280},height:{ideal:720}},audio:false});
-  c.stop();
-});
-test('stop while permission is pending stops the eventual stream', async()=>{
-  const h=harness(); let resolve; let stopped=0;
-  h.mediaDevices.getUserMedia=()=>new Promise(r=>{resolve=r;});
-  const c=createWebcamGazeController({...h,wasmRoot:'/wasm',modelAssetPath:'/model.task'});
-  const pending=c.start({userInitiated:true,cameraConsent:true});
-  while (!resolve) await new Promise(r=>setImmediate(r));
-  c.stop(); resolve({getTracks:()=>[{stop(){stopped++;}}]}); await pending;
-  assert.equal(stopped,1); assert.equal(h.video.srcObject,null); assert.equal(h.counts().closes,1);
+
+test('stop during pending camera permission closes the stream when permission resolves',async()=>{
+  let resolvePermission,stopped=0;
+  const h=harness({getUserMedia:()=>new Promise(resolve=>{resolvePermission=resolve;})});
+  const pending=h.controller.start({userInitiated:true,cameraConsent:true});
+  await h.flush();
+  assert.equal(typeof resolvePermission,'function');
+  h.controller.stop();
+  resolvePermission({getTracks:()=>[{stop(){stopped++;}}],getVideoTracks:()=>[]});
+  await assert.rejects(pending,/start cancelled/);
+  assert.equal(stopped,1);
+  assert.equal(h.video.srcObject,null);
+  assert.equal(h.workers[0].terminated,true);
 });
