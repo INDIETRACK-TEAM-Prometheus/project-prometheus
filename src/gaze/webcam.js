@@ -1,6 +1,16 @@
 import {ClockDriftMonitor} from '../runtime/clock.js';
 
 const finite = Number.isFinite;
+const cameraStartupCodes = {
+  NotAllowedError:'camera_permission_denied',
+  NotFoundError:'camera_device_missing',
+  NotReadableError:'camera_device_unavailable',
+  OverconstrainedError:'camera_constraints_unsatisfied',
+  SecurityError:'camera_security_context',
+  AbortError:'camera_request_aborted'
+};
+const startupError = code => Object.assign(new Error('WebEyeTrack startup failed'),{code});
+const cameraError = error => startupError(cameraStartupCodes[error?.name]??'camera_request_failed');
 
 // The page owns the only webcam stream. WebEyeTrack receives copied frame
 // pixels in a worker and never opens its own WebcamClient/getUserMedia stream.
@@ -33,13 +43,15 @@ export function createWebcamGazeController({
   }
 
   function createRecord(calibrated = false) {
-    const worker = workerFactory('/src/gaze/webeyetrack-worker.js', {type:'module', name:'prometheus-webeyetrack'});
+    let worker;
+    try { worker = workerFactory('/src/gaze/webeyetrack-worker.js', {type:'module', name:'prometheus-webeyetrack'}); }
+    catch { throw startupError('worker_load_failed'); }
     const record = {worker, calibrated, ready:false, busy:false, pending:new Map(), latestSample:null, fatal:false};
+    let readyTimeout;
     const ready = new Promise((resolve, reject) => {
-      let timeout;
-      record.resolveReady = () => { clearTimeout(timeout); resolve(); };
-      record.rejectReady = error => { clearTimeout(timeout); reject(error); };
-      timeout = setTimeout(() => record.rejectReady(new Error('WebEyeTrack worker initialization timed out')), workerReadyTimeoutMs);
+      record.resolveReady = () => { clearTimeout(readyTimeout); resolve(); };
+      record.rejectReady = error => { clearTimeout(readyTimeout); reject(error); };
+      readyTimeout = setTimeout(() => record.rejectReady(startupError('worker_initialization_timeout')), workerReadyTimeoutMs);
     });
     worker.onmessage = event => {
       const message = event.data;
@@ -112,7 +124,7 @@ export function createWebcamGazeController({
         return;
       }
       if (message?.type === 'error') {
-        const error = new Error(message.error || 'WebEyeTrack worker failed');
+        const error = startupError(record.ready?'worker_inference_failed':'worker_initialization_failed');
         if (!record.ready) record.rejectReady(error);
         if (message.requestId && record.pending.has(message.requestId)) {
           const pending = record.pending.get(message.requestId);
@@ -126,12 +138,13 @@ export function createWebcamGazeController({
         }
       }
     };
-    worker.onerror = event => {
-      const error = new Error(event.message || 'WebEyeTrack worker could not start');
+    worker.onerror = () => {
+      const error = startupError(record.ready?'worker_runtime_failed':'worker_load_failed');
       if (!record.ready) record.rejectReady(error);
       if (record.ready && running && selectedWorker() === record) onError(error);
     };
-    worker.postMessage({type:'init'});
+    try { worker.postMessage({type:'init'}); }
+    catch { clearTimeout(readyTimeout);worker.terminate();throw startupError('worker_load_failed'); }
     return {record, ready};
   }
 
@@ -196,11 +209,13 @@ export function createWebcamGazeController({
     async start({userInitiated = false, cameraConsent = false, videoConstraints = true} = {}) {
       if (!userInitiated || !cameraConsent) throw new Error('explicit start and camera consent required');
       if (running || starting) throw new Error('already started or starting');
-      if (typeof video.requestVideoFrameCallback !== 'function') throw new Error('requestVideoFrameCallback unavailable');
+      if (typeof video.requestVideoFrameCallback !== 'function') throw startupError('capture_api_unavailable');
       starting = true;
       const token = ++generation;
       try {
-        const cameraRequest = mediaDevices.getUserMedia({video:videoConstraints,audio:false});
+        let cameraRequest;
+        try { cameraRequest = mediaDevices.getUserMedia({video:videoConstraints,audio:false}); }
+        catch (error) { throw cameraError(error); }
         const cameraPromise = Promise.resolve(cameraRequest).then(acquired => {
           if (token !== generation) {
             acquired.getTracks().forEach(track=>track.stop());
@@ -208,14 +223,15 @@ export function createWebcamGazeController({
           }
           stream = acquired;
           return acquired;
-        });
+        },error=>{throw cameraError(error);});
         cameraPromise.catch(()=>{});
         const created = createRecord(false);
         activeWorker = created.record;
         await Promise.all([cameraPromise,created.ready]);
         if (token !== generation) throw new Error('start cancelled');
         video.srcObject = stream;
-        await video.play();
+        try { await video.play(); }
+        catch { throw startupError('video_playback_failed'); }
         if (token !== generation) throw new Error('start cancelled');
         lastTime = -1;
         lastTimestamp = -1;

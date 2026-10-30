@@ -78,9 +78,26 @@ test('camera permission is requested synchronously before waiting for the worker
   h.controller.stop();
 });
 
+test('camera permission failures keep a fixed diagnostic code and discard the browser message',async()=>{
+  const failure=Object.assign(new Error('private browser detail'),{name:'NotAllowedError'});
+  const h=harness({getUserMedia:()=>Promise.reject(failure)});
+  await assert.rejects(h.controller.start({userInitiated:true,cameraConsent:true}),error=>error.code==='camera_permission_denied'&&!error.message.includes('private browser detail'));
+  assert.equal(h.workers[0].terminated,true);
+});
+
+test('worker initialization failures keep a fixed diagnostic code and discard worker text',async()=>{
+  const h=harness({autoReady:false});
+  const pending=h.controller.start({userInitiated:true,cameraConsent:true});
+  await h.flush();
+  h.workers[0].onmessage({data:{type:'error',fatal:true,error:'private worker detail'}});
+  await assert.rejects(pending,error=>error.code==='worker_initialization_failed'&&!error.message.includes('private worker detail'));
+  assert.deepEqual(h.counters(),{cameraOpens:1,trackStops:1});
+  assert.equal(h.workers[0].terminated,true);
+});
+
 test('worker initialization timeout stops an already acquired camera stream',async()=>{
   const h=harness({autoReady:false,workerReadyTimeoutMs:5});
-  await assert.rejects(h.controller.start({userInitiated:true,cameraConsent:true}),/initialization timed out/);
+  await assert.rejects(h.controller.start({userInitiated:true,cameraConsent:true}),error=>error.code==='worker_initialization_timeout');
   assert.deepEqual(h.counters(),{cameraOpens:1,trackStops:1});
   assert.equal(h.workers[0].terminated,true);
   assert.equal(h.video.srcObject,null);

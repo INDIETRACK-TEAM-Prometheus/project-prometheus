@@ -18,6 +18,16 @@ import {selectProvisionalIrisGaze} from './gaze/uncalibrated.js';
 import {gazeCalibrationEnvironmentChanged} from './gaze/persistence.js';
 import {ProvisionalTrackingStore,deleteProvisionalTracking} from './memory/provisional-tracking.js';
 
+const startupFailureSteps={
+  camera_permission_denied:'camera',camera_device_missing:'camera',camera_device_unavailable:'camera',camera_constraints_unsatisfied:'camera',camera_security_context:'camera',camera_request_aborted:'camera',camera_request_failed:'camera',
+  worker_load_failed:'worker',worker_initialization_failed:'worker',worker_initialization_timeout:'worker',worker_inference_failed:'worker',worker_runtime_failed:'worker',
+  capture_api_unavailable:'capture',video_playback_failed:'video',startup_failed:'startup'
+};
+export function startupFailureDiagnostic(error){
+  const code=Object.hasOwn(startupFailureSteps,error?.code)?error.code:'startup_failed';
+  return {code,step:startupFailureSteps[code]};
+}
+
 // Only aggregate pilot measurements are exported; no video, landmarks or device ID.
 export function gazeSamPrompt(frame, gaze) {
   if (!gaze || !Number.isInteger(frame?.width) || !Number.isInteger(frame?.height) || frame.width<1 || frame.height<1 || !Number.isFinite(gaze.x) || !Number.isFinite(gaze.y) || gaze.x<0 || gaze.x>=1 || gaze.y<0 || gaze.y>=1) throw new TypeError('invalid gaze point');
@@ -715,7 +725,7 @@ async function boot() {
       $('#gazeSamDemoStatus').textContent=activeCalibration?'WebEyeTrack 교정 사용 · 화면/환경 변경 시 정확도는 보장되지 않습니다.':'WebEyeTrack 기본 모델 · 미교정 · 정확도와 물리적 시간 정렬은 검증되지 않았습니다.';
       maybeStartFrozenGazeAutomation();
     }
-    else if(result.reason==='start_failed') {message.textContent='시작 실패: 카메라 권한 또는 추적기 초기화를 확인하세요.';gazeStatus.textContent=message.textContent;$('#provisionalSparkStatus').textContent='시작 실패 · 카메라 권한과 추적기 초기화 확인';}
+    else if(result.reason==='start_failed') {const diagnostic=startupFailureDiagnostic(result.error),text=`시작 실패 · 코드 ${diagnostic.code} · 단계 ${diagnostic.step}`;message.textContent=text;gazeStatus.textContent=text;$('#provisionalSparkStatus').textContent=text;}
   }
   start.addEventListener('click',()=>{for(const id of ['localConsent','provisionalSparkConsent','exploreConsent','reasonConsent','gazeSamConsent','traceConsent','retentionConsent'])$('#'+id).checked=true;void startSession();});
   function stopSession(){clearGazeMarker();initialSceneGeneration++;initialScenePending=false;clearFrozenGazeDemo('카메라 정지 · 잠정 시선점 폐기',true);stopRemote();cancelDiagnostic();if(pilot && pilot.stoppedAt===null)pilot.stoppedAt=performance.now();clearInterval(pilotTimer);pilotTimer=null;updatePilot();clearInterval(timer);timer=null;const drained=coordinator?.stop();controller?.cancelCalibration();activeCalibration=null;history.clear();latest=null;latestProvisionalGaze=null;candidate=null;pendingAligned=null;cameraSessionId=null;timingCalibration=null;controller?.setTimingCalibration(null);$('#timingStatus').textContent='카메라 세션 종료 · 광학 측정 다시 적용 필요';$('#runGazeSam').disabled=true;$('#gazeSamStatus').textContent='정지됨 · 카메라 시작 후 시선 정렬 필요';$('#worldSceneState').textContent=$('#localConsent').checked?'정지':'동의 대기';$('#worldGazeState').textContent='미교정 추정 대기';calibrationStage=null;$('#calibration').hidden=true;for(const id of ['leftEye','rightEye'])drawEye(id,null);gazeStatus.textContent='미교정 추정 대기';showCalibrationStatus('카메라 세션 종료 · WebEyeTrack 교정 메모리 폐기 · 다음 시작 때 재교정 필요');return Promise.all([drained,maintenance]);}
