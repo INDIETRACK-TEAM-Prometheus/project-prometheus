@@ -19,13 +19,19 @@ import {gazeCalibrationEnvironmentChanged} from './gaze/persistence.js';
 import {ProvisionalTrackingStore,deleteProvisionalTracking} from './memory/provisional-tracking.js';
 
 const startupFailureSteps={
+  camera_request_started:'camera_request',camera_stream_acquired:'camera_stream',camera_stop_requested:'camera_stop',camera_stopped:'camera_stop',
   camera_permission_denied:'camera',camera_device_missing:'camera',camera_device_unavailable:'camera',camera_constraints_unsatisfied:'camera',camera_security_context:'camera',camera_request_aborted:'camera',camera_request_failed:'camera',
-  worker_load_failed:'worker',worker_initialization_failed:'worker',worker_initialization_timeout:'worker',worker_inference_failed:'worker',worker_runtime_failed:'worker',
-  capture_api_unavailable:'capture',video_playback_failed:'video',startup_failed:'startup'
+  worker_created:'worker_creation',worker_ready:'worker_initialization',worker_load_failed:'worker_load',worker_initialization_failed:'worker_initialization',worker_initialization_timeout:'worker_initialization',worker_inference_failed:'worker_inference',worker_runtime_failed:'worker_runtime',worker_adaptation_failed:'worker_adaptation',
+  capture_api_unavailable:'capture_api',capture_started:'capture',capture_frame_failed:'capture',video_attachment_failed:'video_attachment',video_attached:'video_attachment',video_playback_started:'video_playback',video_playback_failed:'video_playback',
+  runtime_start_started:'runtime_start',runtime_started:'runtime_start',runtime_start_failed:'runtime_start',runtime_stop_requested:'runtime_stop',runtime_stopped:'runtime_stop',sample_handler_failed:'sample_handler',startup_failed:'startup'
 };
 export function startupFailureDiagnostic(error){
   const code=Object.hasOwn(startupFailureSteps,error?.code)?error.code:'startup_failed';
   return {code,step:startupFailureSteps[code]};
+}
+function logStartupDiagnostic(code){
+  const diagnostic=startupFailureDiagnostic({code});
+  if(diagnostic.code===code)try{console.info('[Prometheus WebEyeTrack diagnostic]',diagnostic);}catch{}
 }
 
 // Only aggregate pilot measurements are exported; no video, landmarks or device ID.
@@ -201,7 +207,8 @@ export function resolveWorldFrame(world,frame,offset,epoch) {
 }
 
 // Dependency injection permits real wiring and race tests without camera hardware.
-export function createCoordinator({controller, memory, runtime, onState=()=>{}, onAligned=()=>{}, maxPending=64, namespace=''}) {
+export function createCoordinator({controller, memory, runtime, onState=()=>{}, onAligned=()=>{}, onDiagnostic=()=>{}, maxPending=64, namespace=''}) {
+  const diagnose=code=>{try{onDiagnostic(code);}catch{}};
   let generation=0, active=false, paused=false, draining=false, attention=null, eventNumber=0, pending=0, dropped=0, resetScheduled=false, chain=Promise.resolve();
   async function finish(now, token) {
     const a=attention; attention=null;
@@ -240,10 +247,19 @@ export function createCoordinator({controller, memory, runtime, onState=()=>{}, 
         const settings=await controller.start({userInitiated:true,cameraConsent:true,videoConstraints:{width:{ideal:1280},height:{ideal:720}}});
         if (token!==generation) return {started:false,reason:'cancelled'};
         if (!settings) return {started:false,reason:'cancelled'};
-        runtime.start(); active=true; paused=false; onState('active'); return {started:true,settings};
+        diagnose('runtime_start_started');
+        try { runtime.start(); }
+        catch {
+          diagnose('runtime_start_failed');diagnose('runtime_stop_requested');
+          try { runtime.stop(); } catch {}
+          diagnose('runtime_stopped');
+          throw Object.assign(new Error('Runtime startup failed'),{code:'runtime_start_failed'});
+        }
+        diagnose('runtime_started');
+        active=true; paused=false; onState('active'); return {started:true,settings};
       } catch(error) { if(token===generation) { controller.stop(); onState('error'); } return {started:false,reason:'start_failed',error}; }
     },
-    stop() { const token=++generation; active=false; paused=false; draining=true;const old=attention;attention=null;if(old)chain=chain.then(()=>memory.releaseEventPin(old.eventId));controller.stop();runtime.stop();onState('stopping');return chain.then(()=>{if(token===generation){draining=false;onState('stopped');}}); },
+    stop() { const token=++generation; active=false; paused=false; draining=true;const old=attention;attention=null;if(old)chain=chain.then(()=>memory.releaseEventPin(old.eventId));controller.stop();diagnose('runtime_stop_requested');runtime.stop();diagnose('runtime_stopped');onState('stopping');return chain.then(()=>{if(token===generation){draining=false;onState('stopped');}}); },
     pause() {if(!active || paused)return false; paused=true;generation++;const old=attention;attention=null;if(old)chain=chain.then(()=>memory.releaseEventPin(old.eventId));return true;},
     resume() {if(!active || !paused)return false;paused=false;return true;},
     async clear() { await this.stop(); await memory.close(); },
@@ -683,8 +699,8 @@ async function boot() {
   }
   function setState(s) {state.textContent=({starting:'시작 중',active:'카메라 활성',stopping:'정리 중',stopped:'정지',error:'시작 실패'})[s];start.disabled=s==='starting'||s==='active'||s==='stopping';stop.disabled=!(s==='starting'||s==='active');calibrate.disabled=s!=='active';calibrate.style.display=s==='active'?'inline-flex':'none';$('#pause').disabled=s!=='active';if(s!=='active'){clearGazeMarker();$('#pause').textContent='⏸';$('#pause').setAttribute('aria-label','일시정지');$('#pause').title='일시정지';}if(s==='stopped'&&!$('#localConsent').checked)$('#worldSceneState').textContent='동의 대기';updateFrozenGazeControls();}
   try {
-    controller=createWebcamGazeController({video,mediaDevices:navigator.mediaDevices,onSample,onError:()=>{clearFrozenGazeDemo('카메라 오류 · 잠정 시선 시험 취소',true);stopRemote();cancelDiagnostic();timingCalibration=null;cameraSessionId=null;pendingAligned=null;$('#timingStatus').textContent='카메라 오류 · 시간 측정 다시 적용 필요';$('#runGazeSam').disabled=true;coordinator?.stop();message.textContent='WebEyeTrack 추적 중 오류가 발생해 카메라를 중단했습니다.';}});
-    coordinator=createCoordinator({controller,memory,runtime,onState:setState,onAligned:submitAligned,namespace:epoch});
+    controller=createWebcamGazeController({video,mediaDevices:navigator.mediaDevices,onSample,onDiagnostic:logStartupDiagnostic,onError:error=>{const diagnostic=startupFailureDiagnostic(error),text=`WebEyeTrack 추적 중단 · 코드 ${diagnostic.code} · 단계 ${diagnostic.step}`;logStartupDiagnostic(diagnostic.code);clearFrozenGazeDemo('카메라 오류 · 잠정 시선 시험 취소',true);stopRemote();cancelDiagnostic();timingCalibration=null;cameraSessionId=null;pendingAligned=null;$('#timingStatus').textContent='카메라 오류 · 시간 측정 다시 적용 필요';$('#runGazeSam').disabled=true;coordinator?.stop();message.textContent=text;gazeStatus.textContent=text;}});
+    coordinator=createCoordinator({controller,memory,runtime,onState:setState,onAligned:submitAligned,onDiagnostic:logStartupDiagnostic,namespace:epoch});
   } catch {start.disabled=true;message.textContent='이 브라우저에서 카메라 API를 사용할 수 없습니다.';}
   async function selectDurable(mode){
     if(sessionSelecting || sessionStarted || durableSession){$('#retentionStatus').textContent='현재 페이지 시작 전 한 번만 선택할 수 있습니다.';return;}
@@ -725,7 +741,7 @@ async function boot() {
       $('#gazeSamDemoStatus').textContent=activeCalibration?'WebEyeTrack 교정 사용 · 화면/환경 변경 시 정확도는 보장되지 않습니다.':'WebEyeTrack 기본 모델 · 미교정 · 정확도와 물리적 시간 정렬은 검증되지 않았습니다.';
       maybeStartFrozenGazeAutomation();
     }
-    else if(result.reason==='start_failed') {const diagnostic=startupFailureDiagnostic(result.error),text=`시작 실패 · 코드 ${diagnostic.code} · 단계 ${diagnostic.step}`;message.textContent=text;gazeStatus.textContent=text;$('#provisionalSparkStatus').textContent=text;}
+    else if(result.reason==='start_failed') {const diagnostic=startupFailureDiagnostic(result.error),text=`시작 실패 · 코드 ${diagnostic.code} · 단계 ${diagnostic.step}`;logStartupDiagnostic(diagnostic.code);message.textContent=text;gazeStatus.textContent=text;$('#provisionalSparkStatus').textContent=text;}
   }
   start.addEventListener('click',()=>{for(const id of ['localConsent','provisionalSparkConsent','exploreConsent','reasonConsent','gazeSamConsent','traceConsent','retentionConsent'])$('#'+id).checked=true;void startSession();});
   function stopSession(){clearGazeMarker();initialSceneGeneration++;initialScenePending=false;clearFrozenGazeDemo('카메라 정지 · 잠정 시선점 폐기',true);stopRemote();cancelDiagnostic();if(pilot && pilot.stoppedAt===null)pilot.stoppedAt=performance.now();clearInterval(pilotTimer);pilotTimer=null;updatePilot();clearInterval(timer);timer=null;const drained=coordinator?.stop();controller?.cancelCalibration();activeCalibration=null;history.clear();latest=null;latestProvisionalGaze=null;candidate=null;pendingAligned=null;cameraSessionId=null;timingCalibration=null;controller?.setTimingCalibration(null);$('#timingStatus').textContent='카메라 세션 종료 · 광학 측정 다시 적용 필요';$('#runGazeSam').disabled=true;$('#gazeSamStatus').textContent='정지됨 · 카메라 시작 후 시선 정렬 필요';$('#worldSceneState').textContent=$('#localConsent').checked?'정지':'동의 대기';$('#worldGazeState').textContent='미교정 추정 대기';calibrationStage=null;$('#calibration').hidden=true;for(const id of ['leftEye','rightEye'])drawEye(id,null);gazeStatus.textContent='미교정 추정 대기';showCalibrationStatus('카메라 세션 종료 · WebEyeTrack 교정 메모리 폐기 · 다음 시작 때 재교정 필요');return Promise.all([drained,maintenance]);}

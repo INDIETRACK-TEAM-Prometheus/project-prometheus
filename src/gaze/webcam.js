@@ -19,6 +19,7 @@ export function createWebcamGazeController({
   mediaDevices,
   onSample = () => {},
   onError = () => {},
+  onDiagnostic = () => {},
   workerFactory = (url, options) => new Worker(url, options),
   workerReadyTimeoutMs = 10000,
   createCanvas = () => document.createElement('canvas'),
@@ -30,6 +31,8 @@ export function createWebcamGazeController({
   let stream = null, running = false, starting = false, generation = 0, callbackId = null;
   let activeWorker = null, candidateWorker = null, timing = null, clockMonitor = null;
   let lastTime = -1, lastTimestamp = -1, requestNumber = 0, captureCanvas = null;
+
+  function diagnose(code) { try { onDiagnostic(code); } catch {} }
 
   function selectedWorker() { return candidateWorker ?? activeWorker; }
 
@@ -45,18 +48,23 @@ export function createWebcamGazeController({
   function createRecord(calibrated = false) {
     let worker;
     try { worker = workerFactory('/src/gaze/webeyetrack-worker.js', {type:'module', name:'prometheus-webeyetrack'}); }
-    catch { throw startupError('worker_load_failed'); }
+    catch { diagnose('worker_load_failed'); throw startupError('worker_load_failed'); }
     const record = {worker, calibrated, ready:false, busy:false, pending:new Map(), latestSample:null, fatal:false};
+    diagnose('worker_created');
     let readyTimeout;
     const ready = new Promise((resolve, reject) => {
       record.resolveReady = () => { clearTimeout(readyTimeout); resolve(); };
       record.rejectReady = error => { clearTimeout(readyTimeout); reject(error); };
-      readyTimeout = setTimeout(() => record.rejectReady(startupError('worker_initialization_timeout')), workerReadyTimeoutMs);
+      readyTimeout = setTimeout(() => {
+        diagnose('worker_initialization_timeout');
+        record.rejectReady(startupError('worker_initialization_timeout'));
+      }, workerReadyTimeoutMs);
     });
     worker.onmessage = event => {
       const message = event.data;
       if (message?.type === 'ready') {
         record.ready = true;
+        diagnose('worker_ready');
         record.resolveReady();
         return;
       }
@@ -112,7 +120,11 @@ export function createWebcamGazeController({
           modelDurations:message.durations
         };
         record.latestSample = sample;
-        try { onSample(sample); } catch (error) { onError(error); }
+        try { onSample(sample); } catch {
+          const error=startupError('sample_handler_failed');
+          diagnose(error.code);
+          onError(error);
+        }
         return;
       }
       if (message?.type === 'adapted' || message?.type === 'adaptError') {
@@ -120,11 +132,15 @@ export function createWebcamGazeController({
         if (!pending) return;
         record.pending.delete(message.requestId);
         if (message.type === 'adapted') pending.resolve({adapted:true,points:message.points});
-        else pending.reject(new Error(message.error || 'WebEyeTrack adaptation failed'));
+        else {
+          diagnose('worker_adaptation_failed');
+          pending.reject(startupError('worker_adaptation_failed'));
+        }
         return;
       }
       if (message?.type === 'error') {
         const error = startupError(record.ready?'worker_inference_failed':'worker_initialization_failed');
+        diagnose(error.code);
         if (!record.ready) record.rejectReady(error);
         if (message.requestId && record.pending.has(message.requestId)) {
           const pending = record.pending.get(message.requestId);
@@ -140,21 +156,27 @@ export function createWebcamGazeController({
     };
     worker.onerror = () => {
       const error = startupError(record.ready?'worker_runtime_failed':'worker_load_failed');
+      diagnose(error.code);
       if (!record.ready) record.rejectReady(error);
       if (record.ready && running && selectedWorker() === record) onError(error);
     };
     try { worker.postMessage({type:'init'}); }
-    catch { clearTimeout(readyTimeout);worker.terminate();throw startupError('worker_load_failed'); }
+    catch { clearTimeout(readyTimeout);worker.terminate();diagnose('worker_load_failed');throw startupError('worker_load_failed'); }
     return {record, ready};
   }
 
   const stopCamera = () => {
-    if (callbackId !== null && video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(callbackId);
+    const hadCameraWork = !!stream || video.srcObject != null || callbackId !== null || running || starting || !!activeWorker || !!candidateWorker;
+    if (callbackId !== null && video.cancelVideoFrameCallback) {
+      try { video.cancelVideoFrameCallback(callbackId); } catch {}
+    }
     callbackId = null;
-    stream?.getTracks().forEach(track => track.stop());
+    const oldStream = stream;
     stream = null;
-    video.pause?.();
-    video.srcObject = null;
+    try { oldStream?.getTracks().forEach(track => { try { track.stop(); } catch {} }); } catch {}
+    try { video.pause?.(); } catch {}
+    try { video.srcObject = null; } catch {}
+    if (hadCameraWork) diagnose('camera_stopped');
   };
 
   function sendFrame(record, imageData, metadata, now, sentAtMs) {
@@ -195,11 +217,14 @@ export function createWebcamGazeController({
       const sentAtMs = clockNow();
       const records = new Set([activeWorker,candidateWorker].filter(Boolean));
       for (const record of records) sendFrame(record,imageData,metadata,now,sentAtMs);
-    } catch (error) {
+    } catch {
       running = false;
       generation++;
+      const safeError = startupError('capture_frame_failed');
+      diagnose(safeError.code);
+      diagnose('camera_stop_requested');
       stopCamera();
-      onError(error);
+      onError(safeError);
       return;
     }
     schedule(token);
@@ -209,35 +234,44 @@ export function createWebcamGazeController({
     async start({userInitiated = false, cameraConsent = false, videoConstraints = true} = {}) {
       if (!userInitiated || !cameraConsent) throw new Error('explicit start and camera consent required');
       if (running || starting) throw new Error('already started or starting');
-      if (typeof video.requestVideoFrameCallback !== 'function') throw startupError('capture_api_unavailable');
+      if (typeof video.requestVideoFrameCallback !== 'function') {
+        diagnose('capture_api_unavailable');
+        throw startupError('capture_api_unavailable');
+      }
       starting = true;
       const token = ++generation;
       try {
         let cameraRequest;
+        diagnose('camera_request_started');
         try { cameraRequest = mediaDevices.getUserMedia({video:videoConstraints,audio:false}); }
-        catch (error) { throw cameraError(error); }
+        catch (error) { const safeError=cameraError(error);diagnose(safeError.code);throw safeError; }
         const cameraPromise = Promise.resolve(cameraRequest).then(acquired => {
           if (token !== generation) {
             acquired.getTracks().forEach(track=>track.stop());
             throw new Error('start cancelled');
           }
           stream = acquired;
+          diagnose('camera_stream_acquired');
           return acquired;
-        },error=>{throw cameraError(error);});
+        },error=>{const safeError=cameraError(error);diagnose(safeError.code);throw safeError;});
         cameraPromise.catch(()=>{});
         const created = createRecord(false);
         activeWorker = created.record;
         await Promise.all([cameraPromise,created.ready]);
         if (token !== generation) throw new Error('start cancelled');
-        video.srcObject = stream;
+        try { video.srcObject = stream; }
+        catch { diagnose('video_attachment_failed');throw startupError('video_attachment_failed'); }
+        diagnose('video_attached');
         try { await video.play(); }
-        catch { throw startupError('video_playback_failed'); }
+        catch { diagnose('video_playback_failed');throw startupError('video_playback_failed'); }
+        diagnose('video_playback_started');
         if (token !== generation) throw new Error('start cancelled');
         lastTime = -1;
         lastTimestamp = -1;
         clockMonitor?.reset();
         running = true;
         schedule(token);
+        diagnose('capture_started');
         const settings = stream.getVideoTracks()[0]?.getSettings?.() ?? {};
         return {width:settings.width??null,height:settings.height??null,frameRate:settings.frameRate??null};
       } catch (error) {
@@ -245,6 +279,7 @@ export function createWebcamGazeController({
           running = false;
           starting = false;
           generation++;
+          diagnose('camera_stop_requested');
           stopCamera();
           terminateRecord(candidateWorker,error.message);
           terminateRecord(activeWorker,error.message);
@@ -305,6 +340,7 @@ export function createWebcamGazeController({
       running = false;
       timing = null;
       clockMonitor = null;
+      diagnose('camera_stop_requested');
       stopCamera();
       terminateRecord(candidateWorker);
       terminateRecord(activeWorker);

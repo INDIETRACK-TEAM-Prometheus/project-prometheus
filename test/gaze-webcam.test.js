@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWebcamGazeController} from '../src/gaze/webcam.js';
 
-function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null,autoReady=true,workerReadyTimeoutMs=10000}={}) {
+function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null,autoReady=true,workerReadyTimeoutMs=10000,createCanvas:makeCanvas=null}={}) {
   let callback=null, currentTime=0, nowMs=100, cameraOpens=0, trackStops=0, frameCounter=0;
-  const workers=[];
+  const workers=[],diagnostics=[],errors=[];
   const track={stop(){trackStops++;},getSettings(){return {width:2,height:2,frameRate:30,deviceId:'private-device-id'};}};
   const mediaDevices={async getUserMedia(request){cameraOpens++;assert.deepEqual(request.audio,false);return acquireCamera?acquireCamera(request):{getTracks:()=>[track],getVideoTracks:()=>[track]};}};
   const video={
@@ -31,20 +31,20 @@ function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null,autoReady=t
     };
     workers.push(worker);return worker;
   };
-  const createCanvas=()=>{
+  const createCanvas=makeCanvas??(()=>{
     const canvas={width:0,height:0,getContext(){return {
       drawImage(){},
       getImageData(_x,_y,width,height){return {width,height,data:new Uint8ClampedArray(width*height*4)}}
     };}};
     return canvas;
-  };
+  });
   const samples=[];
   const controller=createWebcamGazeController({
     video,mediaDevices,workerFactory,createCanvas,workerReadyTimeoutMs,
     clockNow:()=>nowMs++,getViewport:()=>({width:800,height:600}),
-    onSample:sample=>samples.push(sample),onError:error=>{throw error;}
+    onSample:sample=>samples.push(sample),onError:error=>errors.push(error),onDiagnostic:code=>diagnostics.push(code)
   });
-  return {controller,video,workers,samples,counters:()=>({cameraOpens,trackStops}),async flush(){await new Promise(resolve=>setImmediate(resolve));}};
+  return {controller,video,workers,samples,diagnostics,errors,counters:()=>({cameraOpens,trackStops}),async flush(){await new Promise(resolve=>setImmediate(resolve));}};
 }
 
 test('camera opens only after explicit consent and sends a local worker sample',async()=>{
@@ -66,6 +66,8 @@ test('camera opens only after explicit consent and sends a local worker sample',
   h.controller.stop();
   assert.deepEqual(h.counters(),{cameraOpens:1,trackStops:1});
   assert.equal(h.workers[0].terminated,true);assert.equal(h.video.srcObject,null);
+  for(const code of ['camera_request_started','camera_stream_acquired','worker_created','worker_ready','video_attached','video_playback_started','capture_started','camera_stop_requested','camera_stopped']) assert.ok(h.diagnostics.includes(code),code);
+  assert.ok(h.diagnostics.every(code=>/^[a-z_]+$/.test(code)));
 });
 
 test('camera permission is requested synchronously before waiting for the worker',async()=>{
@@ -93,6 +95,8 @@ test('worker initialization failures keep a fixed diagnostic code and discard wo
   await assert.rejects(pending,error=>error.code==='worker_initialization_failed'&&!error.message.includes('private worker detail'));
   assert.deepEqual(h.counters(),{cameraOpens:1,trackStops:1});
   assert.equal(h.workers[0].terminated,true);
+  assert.ok(h.diagnostics.includes('worker_initialization_failed'));
+  assert.equal(JSON.stringify(h.diagnostics).includes('private worker detail'),false);
 });
 
 test('worker initialization timeout stops an already acquired camera stream',async()=>{
@@ -101,6 +105,27 @@ test('worker initialization timeout stops an already acquired camera stream',asy
   assert.deepEqual(h.counters(),{cameraOpens:1,trackStops:1});
   assert.equal(h.workers[0].terminated,true);
   assert.equal(h.video.srcObject,null);
+  assert.ok(h.diagnostics.includes('worker_initialization_timeout'));
+});
+
+test('fatal worker inference reports a fixed code without exposing worker text or gaze values',async()=>{
+  const h=harness();await h.controller.start({userInitiated:true,cameraConsent:true});
+  h.workers[0].onmessage({data:{type:'error',fatal:true,code:'untrusted_code',step:'untrusted_step',error:'private worker text',normPog:[.123,.456]}});
+  assert.equal(h.errors.at(-1).code,'worker_inference_failed');
+  assert.equal(h.diagnostics.at(-1),'worker_inference_failed');
+  assert.equal(JSON.stringify(h.diagnostics).includes('private'),false);
+  assert.equal(JSON.stringify(h.diagnostics).includes('.123'),false);
+  h.controller.stop();
+});
+
+test('capture failure stops the camera with a fixed capture code',async()=>{
+  const h=harness({createCanvas(){throw new Error('private canvas detail');}});
+  await h.controller.start({userInitiated:true,cameraConsent:true});
+  h.video.emit();
+  assert.equal(h.errors.at(-1).code,'capture_frame_failed');
+  assert.deepEqual(h.counters(),{cameraOpens:1,trackStops:1});
+  assert.ok(h.diagnostics.includes('capture_frame_failed'));
+  assert.equal(JSON.stringify(h.diagnostics).includes('private canvas detail'),false);
 });
 
 test('official adapt targets use normalized screen coordinates and commit validation state',async()=>{

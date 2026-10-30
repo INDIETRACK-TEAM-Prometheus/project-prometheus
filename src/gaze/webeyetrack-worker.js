@@ -5,6 +5,10 @@ import {initializeWebEyeTrack} from './webeyetrack-bootstrap.js';
 let tracker = null;
 let adaptedPoints = 0;
 
+function fail(code, step, requestId) {
+  self.postMessage({type:'error',fatal:true,code,step,...(requestId?{requestId}:{})});
+}
+
 async function initialize() {
   const vision = await import('/vendor/vision_bundle.mjs');
   tracker = await initializeWebEyeTrack({
@@ -53,15 +57,15 @@ async function processFrame(message) {
 self.onmessage = event => {
   const message = event.data;
   if (message?.type === 'init') {
-    initialize().catch(error=>self.postMessage({type:'error',fatal:true,error:error?.message||String(error)}));
+    initialize().catch(()=>fail('worker_initialization_failed','worker_initialization'));
     return;
   }
   if (!tracker?.loaded) {
-    self.postMessage({type:'error',fatal:true,error:'WebEyeTrack is not initialized'});
+    fail('worker_initialization_failed','worker_initialization',message?.requestId);
     return;
   }
   if (message?.type === 'frame') {
-    processFrame(message).catch(error=>self.postMessage({type:'error',fatal:true,error:error?.message||String(error)}));
+    processFrame(message).catch(()=>fail('worker_inference_failed','worker_inference'));
     return;
   }
   if (message?.type === 'adapt') {
@@ -72,7 +76,7 @@ self.onmessage = event => {
       adaptedPoints++;
       self.postMessage({type:'adapted',requestId:message.requestId,points:adaptedPoints});
     } catch (error) {
-      self.postMessage({type:'adaptError',requestId:message.requestId,error:error?.message||String(error)});
+      self.postMessage({type:'adaptError',requestId:message.requestId,code:'worker_adaptation_failed',step:'worker_adaptation'});
     }
   }
 };
