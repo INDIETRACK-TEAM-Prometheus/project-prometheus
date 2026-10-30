@@ -13,7 +13,7 @@ function fail(code, step, requestId) {
 
 async function initialize() {
   importScripts('/vendor/webeyetrack.js');
-  const [{eyeCrop:cropEye}, {initializeWebEyeTrack}, adaptation, vision] = await Promise.all([
+  const [{eyeCrop:cropEye,landmarkGazeFeatures}, {initializeWebEyeTrack}, adaptation, vision] = await Promise.all([
     import('/src/gaze/index.js'),
     import('/src/gaze/webeyetrack-bootstrap.js'),
     import('/src/gaze/webeyetrack-adaptation.js'),
@@ -53,11 +53,13 @@ async function processFrame(message) {
     left:leftA&&leftB?eyeCrop(leftA,leftB,cropFrame):null,
     right:rightA&&rightB?eyeCrop(rightA,rightB,cropFrame):null
   };
+  const gazeFeatures=landmarkGazeFeatures(points,message.width,message.height);
   self.postMessage({
     type:'result',
     faceDetected:Array.isArray(result?.facialLandmarks)&&result.facialLandmarks.length>0,
     gazeState:result?.gazeState??'unknown',
     normPog:Array.isArray(result?.normPog)?result.normPog:null,
+    landmarkFeatures:gazeFeatures,
     eyeCrops,
     durations:result?.durations??null,
     width:message.width,

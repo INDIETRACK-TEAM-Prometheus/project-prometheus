@@ -81,6 +81,7 @@ export function createWebcamGazeController({
         const faceDetected = message.faceDetected === true;
         const norm = message.normPog;
         const validNorm = Array.isArray(norm) && norm.length === 2 && norm.every(finite) && norm.every(value => value >= -.5 && value <= .5);
+        const landmarkFeatures = Array.isArray(message.landmarkFeatures) && message.landmarkFeatures.length === 3 && message.landmarkFeatures.every(value => finite(value) && Math.abs(value) <= 1) ? [...message.landmarkFeatures] : null;
         const gazeOpen = message.gazeState === 'open';
         const features = faceDetected && gazeOpen && validNorm ? [norm[0] + .5, norm[1] + .5] : null;
         const viewport = getViewport();
@@ -112,6 +113,7 @@ export function createWebcamGazeController({
           leftEye:{valid:faceDetected&&gazeOpen,reason:!faceDetected?'face_not_detected':gazeOpen?null:'eyes_closed',confidence:null,crop:message.eyeCrops?.left??null},
           rightEye:{valid:faceDetected&&gazeOpen,reason:!faceDetected?'face_not_detected':gazeOpen?null:'eyes_closed',confidence:null,crop:message.eyeCrops?.right??null},
           features,
+          landmarkFeatures,
           normPog:validNorm?[...norm]:null,
           rawScreenXY,
           valid:calibrated,

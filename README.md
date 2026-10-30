@@ -34,7 +34,9 @@ $cert.Thumbprint
 
 `webeyetrack@0.0.2`와 공식 WebEyeTrack gaze model은 로컬 설치·제공됩니다. 기존 Face Landmarker의 WASM 실행 파일과 `face_landmarker.task`는 계속 `vendor/`에 준비해야 합니다. 공식 [Web 가이드](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker/web_js)에서 호환 자산의 라이선스와 출처를 확인하고, 아래 이름으로 배치하세요: `vision_bundle.mjs`, `vision_wasm_internal.js`, `vision_wasm_internal.wasm`, `vision_wasm_nosimd_internal.js`, `vision_wasm_nosimd_internal.wasm`, `face_landmarker.task`. WebEyeTrack 모델은 `vendor/webeyetrack-model/`에 포함되고 local server의 `/web/` 경로로만 로드됩니다. 런타임은 외부 CDN을 요청하지 않습니다. 상세한 출처, 해시, 라이선스, 제약은 [WebEyeTrack 통합 기록](docs/webeyetrack-integration.md)을 참조하세요. 모델이나 MediaPipe 자산이 빠지면 카메라를 열기 전에 시작이 실패합니다. 브라우저는 `requestVideoFrameCallback`을 지원해야 합니다.
 
-사용자가 카메라를 시작한 뒤 **교정 / 검증 다시 시작**을 누르면 WebEyeTrack 공식 `adapt()`가 27개 표적 응시로 개인화를 수행하고, 별도 27개 표적으로 독립 검증합니다. 클릭은 관리 조작이지 의도 입력이 아닙니다. 유효율 80% 이상, 화면 대각선 대비 p95 오차 5% 이하여야 해당 세션에서 추정이 활성화됩니다. upstream에는 교정 저장/복원 API가 없으므로 카메라 정지나 페이지 새로고침 뒤 다시 교정해야 합니다. 기존 수제 교정 저장값은 덮어쓰지 않으며 새 엔진에서는 사용하지 않습니다. 좌우 눈 preview는 현재 카메라 프레임에서 로컬로 그립니다. 영상, crop, raw landmarks는 API로 보내거나 저장하지 않습니다. 교정과 카메라 품질은 실제 사용자·기기에서 QA가 더 필요하며 검증 표본은 제품 정확도나 일반화를 보장하지 않습니다.
+사용자가 카메라를 시작한 뒤 **교정 / 검증 다시 시작**을 누르면 WebEyeTrack 공식 `adapt()`가 27개 표적 응시로 개인화를 수행하고, 별도 27개 표본에서 기준 WebEyeTrack 추정치를 평가합니다. 클릭은 관리 조작이지 의도 입력이 아닙니다. 유효율 80% 이상, 화면 대각선 대비 p95 오차 5% 이하여야 해당 세션에서 추정이 활성화됩니다. upstream에는 교정 저장/복원 API가 없으므로 카메라 정지나 페이지 새로고침 뒤 다시 교정해야 합니다. 기존 수제 교정 저장값은 덮어쓰지 않으며 새 엔진에서는 사용하지 않습니다. 좌우 눈 preview는 현재 카메라 프레임에서 로컬로 그립니다. 영상, crop, raw landmarks는 API로 보내거나 저장하지 않습니다. 교정과 카메라 품질은 실제 사용자·기기에서 QA가 더 필요하며 검증 표본은 제품 정확도나 일반화를 보장하지 않습니다.
+
+현재 MediaPipe iris/upper-lid landmark residual은 선택 후보입니다. 기준 WebEyeTrack 평가 27점은 기존 게이트에 그대로 사용하고, 잔차 후보는 같은 3×3 표적을 두 번 반복한 18회에 적합한 뒤 세 번째 반복 9회에서 기준 추정과 비교합니다. 이 반복 표본은 공간적으로 독립된 정확도나 일반화 평가가 아닙니다. 자세한 한계는 [WebEyeTrack 통합 기록](docs/webeyetrack-integration.md)을 참조하세요.
 
 ## 현재 한계와 게이트
 

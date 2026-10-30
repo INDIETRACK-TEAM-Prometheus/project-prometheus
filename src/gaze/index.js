@@ -3,6 +3,8 @@ const finite = n => Number.isFinite(n);
 const point = p => p && finite(p.x) && finite(p.y);
 const rect = r => r && finite(r.x) && finite(r.y) && finite(r.width) && finite(r.height) && r.width > 0 && r.height > 0;
 
+export const LANDMARK_RESIDUAL_FIT_ATTEMPTS = 18;
+
 // Least-squares affine regression over caller-supplied features, with an intercept.
 // Modified Gram-Schmidt avoids squaring the condition number of normal equations.
 export function fitCalibration(samples) {
@@ -42,6 +44,77 @@ export function predictCalibration(model, features) {
   if (!Array.isArray(features) || features.length !== model.dimension || !features.every(finite)) throw new Error('invalid features');
   const input = [1, ...features];
   return {x:input.reduce((a, v, i) => a + v * model.x[i], 0), y:input.reduce((a, v, i) => a + v * model.y[i], 0)};
+}
+
+// Compact MediaPipe iris/lid cues; raw landmarks stay inside the worker.
+export function landmarkGazeFeatures(landmarks, width, height) {
+  if (!Array.isArray(landmarks) || !finite(width) || !finite(height) || width < 1 || height < 1) return null;
+  const pixel = index => {
+    const p = landmarks[index];
+    const quality = p && ['visibility','presence'].every(key => p[key] === undefined || (finite(p[key]) && p[key] >= .5 && p[key] <= 1));
+    return quality && finite(p.x) && finite(p.y) && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1
+      ? {x:p.x * width, y:p.y * height}
+      : null;
+  };
+  const eyes = [
+    {corners:[263,362], iris:473, lids:[385,386,387]},
+    {corners:[33,133], iris:468, lids:[158,159,160]}
+  ];
+  const offsets = eyes.map(({corners, iris, lids}) => {
+    const [a,b] = corners.map(pixel), center = pixel(iris), upper = lids.map(pixel);
+    if (!a || !b || !center || upper.some(p => !p)) return null;
+    const span = Math.hypot(b.x-a.x,b.y-a.y), dx=b.x-a.x;
+    if (span < 4 || Math.abs(dx) < 1e-6) return null;
+    const baselineY = x => a.y + (x-a.x)*(b.y-a.y)/dx;
+    return [
+      (center.x-(a.x+b.x)/2)/span,
+      (center.y-baselineY(center.x))/span,
+      upper.reduce((sum,p)=>sum+p.y-baselineY(p.x),0)/(upper.length*span)
+    ];
+  });
+  if (offsets.some(values => !values)) return null;
+  const features = [0,1,2].map(index => (offsets[0][index]+offsets[1][index])/2);
+  return features.every(value => finite(value) && Math.abs(value) <= 1) ? features : null;
+}
+
+export function fitLandmarkResidualCalibration(attempts, screen) {
+  if (!rect({x:0,y:0,width:screen?.width,height:screen?.height}) || !Array.isArray(attempts) || attempts.length !== LANDMARK_RESIDUAL_FIT_ATTEMPTS) return null;
+  const samples = attempts.map(sample => {
+    if (sample?.valid === false || !Array.isArray(sample?.features) || sample.features.length !== 2 || !sample.features.every(value => finite(value) && value >= 0 && value <= 1) || !Array.isArray(sample.landmarkFeatures) || sample.landmarkFeatures.length !== 3 || !sample.landmarkFeatures.every(value => finite(value) && Math.abs(value) <= 1) || !point(sample.target) || sample.target.x < 0 || sample.target.x > screen.width || sample.target.y < 0 || sample.target.y > screen.height) return null;
+    return {
+      id:sample.id,
+      features:sample.landmarkFeatures,
+      target:{x:sample.target.x/screen.width-sample.features[0],y:sample.target.y/screen.height-sample.features[1]}
+    };
+  });
+  if (samples.some(sample => !sample)) return null;
+  try { return fitCalibration(samples); } catch { return null; }
+}
+
+export function predictLandmarkResidual(model, baselineFeatures, landmarkFeatures) {
+  if (!model || !Array.isArray(baselineFeatures) || baselineFeatures.length !== 2 || !baselineFeatures.every(value => finite(value) && value >= 0 && value <= 1) || !withinCalibrationBounds(model,landmarkFeatures)) return null;
+  const residual = predictCalibration(model,landmarkFeatures);
+  const corrected = [baselineFeatures[0]+residual.x,baselineFeatures[1]+residual.y];
+  return corrected.every(value => finite(value) && value >= 0 && value <= 1) ? corrected : null;
+}
+
+export function landmarkResidualMetrics(model, attempts, screen) {
+  if (!rect({x:0,y:0,width:screen?.width,height:screen?.height}) || !Array.isArray(attempts) || !attempts.length) throw new Error('screen and attempts required');
+  const errors=[];
+  let correctedCount=0;
+  for (const sample of attempts) {
+    if (sample?.valid === false) continue;
+    if (!point(sample?.target) || !Array.isArray(sample.features) || sample.features.length !== 2 || !sample.features.every(value => finite(value) && value >= 0 && value <= 1)) throw new Error('invalid validation sample');
+    const predicted = predictLandmarkResidual(model,sample.features,sample.landmarkFeatures) ?? sample.features;
+    if (predicted[0] !== sample.features[0] || predicted[1] !== sample.features[1]) correctedCount++;
+    errors.push(Math.hypot((predicted[0]-sample.target.x/screen.width)*screen.width,(predicted[1]-sample.target.y/screen.height)*screen.height)/Math.hypot(screen.width,screen.height));
+  }
+  errors.sort((a,b)=>a-b);
+  return {attempts:attempts.length,validCount:errors.length,validRate:errors.length/attempts.length,p50:percentile(errors,.5),p95:percentile(errors,.95),correctedCount,unit:'screen_diagonal_fraction'};
+}
+
+export function landmarkResidualPassesSelection(basePassed, model, baseline, candidate) {
+  return basePassed === true && !!model && finite(baseline?.p95) && finite(candidate?.p95) && candidate.p95 < baseline.p95 && candidate.p95 <= .05 && candidate.validRate >= .8 && candidate.correctedCount > 0 && candidate.correctedCount >= Math.ceil(.8*candidate.validCount);
 }
 
 function percentile(sorted, p) { if (!sorted.length) return null; const i = (sorted.length - 1) * p, low = Math.floor(i), high = Math.ceil(i); return sorted[low] + (sorted[high] - sorted[low]) * (i - low); }

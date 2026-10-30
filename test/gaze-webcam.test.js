@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWebcamGazeController} from '../src/gaze/webcam.js';
 
-function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null,autoReady=true,workerReadyTimeoutMs=10000,createCanvas:makeCanvas=null}={}) {
+function harness({normPog=[-.25,.25],landmarkFeatures=null,getUserMedia:acquireCamera=null,autoReady=true,workerReadyTimeoutMs=10000,createCanvas:makeCanvas=null}={}) {
   let callback=null, currentTime=0, nowMs=100, cameraOpens=0, trackStops=0, frameCounter=0;
   const workers=[],diagnostics=[],errors=[];
   const track={stop(){trackStops++;},getSettings(){return {width:2,height:2,frameRate:30,deviceId:'private-device-id'};}};
@@ -20,7 +20,7 @@ function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null,autoReady=t
         this.messages.push({message,transfer});
         if(message.type==='init'&&autoReady)queueMicrotask(()=>this.onmessage?.({data:{type:'ready'}}));
         if(message.type==='frame')queueMicrotask(()=>this.onmessage?.({data:{
-          type:'result',frameId:message.frameId,faceDetected:true,gazeState:'open',normPog,
+          type:'result',frameId:message.frameId,faceDetected:true,gazeState:'open',normPog,landmarkFeatures,
           eyeCrops:{left:{x:0,y:0,width:1,height:1},right:{x:1,y:0,width:1,height:1}},
           durations:{total:.01},width:message.width,height:message.height,
           captureTimestampMs:message.captureTimestampMs,callbackTimestampMs:message.callbackTimestampMs,
@@ -69,6 +69,13 @@ test('camera opens only after explicit consent and sends a local worker sample',
   assert.equal(h.workers[0].terminated,true);assert.equal(h.video.srcObject,null);
   for(const code of ['camera_request_started','camera_stream_acquired','worker_created','worker_ready','video_attached','video_playback_started','capture_started','camera_stop_requested','camera_stopped']) assert.ok(h.diagnostics.includes(code),code);
   assert.ok(h.diagnostics.every(code=>/^[a-z_]+$/.test(code)));
+});
+
+test('derived landmark cues reach the page only as a finite bounded feature vector',async()=>{
+  const good=harness({landmarkFeatures:[.1,-.2,.3]});await good.controller.start({userInitiated:true,cameraConsent:true});good.video.emit();await good.flush();
+  assert.deepEqual(good.samples[0].landmarkFeatures,[.1,-.2,.3]);good.controller.stop();
+  const malformed=harness({landmarkFeatures:[.1,Infinity,0]});await malformed.controller.start({userInitiated:true,cameraConsent:true});malformed.video.emit();await malformed.flush();
+  assert.equal(malformed.samples[0].landmarkFeatures,null);malformed.controller.stop();
 });
 
 test('camera permission is requested synchronously before waiting for the worker',async()=>{
