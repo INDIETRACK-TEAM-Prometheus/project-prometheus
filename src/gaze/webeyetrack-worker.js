@@ -1,6 +1,7 @@
 let tracker = null;
 let eyeCrop;
 let addCalibrationSample;
+let handleAdaptation;
 let calibrationPoints;
 
 function fail(code, step, requestId) {
@@ -17,6 +18,7 @@ async function initialize() {
   ]);
   eyeCrop = cropEye;
   calibrationPoints = adaptation.WEBEYETRACK_CALIBRATION_POINTS;
+  handleAdaptation = adaptation.handleWebEyeTrackAdaptation;
   tracker = await initializeWebEyeTrack({
     WebEyeTrack:self.WebEyeTrack,
     FaceLandmarkerClient:self.FaceLandmarkerClient,
@@ -76,13 +78,6 @@ self.onmessage = event => {
     return;
   }
   if (message?.type === 'adapt') {
-    try {
-      const result = tracker.latestGazeResult;
-      if (!result || result.gazeState !== 'open' || !result.eyePatch || !Array.isArray(result.headVector) || !Array.isArray(result.faceOrigin3D)) throw new Error('fresh open-eye WebEyeTrack result required');
-      const points = addCalibrationSample(result,message.target);
-      self.postMessage({type:'adapted',requestId:message.requestId,points});
-    } catch (error) {
-      self.postMessage({type:'adaptError',requestId:message.requestId,code:'worker_adaptation_failed',step:'worker_adaptation'});
-    }
+    handleAdaptation(tracker,addCalibrationSample,message.target,message.requestId).then(response=>self.postMessage(response));
   }
 };
