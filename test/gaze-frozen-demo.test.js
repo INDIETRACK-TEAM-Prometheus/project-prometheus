@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {selectFrozenSceneGaze,runFrozenGazeCycle} from '../src/gaze/frozen-demo.js';
+import {remapGazePointToViewport} from '../src/gaze/persistence.js';
 import {gazeSamPrompt,sendProvisionalSparkRequest,provisionalSparkMinIntervalMs,provisionalGazeFailureReason,provisionalSparkValidityScope,publishProvisionalSparkIfCurrent} from '../src/app.js';
 import {createSceneDiagnostic,flipRgba} from '../src/spatial/scene-diagnostic.js';
 
@@ -36,6 +37,18 @@ test('provisional gaze selector admits only a fresh post-freeze capture estimate
   ]) assert.equal(selectFrozenSceneGaze({sample,frame,canvasRect:rect,frozenAtMs:1000,stableAfterMs:1500,nowMs:1700,...input}).reason,reason);
   const uncalibrated={...sample,valid:false,rawScreenXY:null,invalidReason:'calibration_required'};
   assert.equal(selectFrozenSceneGaze({sample:uncalibrated,frame,canvasRect:rect,frozenAtMs:1000,stableAfterMs:1500,nowMs:1700}).reason,'capture_estimate_required');
+});
+
+test('saved calibration point reaches SAM at the same normalized location after viewport resize',()=>{
+  const saved={viewport:{width:1280,height:720,devicePixelRatio:1},screen:{width:1920,height:1080},camera:{width:640,height:480,frameRate:30}};
+  const current={...saved,viewport:{...saved.viewport,width:1920,height:1080}};
+  const rawScreenXY=remapGazePointToViewport({x:640,y:360},saved,current);
+  const resizedFrame={frameId:'resized',observedAt:42,width:1920,height:1080};
+  const resizedSample={...sample,rawScreenXY};
+  const selected=selectFrozenSceneGaze({sample:resizedSample,frame:resizedFrame,canvasRect:{left:0,top:0,width:1920,height:1080},frozenAtMs:1000,stableAfterMs:1500,nowMs:1700});
+  assert.equal(selected.status,'ready');
+  assert.deepEqual(selected.point,{x:.5,y:.5});
+  assert.equal(gazeSamPrompt(resizedFrame,selected.point),'<0f>1<|point;x=960;y=540;w=1920;h=1080|>');
 });
 
 test('gaze-point SAM request and displayed mask stay attached to the exact frozen framebuffer',async()=>{

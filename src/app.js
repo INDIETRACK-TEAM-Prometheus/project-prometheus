@@ -15,7 +15,7 @@ import {openDurableSession,deleteDurableSlot} from './memory/session.js';
 import {EvaluationLedger} from './evaluation/ledger.js';
 import {selectFrozenSceneGaze,createFrozenGazeAutomation,runFrozenGazeCycle} from './gaze/frozen-demo.js';
 import {estimateUncalibratedGaze,selectProvisionalIrisGaze} from './gaze/uncalibrated.js';
-import {loadGazeCalibration,saveGazeCalibration,gazeCalibrationEnvironmentChanged} from './gaze/persistence.js';
+import {loadGazeCalibration,saveGazeCalibration,gazeCalibrationEnvironmentChanged,remapGazePointToViewport} from './gaze/persistence.js';
 import {ProvisionalTrackingStore,deleteProvisionalTracking} from './memory/provisional-tracking.js';
 
 // Only aggregate pilot measurements are exported; no video, landmarks or device ID.
@@ -628,6 +628,10 @@ async function boot() {
   }
   function onSample(sample) {
     if(timingCalibration&&!sameTimingSetup(timingCalibration.setup,timingSetup())){handleCalibrationEnvironmentChange('화면/카메라 설정 변경');return;}
+    if(activeCalibration && sample.rawScreenXY){
+      const remapped=remapGazePointToViewport(sample.rawScreenXY,activeCalibration.environment,gazeEnvironment(pilot?.cameraSettings));
+      if(remapped)sample={...sample,rawScreenXY:remapped};
+    }
     if(pilot && pilot.stoppedAt===null && pilot.pauseStartedAt==null){
       pilot.samples++;if(sample.valid)pilot.validSamples++;if(sample.faceDetected)pilot.faces++;
       const kind=sample.timestampKind==='browser_capture_estimate'?'browser_capture_estimate':'callback_time_not_capture';pilot.timestampKinds[kind]++;

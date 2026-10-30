@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {GAZE_CALIBRATION_STORAGE_KEY,saveGazeCalibration,loadGazeCalibration,gazeCalibrationEnvironmentChanged} from '../src/gaze/persistence.js';
+import {GAZE_CALIBRATION_STORAGE_KEY,saveGazeCalibration,loadGazeCalibration,gazeCalibrationEnvironmentChanged,remapGazePointToViewport} from '../src/gaze/persistence.js';
 
 function storage() {
   const values=new Map();
@@ -43,4 +43,11 @@ test('detects measured environment changes without treating them as a calibratio
   assert.equal(gazeCalibrationEnvironmentChanged(environment,{...environment,viewport:{...environment.viewport,width:1440}}),true);
   assert.equal(gazeCalibrationEnvironmentChanged(environment,{...environment,camera:{...environment.camera,frameRate:60}}),true);
   assert.equal(gazeCalibrationEnvironmentChanged(environment,null),true);
+});
+
+test('remaps saved viewport-pixel predictions by normalized position after viewport resize',()=>{
+  const smaller={...environment,viewport:{...environment.viewport,width:640,height:360}};
+  assert.deepEqual(remapGazePointToViewport({x:320,y:180},environment,smaller),{x:160,y:90});
+  assert.deepEqual(remapGazePointToViewport({x:320,y:180},environment,{...environment,viewport:{...environment.viewport,devicePixelRatio:2}}),{x:320,y:180});
+  assert.equal(remapGazePointToViewport({x:320,y:180},environment,null),null);
 });

@@ -50,3 +50,13 @@ export function gazeCalibrationEnvironmentChanged(saved, current) {
   return [['viewport','width'],['viewport','height'],['viewport','devicePixelRatio'],['screen','width'],['screen','height'],['camera','width'],['camera','height'],['camera','frameRate']]
     .some(([section,key]) => saved[section][key] !== current[section][key]);
 }
+
+// Calibration targets are in viewport CSS pixels, so retain their normalized
+// position when a later viewport has different dimensions.
+export function remapGazePointToViewport(point, savedEnvironment, currentEnvironment) {
+  if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y) || !validEnvironment(savedEnvironment) || !validEnvironment(currentEnvironment)) return null;
+  return {
+    x: point.x / savedEnvironment.viewport.width * currentEnvironment.viewport.width,
+    y: point.y / savedEnvironment.viewport.height * currentEnvironment.viewport.height
+  };
+}
