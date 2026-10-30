@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWebcamGazeController} from '../src/gaze/webcam.js';
 
-function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null}={}) {
+function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null,autoReady=true,workerReadyTimeoutMs=10000}={}) {
   let callback=null, currentTime=0, nowMs=100, cameraOpens=0, trackStops=0, frameCounter=0;
   const workers=[];
   const track={stop(){trackStops++;},getSettings(){return {width:2,height:2,frameRate:30,deviceId:'private-device-id'};}};
@@ -18,7 +18,7 @@ function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null}={}) {
     const worker={url,options,messages:[],terminated:false,onmessage:null,onerror:null,
       postMessage(message,transfer=[]){
         this.messages.push({message,transfer});
-        if(message.type==='init')queueMicrotask(()=>this.onmessage?.({data:{type:'ready'}}));
+        if(message.type==='init'&&autoReady)queueMicrotask(()=>this.onmessage?.({data:{type:'ready'}}));
         if(message.type==='frame')queueMicrotask(()=>this.onmessage?.({data:{
           type:'result',faceDetected:true,gazeState:'open',normPog,
           eyeCrops:{left:{x:0,y:0,width:1,height:1},right:{x:1,y:0,width:1,height:1}},
@@ -40,7 +40,7 @@ function harness({normPog=[-.25,.25],getUserMedia:acquireCamera=null}={}) {
   };
   const samples=[];
   const controller=createWebcamGazeController({
-    video,mediaDevices,workerFactory,createCanvas,
+    video,mediaDevices,workerFactory,createCanvas,workerReadyTimeoutMs,
     clockNow:()=>nowMs++,getViewport:()=>({width:800,height:600}),
     onSample:sample=>samples.push(sample),onError:error=>{throw error;}
   });
@@ -66,6 +66,24 @@ test('camera opens only after explicit consent and sends a local worker sample',
   h.controller.stop();
   assert.deepEqual(h.counters(),{cameraOpens:1,trackStops:1});
   assert.equal(h.workers[0].terminated,true);assert.equal(h.video.srcObject,null);
+});
+
+test('camera permission is requested synchronously before waiting for the worker',async()=>{
+  const h=harness({autoReady:false});
+  const pending=h.controller.start({userInitiated:true,cameraConsent:true});
+  assert.equal(h.counters().cameraOpens,1);
+  assert.equal(h.workers.length,1);
+  h.workers[0].onmessage({data:{type:'ready'}});
+  await pending;
+  h.controller.stop();
+});
+
+test('worker initialization timeout stops an already acquired camera stream',async()=>{
+  const h=harness({autoReady:false,workerReadyTimeoutMs:5});
+  await assert.rejects(h.controller.start({userInitiated:true,cameraConsent:true}),/initialization timed out/);
+  assert.deepEqual(h.counters(),{cameraOpens:1,trackStops:1});
+  assert.equal(h.workers[0].terminated,true);
+  assert.equal(h.video.srcObject,null);
 });
 
 test('official adapt targets use normalized screen coordinates and commit validation state',async()=>{
@@ -120,4 +138,30 @@ test('stop during pending camera permission closes the stream when permission re
   assert.equal(stopped,1);
   assert.equal(h.video.srcObject,null);
   assert.equal(h.workers[0].terminated,true);
+});
+
+test('late permission from a stopped start cannot replace a restarted camera stream',async()=>{
+  const permissions=[];
+  let oldStreamStops=0,currentStreamStops=0;
+  const h=harness({getUserMedia:()=>new Promise(resolve=>permissions.push(resolve))});
+  const makeStream=stop=>{
+    const track={stop,getSettings(){return {width:2,height:2,frameRate:30};}};
+    return {getTracks:()=>[track],getVideoTracks:()=>[track]};
+  };
+  const oldStart=h.controller.start({userInitiated:true,cameraConsent:true});
+  await h.flush();
+  h.controller.stop();
+  const restarted=h.controller.start({userInitiated:true,cameraConsent:true});
+  await h.flush();
+  const currentStream=makeStream(()=>currentStreamStops++);
+  permissions[1](currentStream);
+  await restarted;
+  const oldStream=makeStream(()=>oldStreamStops++);
+  permissions[0](oldStream);
+  await assert.rejects(oldStart,/start cancelled/);
+  assert.equal(oldStreamStops,1);
+  assert.equal(h.video.srcObject,currentStream);
+  assert.equal(h.workers[1].terminated,false);
+  h.controller.stop();
+  assert.equal(currentStreamStops,1);
 });

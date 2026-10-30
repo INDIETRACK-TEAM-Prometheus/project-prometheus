@@ -10,6 +10,7 @@ export function createWebcamGazeController({
   onSample = () => {},
   onError = () => {},
   workerFactory = (url, options) => new Worker(url, options),
+  workerReadyTimeoutMs = 10000,
   createCanvas = () => document.createElement('canvas'),
   clockNow = () => performance.now(),
   getViewport = () => ({width:innerWidth,height:innerHeight})
@@ -24,6 +25,7 @@ export function createWebcamGazeController({
 
   function terminateRecord(record, reason = 'WebEyeTrack worker stopped') {
     if (!record) return;
+    if (!record.ready) record.rejectReady(new Error(reason));
     record.worker.terminate();
     for (const pending of record.pending.values()) pending.reject(new Error(reason));
     record.pending.clear();
@@ -34,8 +36,10 @@ export function createWebcamGazeController({
     const worker = workerFactory('/src/gaze/webeyetrack-worker.js', {type:'module', name:'prometheus-webeyetrack'});
     const record = {worker, calibrated, ready:false, busy:false, pending:new Map(), latestSample:null, fatal:false};
     const ready = new Promise((resolve, reject) => {
-      record.resolveReady = resolve;
-      record.rejectReady = reject;
+      let timeout;
+      record.resolveReady = () => { clearTimeout(timeout); resolve(); };
+      record.rejectReady = error => { clearTimeout(timeout); reject(error); };
+      timeout = setTimeout(() => record.rejectReady(new Error('WebEyeTrack worker initialization timed out')), workerReadyTimeoutMs);
     });
     worker.onmessage = event => {
       const message = event.data;
@@ -196,13 +200,20 @@ export function createWebcamGazeController({
       starting = true;
       const token = ++generation;
       try {
+        const cameraRequest = mediaDevices.getUserMedia({video:videoConstraints,audio:false});
+        const cameraPromise = Promise.resolve(cameraRequest).then(acquired => {
+          if (token !== generation) {
+            acquired.getTracks().forEach(track=>track.stop());
+            throw new Error('start cancelled');
+          }
+          stream = acquired;
+          return acquired;
+        });
+        cameraPromise.catch(()=>{});
         const created = createRecord(false);
         activeWorker = created.record;
-        await created.ready;
+        await Promise.all([cameraPromise,created.ready]);
         if (token !== generation) throw new Error('start cancelled');
-        const acquired = await mediaDevices.getUserMedia({video:videoConstraints,audio:false});
-        if (token !== generation) { acquired.getTracks().forEach(track=>track.stop()); throw new Error('start cancelled'); }
-        stream = acquired;
         video.srcObject = stream;
         await video.play();
         if (token !== generation) throw new Error('start cancelled');
@@ -216,6 +227,8 @@ export function createWebcamGazeController({
       } catch (error) {
         if (token === generation) {
           running = false;
+          starting = false;
+          generation++;
           stopCamera();
           terminateRecord(candidateWorker,error.message);
           terminateRecord(activeWorker,error.message);

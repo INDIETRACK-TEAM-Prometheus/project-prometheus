@@ -8,8 +8,23 @@ import {createLocalServer} from '../server.js';
 test('server serves only explicit integration modules and rejects unknown paths',async()=>{
   const server=createLocalServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   try { const base=`http://127.0.0.1:${server.address().port}`;
-    for(const path of ['/','/src/app.js','/src/gaze/persistence.js','/src/gaze/webcam.js','/src/gaze/overlay.js','/src/spatial/world.js','/src/memory/index.js','/src/memory/session.js','/src/memory/provisional-tracking.js','/src/evaluation/ledger.js','/src/runtime/facade.js','/src/runtime/provider-journal.js']) assert.equal((await fetch(base+path)).status,200,path);
+    for(const path of ['/','/src/app.js','/src/gaze/persistence.js','/src/gaze/webcam.js','/src/gaze/webeyetrack-worker.js','/src/gaze/webeyetrack-bootstrap.js','/src/gaze/overlay.js','/src/spatial/world.js','/src/memory/index.js','/src/memory/session.js','/src/memory/provisional-tracking.js','/src/evaluation/ledger.js','/src/runtime/facade.js','/src/runtime/provider-journal.js']) assert.equal((await fetch(base+path)).status,200,path);
     for(const path of ['/README.md','/%2e%2e/server.js','/src/not-listed.js','/vendor/not-allowed.js','/server/reasoner-adapter.js','/server.js','/.env','/data/session.json','/artifacts/result.json']) assert.equal((await fetch(base+path)).status,404,path);
+  } finally {await new Promise(resolve=>server.close(resolve));}
+});
+
+test('server exposes the pinned WebEyeTrack bundle and both local gaze-model files',async()=>{
+  const server=createLocalServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  try {
+    const base=`http://127.0.0.1:${server.address().port}`;
+    for(const path of ['/vendor/webeyetrack.js','/vendor/vision_bundle.mjs','/vendor/face_landmarker.task']) {
+      const response=await fetch(base+path);assert.equal(response.status,200,path);await response.body.cancel();
+    }
+    const modelResponse=await fetch(base+'/web/model.json');assert.equal(modelResponse.status,200);
+    const model=await modelResponse.json();
+    const weightPaths=model.weightsManifest.flatMap(group=>group.paths);
+    assert.ok(weightPaths.includes('group1-shard1of1.bin'));
+    const shard=await fetch(base+'/web/group1-shard1of1.bin');assert.equal(shard.status,200);await shard.body.cancel();
   } finally {await new Promise(resolve=>server.close(resolve));}
 });
 

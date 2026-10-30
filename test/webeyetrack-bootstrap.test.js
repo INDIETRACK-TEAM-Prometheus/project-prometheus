@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
 import {initializeWebEyeTrack} from '../src/gaze/webeyetrack-bootstrap.js';
 
 test('worker bootstrap consumes individually exported UMD globals and keeps MediaPipe local',async()=>{
@@ -44,4 +46,33 @@ test('worker bootstrap rejects a namespace-shaped or missing UMD global',async()
   const vision={FilesetResolver:{forVisionTasks(){}},FaceLandmarker:{createFromOptions(){}}};
   await assert.rejects(initializeWebEyeTrack({api:{WebEyeTrack:class{},FaceLandmarkerClient:class{}},vision}),/globals are unavailable/);
   await assert.rejects(initializeWebEyeTrack({WebEyeTrack:{WebEyeTrack:class{}},FaceLandmarkerClient:class{},vision}),/globals are unavailable/);
+});
+
+test('pinned npm UMD bundle exposes the worker globals and initializes through the local MediaPipe override',async()=>{
+  const source=readFileSync(new URL('../node_modules/webeyetrack/dist/index.js',import.meta.url),'utf8');
+  const workerGlobal={console,performance:{now:()=>0},location:{origin:'http://127.0.0.1:4173'}};
+  workerGlobal.self=workerGlobal;
+  vm.createContext(workerGlobal);
+  vm.runInContext(source,workerGlobal,{filename:'webeyetrack.js'});
+  assert.equal(typeof workerGlobal.WebEyeTrack,'function');
+  assert.equal(typeof workerGlobal.FaceLandmarkerClient,'function');
+
+  const calls={fileset:[],create:[],model:0};
+  const localFaceLandmarker={local:true};
+  workerGlobal.BlazeGaze.prototype.loadModel=async function(){calls.model++;};
+  const tracker=await initializeWebEyeTrack({
+    WebEyeTrack:workerGlobal.WebEyeTrack,
+    FaceLandmarkerClient:workerGlobal.FaceLandmarkerClient,
+    vision:{
+      FilesetResolver:{async forVisionTasks(path){calls.fileset.push(path);return {path};}},
+      FaceLandmarker:{async createFromOptions(files,options){calls.create.push({files,options});return localFaceLandmarker;}}
+    }
+  });
+
+  assert.equal(tracker.loaded,true);
+  assert.equal(tracker.maxPoints,27);
+  assert.equal(tracker.faceLandmarkerClient.faceLandmarker,localFaceLandmarker);
+  assert.deepEqual(calls.fileset,['/vendor']);
+  assert.equal(calls.create[0].options.baseOptions.modelAssetPath,'/vendor/face_landmarker.task');
+  assert.equal(calls.model,1);
 });
