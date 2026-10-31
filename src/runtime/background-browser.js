@@ -20,6 +20,10 @@ function unwrap(value) {
   return value;
 }
 
+function validBounds(bounds, frame) {
+  return bounds && typeof bounds === 'object' && !Array.isArray(bounds) && Object.keys(bounds).sort().join(',') === 'bottom,left,right,top' && ['left','top','right','bottom'].every(key => Number.isInteger(bounds[key])) && bounds.left >= 0 && bounds.top >= 0 && bounds.right <= frame.width && bounds.bottom <= frame.height && bounds.right > bounds.left && bounds.bottom > bounds.top;
+}
+
 // capture must return an immutable copy of the requested rendered frame; no world pause is used.
 export function createBackgroundBrowserWork({capture, sam, reason, now = () => performance.now()} = {}) {
   if (typeof capture !== 'function' || typeof sam !== 'function' || typeof reason !== 'function' || typeof now !== 'function') throw new TypeError('capture, sam, and reason callbacks required');
@@ -38,13 +42,15 @@ export function createBackgroundBrowserWork({capture, sam, reason, now = () => p
     const masks = unwrap(rawMasks);
     requireResponseFrame(masks, frame);
     if (!Array.isArray(masks.masks)) throw new TypeError('SAM masks required');
+    const boxes = masks.masks.slice(0,10).map(mask=>mask?.bounds).filter(bounds=>validBounds(bounds,frame));
+    const candidates = frame.frameId.length <= 116 ? boxes.map((bounds,index)=>({objectId:`${frame.frameId}:mask:${index}`,bounds:structuredClone(bounds)})) : [];
 
-    const input = {frame:{frameId:frame.frameId, observedAt:frame.observedAt, processedAt:frame.processedAt, width:frame.width, height:frame.height, imageData:frame.imageData}, gaze, masks:structuredClone(masks.masks), observedUntil:snapshot.observedUntil, dependencies:structuredClone(snapshot.dependencies), candidates:structuredClone(snapshot.candidates ?? snapshot.scene?.candidates ?? []), events:structuredClone(snapshot.events ?? []), context:structuredClone(snapshot.context ?? {memory:[]})};
+    const input = {frame:{frameId:frame.frameId, observedAt:frame.observedAt, processedAt:frame.processedAt, width:frame.width, height:frame.height, imageData:frame.imageData}, gaze, masks:boxes.map(bounds=>({bounds:structuredClone(bounds)})), observedUntil:snapshot.observedUntil, dependencies:structuredClone(snapshot.dependencies), candidates:structuredClone(candidates), events:structuredClone(snapshot.events ?? []), context:structuredClone(snapshot.context ?? {memory:[]})};
     const rawHypotheses = await reason(input, {signal});
     if (signal?.aborted) throw new Error('background work cancelled');
     const hypotheses = unwrap(rawHypotheses);
     requireResponseFrame(hypotheses, frame);
     if (!Array.isArray(hypotheses.scenarios)) throw new TypeError('hypotheses required');
-    return {scenarios:structuredClone(hypotheses.scenarios), ...(Object.hasOwn(hypotheses, 'nextGaze') ? {nextGaze:structuredClone(hypotheses.nextGaze)} : {})};
+    return {scenarios:structuredClone(hypotheses.scenarios), ...(Object.hasOwn(hypotheses, 'nextGaze') ? {nextGaze:structuredClone(hypotheses.nextGaze)} : {}), ...(candidates.length ? {candidateSpace:{frameId:frame.frameId,observedAt:frame.observedAt,candidates:structuredClone(candidates)}} : {})};
   };
 }

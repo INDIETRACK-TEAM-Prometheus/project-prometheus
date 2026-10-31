@@ -85,19 +85,31 @@ function cacheId(sessionId, key) {
   return `attention:${hash.toString(16)}`;
 }
 
+function validateCandidateSpace(space, snapshot) {
+  if (space == null) return snapshot.candidates ?? snapshot.scene?.candidates ?? [];
+  const frame = snapshot.frame;
+  if (!space || typeof space !== 'object' || Array.isArray(space) || Object.keys(space).sort().join(',') !== 'candidates,frameId,observedAt' || space.frameId !== frame.frameId || space.observedAt !== frame.observedAt || !Array.isArray(space.candidates) || space.candidates.length < 1 || space.candidates.length > 10 || !Number.isInteger(frame.width) || !Number.isInteger(frame.height)) throw new TypeError('invalid candidate space');
+  for (let i=0; i<space.candidates.length; i++) {
+    const candidate=space.candidates[i], bounds=candidate?.bounds;
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || Object.keys(candidate).sort().join(',') !== 'bounds,objectId' || candidate.objectId !== `${frame.frameId}:mask:${i}` || candidate.objectId.length > 128 || !bounds || typeof bounds !== 'object' || Array.isArray(bounds) || Object.keys(bounds).sort().join(',') !== 'bottom,left,right,top' || !['left','top','right','bottom'].every(key=>Number.isInteger(bounds[key])) || bounds.left<0 || bounds.top<0 || bounds.right>frame.width || bounds.bottom>frame.height || bounds.right<=bounds.left || bounds.bottom<=bounds.top) throw new TypeError('invalid candidate space');
+  }
+  return space.candidates;
+}
+
 function validatePrepared(value, snapshot, now, evidenceIds = snapshot.dependencies.evidenceIds) {
   if (!value || typeof value !== 'object' || !Array.isArray(value.scenarios)) throw new TypeError('invalid prepared result');
   validateScenarios(value.scenarios);
   const evidence = new Set(evidenceIds);
   if (value.scenarios.some(scenario => scenario.grounding_refs.some(id => !evidence.has(id)))) throw new TypeError('unknown grounding evidence');
   const nextGaze = value.nextGaze ?? null;
-  validateNextGaze(nextGaze, snapshot.candidates ?? snapshot.scene?.candidates ?? []);
-  if (!candidateIds(snapshot).length && nextGaze !== null) throw new TypeError('next gaze without candidates');
+  const candidates = validateCandidateSpace(value.candidateSpace, snapshot);
+  validateNextGaze(nextGaze, candidates);
+  if (!candidates.length && nextGaze !== null) throw new TypeError('next gaze without candidates');
   const observedUntil = value.observedUntil ?? snapshot.observedUntil;
   if (!time(observedUntil) || observedUntil > snapshot.observedUntil) throw new TypeError('prepared result exceeds causal cutoff');
   const expiresAt = value.expiresAt ?? snapshot.dependencies.expiresAt;
   if (expiresAt != null && (!time(expiresAt) || expiresAt <= now)) throw new TypeError('prepared result expired');
-  return {scenarios:structuredClone(value.scenarios), nextGaze:structuredClone(nextGaze), observedUntil, expiresAt:expiresAt ?? null, frameId:value.frameId ?? snapshot.frame.frameId, dependencies:structuredClone(value.dependencies ?? snapshot.dependencies)};
+  return {scenarios:structuredClone(value.scenarios), nextGaze:structuredClone(nextGaze), ...(value.candidateSpace ? {candidateSpace:structuredClone(value.candidateSpace)} : {}), observedUntil, expiresAt:expiresAt ?? null, frameId:value.frameId ?? snapshot.frame.frameId, dependencies:structuredClone(value.dependencies ?? snapshot.dependencies)};
 }
 
 export class BackgroundAttentionCoordinator {
@@ -321,7 +333,7 @@ export class BackgroundAttentionCoordinator {
       }
       const publishedAt = this.now();
       if (prepared.expiresAt != null && publishedAt >= prepared.expiresAt) return;
-      const value = {id:`${request.sessionId}:${request.sequence}`, sessionId:request.sessionId, sequence:request.sequence, frameId:prepared.frameId, observedUntil:prepared.observedUntil, sourceAgeMs:Math.max(0, publishedAt - prepared.observedUntil), dependencies:structuredClone(prepared.dependencies), scenarios:structuredClone(prepared.scenarios), nextGaze:structuredClone(prepared.nextGaze), deliveryState:generated ? 'generated' : 'cache_hit', timings:{cacheLookupMs, generationMs, nextTargetsMs, totalMs:Math.max(0,publishedAt-request.processedAt), publishedAt}};
+      const value = {id:`${request.sessionId}:${request.sequence}`, sessionId:request.sessionId, sequence:request.sequence, frameId:prepared.frameId, observedUntil:prepared.observedUntil, sourceAgeMs:Math.max(0, publishedAt - prepared.observedUntil), dependencies:structuredClone(prepared.dependencies), scenarios:structuredClone(prepared.scenarios), nextGaze:structuredClone(prepared.nextGaze), ...(prepared.candidateSpace ? {candidateSpace:structuredClone(prepared.candidateSpace)} : {}), deliveryState:generated ? 'generated' : 'cache_hit', timings:{cacheLookupMs, generationMs, nextTargetsMs, totalMs:Math.max(0,publishedAt-request.processedAt), publishedAt}};
       this.metrics.lastSourceAgeMs = value.sourceAgeMs; this.metrics.published++; this.lastStateKey = request.stateKey; this.lastPublishedAt = publishedAt; this.lastFailure = null;
       this.latest = request;
       try { this.publish(structuredClone(value)); }

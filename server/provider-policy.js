@@ -34,4 +34,6 @@ export class ProviderPolicy {
     } finally { this.inFlight--; }
   }
 }
-export const sharedProviderPolicy = new ProviderPolicy();
+// The shared demo loop reserves SAM + Spark together; the old $0.10 cap
+// rejected its intended cadence. Operators can set an explicit local cap.
+export const sharedProviderPolicy = new ProviderPolicy({maxCostPerMinute:Number(process.env.PROMETHEUS_PROVIDER_BUDGET_PER_MINUTE ?? 1)});

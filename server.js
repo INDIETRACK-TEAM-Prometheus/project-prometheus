@@ -8,6 +8,7 @@ import { reasonScenarios } from './server/reasoner-adapter.js';
 import { project } from './src/runtime/facade.js';
 import { validateNextGaze } from './src/runtime/next-gaze.js';
 import { createRecordingStore } from './server/recording-store.js';
+import { createDepthProvider } from './server/depth-provider.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const files = new Map([['/', ['index.html', 'text/html; charset=utf-8']], ['/style.css', ['style.css', 'text/css; charset=utf-8']]]);
@@ -17,6 +18,8 @@ for (const [name,type] of [['vision_bundle.mjs','text/javascript; charset=utf-8'
 files.set('/vendor/webeyetrack.js',['node_modules/webeyetrack/dist/index.js','text/javascript; charset=utf-8']);
 files.set('/src/gaze/webeyetrack-adaptation.js',['src/gaze/webeyetrack-adaptation.js','text/javascript; charset=utf-8']);
 files.set('/src/gaze/local-recorder.js',['src/gaze/local-recorder.js','text/javascript; charset=utf-8']);
+for(const name of ['calibration-profile.js','calibration-window.js','display-filter.js','eye-sphere.js']) files.set(`/src/gaze/${name}`,[`src/gaze/${name}`,'text/javascript; charset=utf-8']);
+for(const name of ['background-attention.js','background-browser.js']) files.set(`/src/runtime/${name}`,[`src/runtime/${name}`,'text/javascript; charset=utf-8']);
 files.set('/web/model.json',['vendor/webeyetrack-model/model.json','application/json; charset=utf-8']);
 files.set('/web/group1-shard1of1.bin',['vendor/webeyetrack-model/group1-shard1of1.bin','application/octet-stream']);
 const maxBody = 8 * 1024 * 1024;
@@ -45,10 +48,21 @@ function validInput(value) {
   const bytes = Buffer.from(match[2], 'base64');
   return match[1] === 'png' ? bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) : bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
 }
-export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')})} = {}) {
+export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),depthProvider=createDepthProvider()} = {}) {
   let inFlight = 0;
   const handler = async (req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
+    if(pathname==='/api/depth/estimate'){
+      if(req.method!=='POST'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
+      if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']??'')){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+      const abort=new AbortController();res.on('close',()=>{if(!res.writableEnded)abort.abort();});
+      try{let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxBody){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
+        const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if(!input||Object.keys(input).sort().join(',')!=='frame,imageDataUrl'){json(res,400,{error:'invalid_request'});return;}
+        const result=await depthProvider.infer({...input,signal:abort.signal});json(res,200,result);
+      }catch(error){const code=typeof error?.code==='string'&&/^DEPTH_[A-Z_]+$/.test(error.code)?error.code:'DEPTH_INVALID_REQUEST';json(res,code==='DEPTH_PROVIDER_BUSY'?429:503,{error:'depth_unavailable',code});}
+      return;
+    }
     if(pathname.startsWith('/api/recordings/')){
       if(req.method!=='POST'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
       try{
@@ -83,19 +97,22 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
         let input; try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { reject(400,{error:'invalid_request'}); return; }
         if (pathname === '/api/reason-provisional') {
           const exact=(value,keys)=>value && typeof value==='object' && !Array.isArray(value) && Object.keys(value).sort().join(',')===keys.slice().sort().join(',');
-          const frame=input?.frame, gaze=input?.gazePoint, boxes=input?.masks;
+          const frame=input?.frame, gaze=input?.gazePoint, boxes=input?.masks, candidates=input?.candidates, hasCandidates=Object.hasOwn(input??{},'candidates');
           const validBoxes=Array.isArray(boxes) && boxes.length<=10 && boxes.every(box=>exact(box,['left','top','right','bottom']) && [box.left,box.top,box.right,box.bottom].every(Number.isInteger) && box.left>=0 && box.top>=0 && box.right<=frame?.width && box.bottom<=frame?.height && box.right>box.left && box.bottom>box.top);
-          if (!exact(input,['consentScope','timingStatus','frame','imageDataUrl','gazePoint','issuedAtMs','masks']) || input.consentScope!=='provisional_spark' || input.timingStatus!=='provisional' || !exact(frame,['frameId','observedAt','width','height']) || typeof frame.frameId!=='string' || !frame.frameId.trim() || frame.frameId.length>128 || !Number.isFinite(frame.observedAt) || frame.observedAt<0 || !Number.isInteger(frame.width) || !Number.isInteger(frame.height) || frame.width<1 || frame.height<1 || frame.width*frame.height>1048576 || !exact(gaze,['x','y','sampleAtMs','processedAtMs','timestampKind','estimateStatus']) || !Number.isFinite(gaze.x) || gaze.x<0 || gaze.x>=1 || !Number.isFinite(gaze.y) || gaze.y<0 || gaze.y>=1 || !Number.isFinite(gaze.sampleAtMs) || gaze.sampleAtMs<0 || !Number.isFinite(gaze.processedAtMs) || gaze.processedAtMs<gaze.sampleAtMs || !['browser_capture_estimate','callback_time_not_capture'].includes(gaze.timestampKind) || !['uncalibrated_estimate','validated_calibration_estimate'].includes(gaze.estimateStatus) || (gaze.timestampKind==='callback_time_not_capture'&&gaze.estimateStatus!=='uncalibrated_estimate') || !Number.isFinite(input.issuedAtMs) || input.issuedAtMs<Math.max(frame.observedAt,gaze.processedAtMs) || !validBoxes || !validInput({frame:{frameId:frame.frameId,observedAt:frame.observedAt},imageDataUrl:input.imageDataUrl,prompt:'provisional scene'})) { reject(400,{error:'invalid_request'}); return; }
+          const validCandidates=!hasCandidates || (Array.isArray(candidates) && candidates.length>0 && candidates.length<=10 && candidates.length===boxes?.length && candidates.every((candidate,index)=>exact(candidate,['objectId','bounds']) && candidate.objectId===`${frame?.frameId}:mask:${index}` && candidate.objectId.length<=128 && exact(candidate.bounds,['left','top','right','bottom']) && ['left','top','right','bottom'].every(key=>candidate.bounds[key]===boxes[index][key])));
+          if (!exact(input,['consentScope','timingStatus','frame','imageDataUrl','gazePoint','issuedAtMs','masks',...(hasCandidates?['candidates']:[])]) || input.consentScope!=='provisional_spark' || input.timingStatus!=='provisional' || !exact(frame,['frameId','observedAt','width','height']) || typeof frame.frameId!=='string' || !frame.frameId.trim() || frame.frameId.length>128 || !Number.isFinite(frame.observedAt) || frame.observedAt<0 || !Number.isInteger(frame.width) || !Number.isInteger(frame.height) || frame.width<1 || frame.height<1 || frame.width*frame.height>1048576 || !exact(gaze,['x','y','sampleAtMs','processedAtMs','timestampKind','estimateStatus']) || !Number.isFinite(gaze.x) || gaze.x<0 || gaze.x>=1 || !Number.isFinite(gaze.y) || gaze.y<0 || gaze.y>=1 || !Number.isFinite(gaze.sampleAtMs) || gaze.sampleAtMs<0 || !Number.isFinite(gaze.processedAtMs) || gaze.processedAtMs<gaze.sampleAtMs || !['browser_capture_estimate','callback_time_not_capture'].includes(gaze.timestampKind) || !['uncalibrated_estimate','validated_calibration_estimate'].includes(gaze.estimateStatus) || (gaze.timestampKind==='callback_time_not_capture'&&gaze.estimateStatus!=='uncalibrated_estimate') || !Number.isFinite(input.issuedAtMs) || input.issuedAtMs<Math.max(frame.observedAt,gaze.processedAtMs) || !validBoxes || !validCandidates || !validInput({frame:{frameId:frame.frameId,observedAt:frame.observedAt},imageDataUrl:input.imageDataUrl,prompt:'provisional scene'})) { reject(400,{error:'invalid_request'}); return; }
           stage('request_validated');
           const observedUntil=Math.max(frame.observedAt,gaze.sampleAtMs);
           const timestampBasis=gaze.timestampKind==='browser_capture_estimate'?'browser_capture_estimate':'callback_time_not_capture';
           const calibrationStatus=gaze.estimateStatus==='uncalibrated_estimate'?'uncalibrated':'validated_calibration';
           const evidence=[{id:frame.frameId,kind:'scene',text:JSON.stringify({timingStatus:'provisional',calibrationStatus,timestampBasis,gazePoint:{x:gaze.x,y:gaze.y,sampleAtMs:gaze.sampleAtMs,processedAtMs:gaze.processedAtMs,timestampKind:gaze.timestampKind,estimateStatus:gaze.estimateStatus},sam:{maskCount:boxes.length,bounds:boxes}}),observedAt:frame.observedAt,processedAt:input.issuedAtMs,causalStatus:'provisional'}];
           stage('reasoner_started');
-          const result=await reasoner({timingStatus:'provisional',observedUntil,issuedAt:input.issuedAtMs,evidence,imageDataUrl:input.imageDataUrl,signal:controller.signal});
+          const result=await reasoner({timingStatus:'provisional',observedUntil,issuedAt:input.issuedAtMs,evidence,imageDataUrl:input.imageDataUrl,signal:controller.signal,...(hasCandidates?{candidates}: {})});
           if (!Array.isArray(result.scenarios)) throw new Error('invalid provisional reasoner response');
+          let nextGaze=null;
+          if(hasCandidates) { nextGaze=result.nextGaze??null; try { validateNextGaze(nextGaze,candidates); } catch { throw Object.assign(new Error('invalid provisional next gaze'),{code:'REASONER_JSON_INVALID'}); } }
           stage('reasoner_completed');
-          if (!controller.signal.aborted) { finish('request_completed', 200); json(res,200,{timingStatus:'provisional',frame:{frameId:frame.frameId,observedAt:frame.observedAt},scenarios:result.scenarios,reasoner:{provider:result.provider,model:result.model,requestId:result.requestId,latencyMs:result.latencyMs,usage:result.usage,estimatedCostUsd:result.estimatedCostUsd}}); }
+          if (!controller.signal.aborted) { finish('request_completed', 200); json(res,200,{timingStatus:'provisional',frame:{frameId:frame.frameId,observedAt:frame.observedAt},scenarios:result.scenarios,...(hasCandidates?{nextGaze}:{}),reasoner:{provider:result.provider,model:result.model,requestId:result.requestId,latencyMs:result.latencyMs,usage:result.usage,estimatedCostUsd:result.estimatedCostUsd}}); }
           return;
         }
         if (pathname === '/api/analyze' || pathname === '/api/reason') {
@@ -156,7 +173,9 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
     try { const data = await readFile(path.join(root, entry[0])); res.writeHead(200, {'Content-Type': entry[1], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}); res.end(data); }
     catch (error) { res.writeHead(error.code === 'ENOENT' ? 404 : 500); res.end('Unavailable'); }
   };
-  return httpsOptions ? https.createServer(httpsOptions, handler) : http.createServer(handler);
+  const server=httpsOptions ? https.createServer(httpsOptions, handler) : http.createServer(handler);
+  server.on('close',()=>{void depthProvider.close?.();});
+  return server;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const certPath = process.env.PROMETHEUS_HTTPS_CERT;

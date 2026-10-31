@@ -10,12 +10,12 @@ test('browser work captures then segments then reasons on one immutable frame wi
   const work=createBackgroundBrowserWork({
     now:()=>12,
     capture:async value=>{calls.push('capture');assert.equal(value.frame.frameId,'frame-1');return {frame:{...frame}};},
-    sam:async(value,{gaze,observedUntil})=>{calls.push('sam');assert.equal(value.frameId,'frame-1');assert.equal(gaze.frameId,value.frameId);assert.equal(observedUntil,10);return {frame:{frameId:'frame-1',observedAt:10},masks:[{objectId:'cup'}]};},
-    reason:async input=>{calls.push('reason');assert.equal(input.frame.frameId,'frame-1');assert.deepEqual(input.masks,[{objectId:'cup'}]);assert.equal(input.gaze.frameId,'frame-1');return {frame:{frameId:'frame-1',observedAt:10},scenarios:[],nextGaze:{rankedTargetIds:['cup']}};}
+    sam:async(value,{gaze,observedUntil})=>{calls.push('sam');assert.equal(value.frameId,'frame-1');assert.equal(gaze.frameId,value.frameId);assert.equal(observedUntil,10);return {frame:{frameId:'frame-1',observedAt:10},masks:[{bounds:{left:0,top:0,right:2,bottom:2}}]};},
+    reason:async input=>{calls.push('reason');assert.equal(input.frame.frameId,'frame-1');assert.deepEqual(input.masks,[{bounds:{left:0,top:0,right:2,bottom:2}}]);assert.deepEqual(input.candidates,[{objectId:'frame-1:mask:0',bounds:{left:0,top:0,right:2,bottom:2}}]);assert.equal(input.gaze.frameId,'frame-1');return {frame:{frameId:'frame-1',observedAt:10},scenarios:[],nextGaze:{rankedTargetIds:['frame-1:mask:0']}};}
   });
   const result=await work(snapshot,{signal:new AbortController().signal});
   assert.deepEqual(calls,['capture','sam','reason']);
-  assert.deepEqual(result,{scenarios:[],nextGaze:{rankedTargetIds:['cup']}});
+  assert.deepEqual(result,{scenarios:[],nextGaze:{rankedTargetIds:['frame-1:mask:0']},candidateSpace:{frameId:'frame-1',observedAt:10,candidates:[{objectId:'frame-1:mask:0',bounds:{left:0,top:0,right:2,bottom:2}}]}});
 });
 
 test('mismatched SAM or reasoner frame is rejected before it can be returned',async()=>{
