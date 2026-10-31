@@ -9,3 +9,7 @@ data/aria/
 __pycache__/
 *.pyc
 artifacts/*.zip
+data/recordings/
+data/calibration/
+data/models/
+.venv-depth/
