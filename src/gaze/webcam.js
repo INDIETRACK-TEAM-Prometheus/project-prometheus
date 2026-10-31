@@ -18,6 +18,7 @@ export function createWebcamGazeController({
   video,
   mediaDevices,
   onSample = () => {},
+  onEyePreview = () => {},
   onError = () => {},
   onDiagnostic = () => {},
   workerFactory = (url, options) => new Worker(url, options),
@@ -70,6 +71,8 @@ export function createWebcamGazeController({
       }
       if (message?.type === 'result') {
         record.busy = false;
+        const previewBitmaps=message.previewBitmaps??{};
+        try {
         if (!running || selectedWorker() !== record) return;
         const receivedAt = clockNow();
         const sourceTimestamp = message.captureTimestampMs;
@@ -123,10 +126,14 @@ export function createWebcamGazeController({
           modelDurations:message.durations
         };
         record.latestSample = sample;
+        try { onEyePreview({frameId:message.frameId,faceDetected,eyeCrops:message.eyeCrops??{},bitmaps:previewBitmaps}); } catch {}
         try { onSample(sample); } catch {
           const error=startupError('sample_handler_failed');
           diagnose(error.code);
           onError(error);
+        }
+        } finally {
+          for(const bitmap of Object.values(previewBitmaps))try{bitmap?.close?.();}catch{}
         }
         return;
       }

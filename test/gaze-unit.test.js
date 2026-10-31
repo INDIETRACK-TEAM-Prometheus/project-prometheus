@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fitCalibration,predictCalibration,calibrationMetrics,mapCoordinates,mirrorPoint,mirrorRect,eyeCrop,trackingSample,createLandmarkSession,withinCalibrationBounds,landmarkGazeFeatures,fitLandmarkResidualCalibration,predictLandmarkResidual,landmarkResidualMetrics,landmarkResidualPassesSelection,LANDMARK_RESIDUAL_FIT_ATTEMPTS} from '../src/gaze/index.js';
+import {fitCalibration,predictCalibration,calibrationMetrics,mapCoordinates,mirrorPoint,mirrorRect,eyeCrop,eyePreviewCrop,trackingSample,createLandmarkSession,withinCalibrationBounds,landmarkGazeFeatures,fitLandmarkResidualCalibration,predictLandmarkResidual,landmarkResidualMetrics,landmarkResidualPassesSelection,LANDMARK_RESIDUAL_FIT_ATTEMPTS} from '../src/gaze/index.js';
 
 const training = [[0,0],[1,0],[0,1],[1,1]].map(([x,y],i) => ({id:`t${i}`,features:[x,y],target:{x:100+500*x,y:50+300*y}}));
 test('calibration predicts independent points and reports normalized validation separately', () => {
@@ -75,6 +75,15 @@ test('display mirroring and corners keep crop independent of iris', () => {
   assert.deepEqual(mirrorRect({x:10,y:5,width:30,height:20},100),{x:60,y:5,width:30,height:20});
   assert.deepEqual(eyeCrop({x:20,y:20},{x:40,y:20},{x:0,y:0,width:100,height:100}),{x:15,y:12,width:30,height:16});
   assert.deepEqual(eyeCrop({x:0,y:0},{x:10,y:0},{x:0,y:0,width:100,height:100}),{x:0,y:0,width:12.5,height:4});
+});
+test('preview crop expands upward for brows without changing the tracker crop or lower edge',()=>{
+  const frame={x:0,y:0,width:100,height:100},crop=eyeCrop({x:20,y:20},{x:40,y:20},frame);
+  const preview=eyePreviewCrop(crop,frame,20);
+  assert.deepEqual(crop,{x:15,y:12,width:30,height:16});
+  assert.deepEqual(preview,{x:15,y:1,width:30,height:27});
+  assert.equal(preview.y+preview.height,crop.y+crop.height);
+  assert.deepEqual(eyePreviewCrop({x:15,y:2,width:30,height:10},frame,20),{x:15,y:0,width:30,height:12});
+  assert.equal(eyePreviewCrop(null,frame,20),null);
 });
 test('tracking loss, blink and degradation withhold current gaze', () => {
   const good={captureMs:5,faceDetected:true,leftEye:{valid:true},rightEye:{valid:true},calibrationValid:true,rawScreenXY:{x:2,y:3}};

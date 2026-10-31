@@ -162,6 +162,14 @@ export function eyeCrop(cornerA, cornerB, frame, {widthScale = 1.5, heightScale 
   return right > left && bottom > top ? {x:left, y:top, width:right-left, height:bottom-top} : null;
 }
 
+// Expand only the display crop upward so the preview can include brows; tracker crops stay unchanged.
+export function eyePreviewCrop(crop, frame, eyeSpan) {
+  if (!crop || !rect(crop) || !rect(frame) || !finite(eyeSpan) || eyeSpan <= 0) return null;
+  const bottom = Math.min(frame.y+frame.height,crop.y+crop.height);
+  const top = Math.max(frame.y,crop.y-eyeSpan*.55);
+  return bottom > top ? {...crop,y:top,height:bottom-top} : null;
+}
+
 // Never carries forward a previous position. Quality thresholds are caller policy.
 export function trackingSample({captureMs, faceDetected, leftEye, rightEye, degradedReason, rawScreenXY, calibrationValid}) {
   if (!finite(captureMs)) throw new Error('capture timestamp required');

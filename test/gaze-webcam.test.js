@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWebcamGazeController} from '../src/gaze/webcam.js';
 
-function harness({normPog=[-.25,.25],landmarkFeatures=null,getUserMedia:acquireCamera=null,autoReady=true,workerReadyTimeoutMs=10000,createCanvas:makeCanvas=null}={}) {
+function harness({normPog=[-.25,.25],landmarkFeatures=null,previewBitmaps={left:null,right:null},getUserMedia:acquireCamera=null,autoReady=true,workerReadyTimeoutMs=10000,createCanvas:makeCanvas=null}={}) {
   let callback=null, currentTime=0, nowMs=100, cameraOpens=0, trackStops=0, frameCounter=0;
   const workers=[],diagnostics=[],errors=[];
   const track={stop(){trackStops++;},getSettings(){return {width:2,height:2,frameRate:30,deviceId:'private-device-id'};}};
@@ -21,7 +21,7 @@ function harness({normPog=[-.25,.25],landmarkFeatures=null,getUserMedia:acquireC
         if(message.type==='init'&&autoReady)queueMicrotask(()=>this.onmessage?.({data:{type:'ready'}}));
         if(message.type==='frame')queueMicrotask(()=>this.onmessage?.({data:{
           type:'result',frameId:message.frameId,faceDetected:true,gazeState:'open',normPog,landmarkFeatures,
-          eyeCrops:{left:{x:0,y:0,width:1,height:1},right:{x:1,y:0,width:1,height:1}},
+          eyeCrops:{left:{x:0,y:0,width:1,height:1},right:{x:1,y:0,width:1,height:1}},previewBitmaps,
           durations:{total:.01},width:message.width,height:message.height,
           captureTimestampMs:message.captureTimestampMs,callbackTimestampMs:message.callbackTimestampMs,
           timestampKind:message.timestampKind,sentAtMs:message.sentAtMs
@@ -38,13 +38,13 @@ function harness({normPog=[-.25,.25],landmarkFeatures=null,getUserMedia:acquireC
     };}};
     return canvas;
   });
-  const samples=[];
+  const samples=[],previews=[];
   const controller=createWebcamGazeController({
     video,mediaDevices,workerFactory,createCanvas,workerReadyTimeoutMs,
     clockNow:()=>nowMs++,getViewport:()=>({width:800,height:600}),
-    onSample:sample=>samples.push(sample),onError:error=>errors.push(error),onDiagnostic:code=>diagnostics.push(code)
+    onSample:sample=>samples.push(sample),onEyePreview:preview=>previews.push(preview),onError:error=>errors.push(error),onDiagnostic:code=>diagnostics.push(code)
   });
-  return {controller,video,workers,samples,diagnostics,errors,counters:()=>({cameraOpens,trackStops}),advanceClock(ms){nowMs+=ms;},async flush(){await new Promise(resolve=>setImmediate(resolve));}};
+  return {controller,video,workers,samples,previews,diagnostics,errors,counters:()=>({cameraOpens,trackStops}),advanceClock(ms){nowMs+=ms;},async flush(){await new Promise(resolve=>setImmediate(resolve));}};
 }
 
 test('camera opens only after explicit consent and sends a local worker sample',async()=>{
@@ -76,6 +76,25 @@ test('derived landmark cues reach the page only as a finite bounded feature vect
   assert.deepEqual(good.samples[0].landmarkFeatures,[.1,-.2,.3]);good.controller.stop();
   const malformed=harness({landmarkFeatures:[.1,Infinity,0]});await malformed.controller.start({userInitiated:true,cameraConsent:true});malformed.video.emit();await malformed.flush();
   assert.equal(malformed.samples[0].landmarkFeatures,null);malformed.controller.stop();
+});
+
+test('frame-keyed eye preview stays outside samples and closes transferred bitmaps after display',async()=>{
+  const bitmap={closed:false,close(){this.closed=true;}},h=harness({previewBitmaps:{left:bitmap,right:null}});
+  await h.controller.start({userInitiated:true,cameraConsent:true});h.video.emit();await h.flush();
+  assert.equal(h.previews.length,1);assert.equal(h.previews[0].frameId,1);assert.equal(h.previews[0].bitmaps.left,bitmap);assert.equal(bitmap.closed,true);
+  assert.equal('previewBitmaps' in h.samples[0],false);assert.equal('eyeLandmarks' in h.samples[0],false);
+  h.controller.stop();
+});
+
+test('stale and stopped worker results close preview bitmaps without displaying them',async()=>{
+  const h=harness();await h.controller.start({userInitiated:true,cameraConsent:true});h.video.emit();await h.flush();
+  const stale={closed:false,close(){this.closed=true;}};
+  h.workers[0].onmessage({data:{type:'result',captureTimestampMs:h.samples[0].captureSourceMs,timestampKind:h.samples[0].timestampKind,previewBitmaps:{left:stale}}});
+  assert.equal(stale.closed,true);assert.equal(h.previews.length,1);
+  h.controller.stop();
+  const obsolete={closed:false,close(){this.closed=true;}};
+  h.workers[0].onmessage({data:{type:'result',previewBitmaps:{left:obsolete}}});
+  assert.equal(obsolete.closed,true);assert.equal(h.previews.length,1);
 });
 
 test('camera permission is requested synchronously before waiting for the worker',async()=>{
