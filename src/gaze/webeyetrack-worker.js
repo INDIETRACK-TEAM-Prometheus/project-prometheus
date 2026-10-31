@@ -135,7 +135,7 @@ async function processFrame(message) {
     right:rightA&&rightB?eyePreviewCrop(eyeCrop(rightA,rightB,cropFrame),cropFrame,Math.hypot(rightB.x-rightA.x,rightB.y-rightA.y)):null
   };
   const gazeFeatures=landmarkGazeFeatures(points,message.width,message.height);
-  const canRenderPreview=preparePreviewFrame(frame);
+  const canRenderPreview=!!(eyeCrops.left||eyeCrops.right)&&preparePreviewFrame(frame);
   const previewBitmaps={
     left:canRenderPreview?renderEyePreview(eyeCrops.left,points,'left',message.width,message.height):null,
     right:canRenderPreview?renderEyePreview(eyeCrops.right,points,'right',message.width,message.height):null
