@@ -2,6 +2,41 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createCausalDisplayFilter} from '../src/gaze/display-filter.js';
 
+function createPreviousFilter() {
+  const alpha=(cutoff,dt)=>1/(1+1/(2*Math.PI*cutoff)/dt);
+  let previousRaw=null,previousFiltered=null,previousDerivative={x:0,y:0},previousTimestamp=null;
+  return {update(point,timestampMs){
+    if(previousTimestamp===null){previousRaw={...point};previousFiltered={...point};previousTimestamp=timestampMs;return {point:{...point}};}
+    const dt=(timestampMs-previousTimestamp)/1000,filtered={},derivative={};
+    for(const axis of ['x','y']){
+      const rawDerivative=(point[axis]-previousRaw[axis])/dt;
+      derivative[axis]=alpha(1,dt)*rawDerivative+(1-alpha(1,dt))*previousDerivative[axis];
+      const pointAlpha=alpha(1.2+.02*Math.abs(derivative[axis]),dt);
+      filtered[axis]=pointAlpha*point[axis]+(1-pointAlpha)*previousFiltered[axis];
+    }
+    previousRaw={...point};previousFiltered=filtered;previousDerivative=derivative;previousTimestamp=timestampMs;
+    return {point:{...filtered}};
+  }};
+}
+
+function syntheticJitterAndStep(createFilter) {
+  let seed=20261101;
+  const random=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return (seed>>>0)/4294967296;};
+  const jitterFilter=createFilter(),errors=[];
+  for(let i=0;i<600;i++){
+    const result=jitterFilter.update({x:.5+(random()-.5)*.01,y:.5+(random()-.5)*.01},i*1000/60);
+    if(i>=60)errors.push(result.point.x-.5);
+  }
+  const jitterRms=Math.sqrt(errors.reduce((sum,error)=>sum+error*error,0)/errors.length);
+  const stepFilter=createFilter();
+  for(let i=0;i<30;i++)stepFilter.update({x:.25,y:.5},i*1000/60);
+  let crossingFrame=null;
+  for(let i=30;i<90;i++){
+    if(stepFilter.update({x:.75,y:.5},i*1000/60).point.x>=.70){crossingFrame=i;break;}
+  }
+  return {jitterRms,stepLagMs:(crossingFrame-30)*1000/60};
+}
+
 test('causal One-Euro display filter passes the first sample and smooths later motion',()=>{
   const filter = createCausalDisplayFilter();
   const first = filter.update({x:.2,y:.5},0);
@@ -43,4 +78,15 @@ test('long gaps start a new unfiltered segment instead of carrying old position'
 test('invalid filter settings are rejected',()=>{
   assert.throws(()=>createCausalDisplayFilter({minCutoff:0}));
   assert.throws(()=>createCausalDisplayFilter({maxDeltaMs:0}));
+});
+
+test('synthetic normalized jitter and step lag benchmark is reproducible',()=>{
+  const previous=syntheticJitterAndStep(createPreviousFilter);
+  const selected=syntheticJitterAndStep(()=>createCausalDisplayFilter());
+  assert.ok(Math.abs(previous.jitterRms-.0007604008218602145)<1e-12);
+  assert.ok(Math.abs(selected.jitterRms-.0007630459212059747)<1e-12);
+  assert.equal(previous.stepLagMs,316.6666666666667);
+  assert.equal(selected.stepLagMs,133.33333333333334);
+  assert.ok(selected.jitterRms<=previous.jitterRms*1.01);
+  assert.ok(selected.stepLagMs<previous.stepLagMs*.5);
 });

@@ -8,15 +8,16 @@ const alpha = (cutoffHz, dtSeconds) => {
 const validPoint = point => finite(point?.x) && finite(point?.y) &&
   point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1;
 
-// Causal One-Euro filter for normalized screen coordinates. Invalid samples are
-// withheld and reset so stale gaze is never presented as a current measurement.
-export function createCausalDisplayFilter({minCutoff = 1.2, beta = 0.02, derivativeCutoff = 1, minDeltaMs = 1, maxDeltaMs = 250} = {}) {
+// Causal 1€ equations follow https://github.com/casiez/OneEuroFilter; beta is in normalized-coordinate units per second.
+// .25 is the synthetic jitter/lag choice documented in docs/evidence/display-filter-synthetic-benchmark.json.
+// Invalid samples are withheld and reset so stale gaze is never presented as a current measurement.
+export function createCausalDisplayFilter({minCutoff = 1.2, beta = 0.25, derivativeCutoff = 1, minDeltaMs = 1, maxDeltaMs = 250} = {}) {
   if (![minCutoff, beta, derivativeCutoff, minDeltaMs, maxDeltaMs].every(finite) || minCutoff <= 0 || beta < 0 || derivativeCutoff <= 0 || minDeltaMs <= 0 || maxDeltaMs < minDeltaMs) throw new Error('invalid One-Euro filter settings');
 
-  let previousRaw = null, previousFiltered = null, previousDerivative = null, previousTimestampMs = null;
+  let previousFiltered = null, previousDerivative = null, previousTimestampMs = null;
 
   function reset() {
-    previousRaw = previousFiltered = previousDerivative = previousTimestampMs = null;
+    previousFiltered = previousDerivative = previousTimestampMs = null;
   }
 
   function update(point, timestampMs, {valid = true} = {}) {
@@ -31,7 +32,6 @@ export function createCausalDisplayFilter({minCutoff = 1.2, beta = 0.02, derivat
 
     const rawPoint = {x:point.x,y:point.y};
     if (previousTimestampMs === null) {
-      previousRaw = rawPoint;
       previousFiltered = rawPoint;
       previousDerivative = {x:0,y:0};
       previousTimestampMs = timestampMs;
@@ -45,7 +45,6 @@ export function createCausalDisplayFilter({minCutoff = 1.2, beta = 0.02, derivat
     }
     if (dtMs > maxDeltaMs) {
       reset();
-      previousRaw = rawPoint;
       previousFiltered = rawPoint;
       previousDerivative = {x:0,y:0};
       previousTimestampMs = timestampMs;
@@ -56,14 +55,13 @@ export function createCausalDisplayFilter({minCutoff = 1.2, beta = 0.02, derivat
     const filteredPoint = {};
     const filteredDerivative = {};
     for (const axis of ['x','y']) {
-      const derivative = (rawPoint[axis] - previousRaw[axis]) / dtSeconds;
+      const derivative = (rawPoint[axis] - previousFiltered[axis]) / dtSeconds;
       filteredDerivative[axis] = derivativeAlpha * derivative + (1 - derivativeAlpha) * previousDerivative[axis];
       const cutoff = minCutoff + beta * Math.abs(filteredDerivative[axis]);
       const pointAlpha = alpha(cutoff,dtSeconds);
       filteredPoint[axis] = pointAlpha * rawPoint[axis] + (1 - pointAlpha) * previousFiltered[axis];
     }
 
-    previousRaw = rawPoint;
     previousFiltered = filteredPoint;
     previousDerivative = filteredDerivative;
     previousTimestampMs = timestampMs;

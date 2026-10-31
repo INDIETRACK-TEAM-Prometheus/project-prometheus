@@ -12,7 +12,7 @@ import {
   saveGazeCalibrationProfile,
   selectAffineCalibrationCandidate
 } from '../src/gaze/calibration-profile.js';
-import {fitLandmarkResidualCalibration} from '../src/gaze/index.js';
+import {fitLandmarkResidualCalibration,calibrationMetrics} from '../src/gaze/index.js';
 
 const environment = {
   viewport:{width:1280,height:720,devicePixelRatio:1},
@@ -90,6 +90,35 @@ test('fits a robust affine candidate and selects it only on independent validati
   assert.ok(model.trainingIds.includes('train-4'));
   assert.throws(()=>selectAffineCalibrationCandidate({candidateModel:model,baselineModel:baseline,selectionSamples:[train[0]],screen:{x:0,y:0,width:1000,height:500}}),/overlaps training/);
   assert.throws(()=>fitAffineCalibration([train[0],train[0],train[2]]));
+});
+
+test('affine selection withholds holdout samples outside the fitted feature bounds',()=>{
+  const train=affineSamples('range-train',[[.25,.25],[.75,.25],[.25,.75],[.75,.75]]);
+  const selection=affineSamples('range-select',[[.4,.4],[.6,.6],[.5,.65],[.9,.5]]);
+  const candidateModel=fitAffineCalibration(train);
+  const result=selectAffineCalibrationCandidate({candidateModel,baselineModel:identityAffineCalibration({width:1000,height:500}),selectionSamples:selection,screen:{x:0,y:0,width:1000,height:500}});
+  assert.equal(result.selected,false);
+  assert.equal(result.candidate.validCount,3);
+  assert.equal(result.candidate.validRate,.75);
+  assert.equal(result.baseline.validCount,4);
+});
+
+test('identity affine calibration maps normalized features into a nonzero screen origin',()=>{
+  const screen={x:40,y:30,width:1000,height:500},model=identityAffineCalibration(screen);
+  assert.deepEqual(model.x,[40,1000,0]);
+  assert.deepEqual(model.y,[30,0,500]);
+  const metrics=calibrationMetrics(model,[
+    {id:'top-left',features:[0,0],target:{x:40,y:30}},
+    {id:'bottom-right',features:[1,1],target:{x:1040,y:530}}
+  ],screen,{independent:false});
+  assert.equal(metrics.p95,0);
+});
+
+test('saved affine feature bounds stay in normalized coordinate space',()=>{
+  const model=fitAffineCalibration(affineSamples('saved-range',[[.1,.1],[.9,.1],[.1,.9],[.9,.9]]));
+  model.featureBounds[0].min=-.01;
+  const args={adaptationSamples:replaySamples,calibration,environment,runtime,affine:{model,selection:{selected:false,status:'not_selected',baseline:metrics,candidate:metrics}}};
+  assert.throws(()=>createGazeCalibrationProfile(args),/invalid affine calibration selection/);
 });
 
 test('profile round-trips selected landmark residual coefficients and safe feature bounds',async()=>{

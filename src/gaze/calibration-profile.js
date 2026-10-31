@@ -117,7 +117,8 @@ function validAffineModel(model) {
   return model?.dimension === 2 && Array.isArray(model.x) && model.x.length === 3 && model.x.every(finite) &&
     Array.isArray(model.y) && model.y.length === 3 && model.y.every(finite) && Array.isArray(model.trainingIds) &&
     model.trainingIds.every(id => typeof id === 'string' && id.length > 0) && new Set(model.trainingIds).size === model.trainingIds.length &&
-    Array.isArray(model.featureBounds) && model.featureBounds.length === 2 && model.featureBounds.every(bound => finite(bound?.min) && finite(bound?.max) && bound.min <= bound.max);
+    Array.isArray(model.featureBounds) && model.featureBounds.length === 2 && model.featureBounds.every(bound =>
+      finite(bound?.min) && finite(bound?.max) && bound.min >= 0 && bound.max <= 1 && bound.min <= bound.max);
 }
 
 function sanitizeAffineModel(model) {
@@ -329,14 +330,24 @@ export function fitAffineCalibration(samples, {ridge = 1e-4, robustIterations = 
 }
 
 export function identityAffineCalibration(screen) {
-  if (!finite(screen?.width) || !finite(screen?.height) || screen.width <= 0 || screen.height <= 0) throw new Error('valid screen required');
-  return {dimension:2,x:[0,screen.width,0],y:[0,0,screen.height],trainingIds:[],featureBounds:[{min:0,max:1},{min:0,max:1}]};
+  const x = screen?.x ?? 0, y = screen?.y ?? 0;
+  if (!finite(x) || !finite(y) || !finite(screen?.width) || !finite(screen?.height) || screen.width <= 0 || screen.height <= 0) throw new Error('valid screen required');
+  return {dimension:2,x:[x,screen.width,0],y:[y,0,screen.height],trainingIds:[],featureBounds:[{min:0,max:1},{min:0,max:1}]};
+}
+
+function withinAffineFeatureBounds(model, sample) {
+  const features = rawFeatures(sample);
+  return features?.length === model.featureBounds.length && features.every((value,index) =>
+    finite(value) && value >= model.featureBounds[index].min && value <= model.featureBounds[index].max);
 }
 
 export function selectAffineCalibrationCandidate({candidateModel,baselineModel,selectionSamples,screen,maxP95 = .05,minValidRate = .8} = {}) {
   if (!validAffineModel(candidateModel) || !validAffineModel(baselineModel) || !finite(maxP95) || maxP95 < 0 || !finite(minValidRate) || minValidRate < 0 || minValidRate > 1) throw new Error('candidate, baseline, and selection limits required');
   const baseline = calibrationMetrics(baselineModel,selectionSamples,screen,{independent:true});
-  const candidate = calibrationMetrics(candidateModel,selectionSamples,screen,{independent:true});
+  const applicableSamples = selectionSamples.map(sample => sample.valid === false || withinAffineFeatureBounds(candidateModel,sample)
+    ? sample
+    : {...sample,valid:false});
+  const candidate = calibrationMetrics(candidateModel,applicableSamples,screen,{independent:true});
   const selected = candidate.p95 !== null && baseline.p95 !== null && candidate.validRate >= minValidRate && candidate.p95 <= maxP95 && candidate.p95 < baseline.p95;
   return {selected,status:selected?'selected_on_independent_selection':'not_selected',baseline,candidate};
 }

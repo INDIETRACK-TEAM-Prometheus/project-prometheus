@@ -1,0 +1,54 @@
+{
+  "type": "synthetic_filter_benchmark",
+  "scope": "Synthetic trajectories only; this is not evidence of real gaze accuracy or device performance.",
+  "reference": {
+    "algorithm": "1€ filter",
+    "implementation": "https://github.com/casiez/OneEuroFilter/blob/main/javascript/OneEuroFilter.js",
+    "publication": "Casiez, Roussel, Vogel, CHI 2012, https://doi.org/10.1145/2207676.2208639",
+    "detail": "Reference derivative uses current raw input minus previous filtered output. Beta is expressed in normalized-coordinate units per second here."
+  },
+  "reproduction": "node --test test/display-filter.test.js",
+  "trajectories": {
+    "stationary_jitter": {
+      "seed": 20261101,
+      "generator": "xorshift32",
+      "frames": 600,
+      "rate_hz": 60,
+      "input": "x and y = 0.5 + uniform[-0.005, 0.005]",
+      "metric": "RMS x error from 0.5 after discarding the first 60 frames"
+    },
+    "step": {
+      "rate_hz": 60,
+      "input": "30 frames at x=0.25, then x=0.75",
+      "metric": "elapsed time from the step until filtered x first reaches 0.70"
+    }
+  },
+  "settings": {
+    "previous_default": {
+      "min_cutoff_hz": 1.2,
+      "beta": 0.02,
+      "derivative_cutoff_hz": 1,
+      "derivative_source": "previous raw input"
+    },
+    "selected_default": {
+      "min_cutoff_hz": 1.2,
+      "beta": 0.25,
+      "derivative_cutoff_hz": 1,
+      "derivative_source": "previous filtered output"
+    }
+  },
+  "results": {
+    "previous_default": {
+      "stationary_jitter_rms": 0.0007604008218602145,
+      "step_lag_ms": 316.6666666666667
+    },
+    "selected_default": {
+      "stationary_jitter_rms": 0.0007630459212059747,
+      "step_lag_ms": 133.33333333333334
+    },
+    "change": {
+      "stationary_jitter_rms_percent": 0.34785592936228404,
+      "step_lag_reduction_percent": 57.89473684210527
+    }
+  }
+}
