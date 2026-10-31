@@ -11,14 +11,53 @@ Every decision must contain all nine conditions. They share one scene frame, one
 | `scene_only` | Scene |
 | `gaze_crop` | Scene and gaze crop |
 | `sam_object_context` | Scene, gaze crop, SAM objects |
-| `depth_context` | Scene, gaze crop, SAM objects, depth |
+| `depth_context` | Scene, gaze crop, SAM objects, actual Depth Anything V2 metric output |
 | `history_context` | Scene, gaze crop, SAM objects, history |
 | `proactive_context` | Scene, gaze crop, SAM objects, proactive context |
-| `depth_history_proactive` | Scene, gaze crop, SAM objects, depth, history, proactive context |
+| `depth_history_proactive` | Scene, gaze crop, SAM objects, the same Depth Anything output, history, proactive context |
 | `gaze_shuffled` | Scene and gaze crop made from a different gaze sample |
 | `gaze_time_shifted` | Scene and gaze crop made from an earlier gaze sample |
 
 The last two rows are controls for the gaze crop condition. The shuffled source sample must be present in that session and already processed by the decision cutoff. The time-shifted source must precede the original gaze sample by at least the configured `minGazeTimeShiftMs`. Both controls carry explicit transform metadata. They cannot use a gaze sample observed or processed after the decision cutoff.
+
+## Depth Anything: model, generation, and evaluation
+
+The depth treatment in this experiment is **Depth Anything V2 Metric Hypersim Small**, model ID `depth-anything/Depth-Anything-V2-Metric-Hypersim-Small`, encoder `vits`, indoor maximum depth 20 m. Use the pinned checkpoint, source revision, runtime versions, and SHA-256 recorded by the existing [local provider](depth-anything-v2-local.md) and its [synthetic smoke evidence](evidence/depth-u07-20261031.json). The smoke verifies execution, not accuracy. The [official metric instructions](https://github.com/DepthAnything/Depth-Anything-V2/blob/a561b849ebae10a6f5ef49e26c83cbbcd36c71bf/metric_depth/README.md) and [checkpoint card](https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-Hypersim-Small) are the source contracts.
+
+### Generation and causal availability
+
+1. Use the exact scene RGB frame shared by all nine conditions, not the webcam image of the participant's face. Invoke `createDepthProvider().infer({frame,imageDataUrl,signal})` or the local `/api/depth/estimate` route. Preserve frame ID, observation timestamp, dimensions, and RGB digest.
+2. Save the actual full-resolution predicted `depth_m` map and its validity mask. The provider reports metres, axial camera Z, and `depthSource: monocular_estimated_depth`. A zero with invalid mask is missing data, not a zero-distance surface. Do not substitute standard relative-depth checkpoints or renderer output.
+3. Record when the result actually became available. The experiment cutoff must be no earlier than completion of every included input, including Depth Anything. Use that same cutoff for every paired condition. If depth is late, move the common decision cutoff forward or record a missed/withheld depth decision; never backdate processing time to the RGB capture time.
+4. Reuse the same saved prediction in `depth_context` and `depth_history_proactive`. Do not rerun the depth model selectively until a better map appears. Keep the common LLM model/prompt configuration and the predeclared output limits/cost caps unchanged.
+5. Include depth preprocessing/inference/serialization time in pipeline preparation latency and account for local compute separately from LLM provider cost. Report cold model startup and warmed frame inference separately; cached depth must retain original frame and availability time. A fast cache lookup is not fresh depth inference.
+
+This is a deliberately delayed paired offline decision when required inputs need time to become available. For live prediction, score the actual available inputs and whether the predicted next event has already occurred; do not use later-generated depth to claim an earlier prediction. A separate matched-delay control can delay the no-depth arm by the same preparation time to isolate added information from added observation time.
+
+### What the LLM receives
+
+Generate one deterministic, versioned structured depth artifact from the map and same-frame SAM masks. For each candidate, include its frame-scoped object ID, valid pixel fraction, median axial depth and interquartile range in metres, and the current gaze pixel's depth when valid. Compute object statistics from foreground mask pixels, not all pixels in its bounding box. Freeze the minimum valid-pixel fraction and sampling policy in the study manifest before scoring. If too few valid pixels remain, use an explicit missing reason and abstain from numerical depth for that object.
+
+Optionally include near/far relations only when the declared uncertainty intervals do not overlap. These intervals describe map spread, not calibrated model confidence. Do not invent confidence values or object-centre depth from an empty region. The no-depth arms receive the same RGB, SAM masks, and candidate IDs but no depth values, near/far labels, or depth-derived XYZ. Hash the canonical serialized artifact; use that digest in the schema's existing `kind: depth` evidence row. The payload format and transformation revision belong to the study sidecar, not new unknown fields in the strict scorer schema.
+
+Metric XYZ additionally needs the same-frame camera intrinsics and camera-to-world transform. Record resize/crop transformations and use `X_camera = z * inverse(K) * [u,v,1]`; distinguish axial Z from ray range. Without those calibrated inputs, retain image depth and withhold world XYZ. A scene-surface depth is not measured binocular fixation depth.
+
+### Two different quality questions
+
+| Question | Paired comparison and metrics |
+| --- | --- |
+| Is Depth Anything geometrically accurate? | Compare model depth against separately saved renderer ground truth for the exact synthetic RGB/camera frame. Report valid coverage, MAE (m), RMSE (m), AbsRel, and threshold accuracy `max(pred/gt,gt/pred) < 1.25` on a predeclared valid, positive, in-range GT mask. Report foreground objects, boundaries, and gaze pixels separately. Report model-missing pixels in coverage rather than silently excluding them. |
+| Does estimated depth improve LLM attention/action inference? | Compare `depth_context` vs `sam_object_context` on identical held-out decisions. Report the existing current-object, next-target, coverage, lead-time, latency, and blinded open-hypothesis quality metrics, with paired session-level intervals. A better depth MAE alone does not establish better reasoning. |
+
+Use the raw metric output for the primary depth accuracy result. Do not fit scale/shift to test GT or normalize each frame to match the renderer. If a scale correction is investigated, fit it only on the training/calibration split, freeze it, and report it as a separate experiment. Synthetic accuracy does not establish accuracy on real scenes without independent sensor/range ground truth.
+
+An additional **engine-depth oracle arm** may estimate the benefit of perfect geometry; it must be reported outside this nine-condition scorer as a separately named experiment. Engine GT must never enter the model-depth artifact or be labelled Depth Anything. A predeclared shuffled-depth or object-depth-permutation control may test whether gains come from useful geometry, but similarly requires a separate documented experiment/schema extension; these arms are not currently supported by this scorer.
+
+### Required depth sidecar and current implementation limits
+
+Store a depth sidecar under the ignored study-data directory with: model ID/checkpoint hash/source revision/license; runtime/device/input resolution; RGB/map/mask/artifact digests and local paths; frame ID and observation/availability times; units/convention/invalid policy; cold/warm timings; SAM revision/mask IDs; structured-artifact policy; optional intrinsics/pose; GT provenance and evaluation ROI; metric report. Link its depth artifact digest to every corresponding evidence row. Keep GT and future labels outside model input.
+
+The existing comparison CLI validates evidence hashes, timestamps, and paired-condition consistency. **It does not run Depth Anything, build mask-depth summaries, inspect map files, compute depth accuracy, or independently verify the sidecar.** Those steps require generation and verification before categorical scoring. The existing provider and smoke are implemented; this section specifies the still-required accuracy and reasoning experiments. Depth quality and improvement Gates remain unpassed until actual held-out results exist.
 
 ## Input contract
 
