@@ -1,8 +1,8 @@
 import {unprojectDepth} from './geometry.js';
+import {associateMasks} from './mask-association.js';
 const nonempty = x => typeof x === 'string' && x.length > 0;
 const finite = x => Number.isFinite(x) && x >= 0;
 const clone = x => structuredClone(x);
-const center = b => [(b.left+b.right)/2,(b.top+b.bottom)/2];
 
 // SAM crop raster uses half-open source-image bounds. Coordinates refer to pixel centers.
 export function maskContains(mask,x,y) {
@@ -15,13 +15,13 @@ function validateMask(m,w,h) {
   const b=m?.bounds;
   return m && m.sourceWidth===w && m.sourceHeight===h && Number.isInteger(m.width) && m.width>0 && Number.isInteger(m.height) && m.height>0 && m.width*m.height<=1048576 && Array.isArray(m.raster) && m.raster.length===m.width*m.height && m.raster.every(x=>x===0 || x===1) && b && [b.left,b.top,b.right,b.bottom].every(Number.isInteger) && b.left>=0 && b.top>=0 && b.right<=w && b.bottom<=h && b.right>b.left && b.bottom>b.top;
 }
-function feature(mask,rgba,w,h) {
-  const sum=[0,0,0], pixels=[]; const b=mask.bounds;
-  for(let y=b.top;y<b.bottom;y++) for(let x=b.left;x<b.right;x++) if(maskContains(mask,x+.5,y+.5)) {const i=(y*w+x)*4;for(let c=0;c<3;c++) sum[c]+=rgba[i+c];pixels.push([x,y]);}
-  if (!pixels.length) throw new TypeError('empty mask');
-  const centroid=pixels.reduce((a,p)=>[a[0]+(p[0]+.5)/pixels.length,a[1]+(p[1]+.5)/pixels.length],[0,0]);
-  const pixel=pixels.reduce((best,p)=>Math.hypot(p[0]+.5-centroid[0],p[1]+.5-centroid[1])<Math.hypot(best[0]+.5-centroid[0],best[1]+.5-centroid[1])?p:best);
-  return {color:sum.map(v=>v/pixels.length),pixel:[pixel[0]+.5,pixel[1]+.5]};
+function feature(mask,rgba,w) {
+  const b=mask.bounds; let count=0,sumX=0,sumY=0;const color=[0,0,0];
+  for(let y=b.top;y<b.bottom;y++) for(let x=b.left;x<b.right;x++) if(maskContains(mask,x+.5,y+.5)) {count++;sumX+=x+.5;sumY+=y+.5;const offset=(y*w+x)*4;for(let channel=0;channel<3;channel++)color[channel]+=rgba[offset+channel];}
+  if (!count) throw new TypeError('empty mask');
+  const centerX=sumX/count,centerY=sumY/count;let best=null,bestDistance=Infinity;
+  for(let y=b.top;y<b.bottom;y++) for(let x=b.left;x<b.right;x++) if(maskContains(mask,x+.5,y+.5)) {const distance=(x+.5-centerX)**2+(y+.5-centerY)**2;if(distance<bestDistance){best=[x+.5,y+.5];bestDistance=distance;}}
+  return {pixel:best,color:color.map(value=>value/count)};
 }
 function metricPoint(pixel,depth,frameId,observedAt,processedAt) {
   if (!depth || depth.frameId!==frameId || depth.observedAt!==observedAt || !finite(depth.processedAt) || depth.processedAt<depth.observedAt || depth.processedAt>processedAt || depth.causalStatus!=='online_causal' || !Number.isInteger(depth.width) || !Number.isInteger(depth.height) || !Array.isArray(depth.values) || depth.values.length!==depth.width*depth.height) return {status:'unavailable',point:null,reason:'unaligned_depth'};
@@ -44,23 +44,22 @@ export class ObjectTracker {
   }
   update({frameId,observedAt,processedAt,causalStatus,provenance,rgba,width,height,masks,depth=null,gaze=null,coordinateFrameId=null,sampleSurface=null}) {
     if(!nonempty(frameId)||this.frameIds.has(frameId)||!finite(observedAt)||!finite(processedAt)||processedAt<observedAt||processedAt<this.processedClock||observedAt<=this.clock||causalStatus!=='online_causal'||!nonempty(provenance)||!Number.isInteger(width)||!Number.isInteger(height)||width<1||height<1||width*height>1048576||!rgba||rgba.length!==width*height*4||!Array.isArray(masks)||masks.length>this.maxObjects||masks.some(m=>!validateMask(m,width,height))||depth && (depth.width!==width||depth.height!==height)||gaze && (gaze.frameId!==frameId||(gaze.framePresentTsEstimateMs!==undefined && (!finite(gaze.framePresentTsEstimateMs)||gaze.framePresentTsEstimateMs<observedAt||gaze.framePresentTsEstimateMs>gaze.observedAt))||gaze.causalStatus!=='online_causal'||(!finite(gaze.observedAt)||gaze.observedAt<observedAt||gaze.observedAt!==observedAt && (!finite(gaze.syncUncertaintyMs)||!finite(gaze.frameSyncUncertaintyMs)||!finite(gaze.framePresentTsEstimateMs ?? observedAt)||(gaze.framePresentTsEstimateMs ?? observedAt)<observedAt||(gaze.framePresentTsEstimateMs ?? observedAt)>gaze.observedAt||!finite(gaze.alignmentBudgetMs)||gaze.observedAt-(gaze.framePresentTsEstimateMs ?? observedAt)+gaze.syncUncertaintyMs+gaze.frameSyncUncertaintyMs>gaze.alignmentBudgetMs))||!finite(gaze.processedAt)||gaze.processedAt<gaze.observedAt||gaze.processedAt>processedAt||!Array.isArray(gaze.pixel)||gaze.pixel.length!==2||!gaze.pixel.every(Number.isFinite))) throw new TypeError('invalid frame or mask');
-    const detections=masks.map((mask,i)=>({mask,features:feature(mask,rgba,width,height),detectionId:`${frameId}:${i}`}));
-    const candidates=detections.map(d=>[...this.objects.values()].filter(o=>observedAt-o.observedAt<=this.maxGapMs).map(o=>{
-      const a=center(d.mask.bounds),b=center(o.bounds),distance=Math.hypot((a[0]-b[0])/width,(a[1]-b[1])/height), color=Math.hypot(...d.features.color.map((v,i)=>v-o.color[i]))/441.673;
-      return {objectId:o.objectId,score:distance+color};
-    }).filter(c=>c.score<=.35).sort((a,b)=>a.score-b.score));
-    const best=candidates.map(c=>c[0]?.objectId); const observations=[];
-    const creates=candidates.filter((c,i)=>!c.length || c.length>1 && c[1].score-c[0].score<.08 || best[i] && best.filter(id=>id===best[i]).length>1).length;
+    const detections=masks.map((mask,i)=>({mask,features:feature(mask,rgba,width),detectionId:`${frameId}:${i}`}));
+    const recent=[...this.objects.values()].filter(o=>observedAt-o.observedAt<=this.maxGapMs);
+    const association=associateMasks(recent.map(o=>({objectId:o.objectId,mask:o.mask,appearance:o.color})),detections.map(d=>({mask:d.mask,appearance:d.features.color})));
+    const matches=new Map(association.matches.map(match=>[match.detectionIndex,match.objectId]));
+    const candidates=association.candidates.map(item=>item.candidates.map(candidate=>({objectId:candidate.objectId,score:candidate.iou})));
+    const ambiguous=new Set(association.ambiguous.map(item=>item.detectionIndex)); const observations=[];
+    const creates=detections.length-matches.size;
     if(this.objects.size+creates>this.maxObjects) throw new Error('object_capacity');
-    const linkedIds=new Set(candidates.flatMap((c,i)=>c.length && !(c.length>1 && c[1].score-c[0].score<.08) && best.filter(id=>id===best[i]).length===1 ? [best[i]] : []));
+    const linkedIds=new Set(matches.values());
     const retained=[...this.objects.values()].filter(o=>!linkedIds.has(o.objectId)).reduce((n,o)=>n+(o.mask?.width??0)*(o.mask?.height??0),0);
     if(retained+masks.reduce((n,m)=>n+m.width*m.height,0)>this.maxMaskPixels) throw new Error('mask_capacity');
     for(let i=0;i<detections.length;i++) {
-      const d=detections[i], c=candidates[i], ambiguous=c.length>1 && c[1].score-c[0].score<.08 || best[i] && best.filter(id=>id===best[i]).length>1;
-      const linked=c.length && !ambiguous; const objectId=linked?c[0].objectId:`object-${++this.serial}`;
+      const d=detections[i], c=candidates[i], linked=matches.has(i), objectId=linked?matches.get(i):`object-${++this.serial}`;
       if(!linked && this.objects.size>=this.maxObjects) throw new Error('object_capacity');
       const locate=pixel=>depth ? metricPoint(pixel,depth,frameId,observedAt,processedAt) : sampledPoint(pixel,sampleSurface,frameId,observedAt,processedAt,coordinateFrameId); const point=locate(d.features.pixel); const gazePoint=gaze && maskContains(d.mask,...gaze.pixel)?locate(gaze.pixel):null;
-      const observation={observationId:`${frameId}:${i}`,detectionId:d.detectionId,objectId,frameId,observedAt,processedAt,identityStatus:ambiguous?'ambiguous':linked?'linked':'tentative',candidateObjectIds:c.map(x=>x.objectId),sourceKind:'segmentation',causalStatus,provenance,bounds:clone(d.mask.bounds),surfacePointWorld:point.point,surfaceProvenance:point.source??null,objectAnchorWorld:null,gazeHitPointWorld:gazePoint?.point??null,gazeHitProvenance:gazePoint?.source??null,evidenceIds:[frameId],associationRevision:0};
+      const observation={observationId:`${frameId}:${i}`,detectionId:d.detectionId,objectId,frameId,observedAt,processedAt,identityStatus:ambiguous.has(i)?'ambiguous':linked?'linked':'tentative',candidateObjectIds:c.map(x=>x.objectId),sourceKind:'segmentation',causalStatus,provenance,bounds:clone(d.mask.bounds),surfacePointWorld:point.point,surfaceProvenance:point.source??null,objectAnchorWorld:null,gazeHitPointWorld:gazePoint?.point??null,gazeHitProvenance:gazePoint?.source??null,evidenceIds:[frameId],associationRevision:0};
       const previous=linked?this.objects.get(objectId):null;
       observations.push(observation);this.objects.set(objectId,{objectId,observedAt,bounds:clone(d.mask.bounds),color:d.features.color,mask:clone(d.mask),frameId,observationId:observation.observationId});
       if(linked) this.lineage.push({observationId:observation.observationId,objectId,active:true,previous:{...previous,mask:null}});

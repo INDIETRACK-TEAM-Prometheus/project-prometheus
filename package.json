@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@meta-sam/parser": "0.1.0",
+    "munkres": "2.1.1",
     "webeyetrack": "0.0.2"
   }
 }

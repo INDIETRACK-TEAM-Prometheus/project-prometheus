@@ -19,6 +19,15 @@ test('moving synthetic detections preserve identity and occlusion remains last s
  assert.equal(tracker.propagated(a[1].objectId,121),null);assert.equal(tracker.propagated(a[1].objectId,100).sourceKind,'tracker');
  const d=tracker.update(frame('f4',40,[item(7,[255,0,0]),item(10,[0,0,255])]));assert.equal(d[1].objectId,a[1].objectId);
 });
+test('SAM per-frame ids are ignored and stale masks do not carry IDs past the configured gap',()=>{
+ const make=(id,t,samId)=>frame(id,t,[{...item(2,[100,100,100]),m:{...crop(2,2),objectId:samId}}]);
+ const tracker=new ObjectTracker();const first=tracker.update(make('sam-1',10,'sam-object-1'))[0];
+ const near=tracker.update(make('sam-2',20,'sam-object-2'))[0];assert.equal(near.objectId,first.objectId);assert.equal(near.identityStatus,'linked');
+ const far=tracker.update(make('sam-3',5021,'sam-object-3'))[0];assert.notEqual(far.objectId,first.objectId);assert.equal(far.identityStatus,'tentative');assert.deepEqual(far.candidateObjectIds,[]);
+
+ const optedIn=new ObjectTracker({maxGapMs:6000});const old=optedIn.update(make('slow-1',10,'one'))[0];
+ const later=optedIn.update(make('slow-2',5021,'two'))[0];assert.equal(later.objectId,old.objectId);assert.equal(later.identityStatus,'linked');
+});
 test('ambiguous candidates stay separate, and a link can be revoked without deleting old evidence',()=>{
  const tracker=new ObjectTracker();const first=tracker.update(frame('a',1,[item(2,[100,100,100]),item(6,[100,100,100])]));
  const ambiguous=tracker.update(frame('b',2,[item(4,[100,100,100])]));assert.equal(ambiguous[0].identityStatus,'ambiguous');assert.equal(ambiguous[0].candidateObjectIds.length,2);assert.ok(!first.some(o=>o.objectId===ambiguous[0].objectId));
