@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWebcamGazeController} from '../src/gaze/webcam.js';
 
-function harness({normPog=[-.25,.25],landmarkFeatures=null,previewBitmaps={left:null,right:null},getUserMedia:acquireCamera=null,autoReady=true,workerReadyTimeoutMs=10000,createCanvas:makeCanvas=null}={}) {
+function harness({normPog=[-.25,.25],landmarkFeatures=null,previewBitmaps={left:null,right:null},getUserMedia:acquireCamera=null,autoReady=true,workerReadyTimeoutMs=10000,createCanvas:makeCanvas=null,restoreFails=false}={}) {
   let callback=null, currentTime=0, nowMs=100, cameraOpens=0, trackStops=0, frameCounter=0;
   const workers=[],diagnostics=[],errors=[];
   const track={stop(){trackStops++;},getSettings(){return {width:2,height:2,frameRate:30,deviceId:'private-device-id'};}};
@@ -27,6 +27,7 @@ function harness({normPog=[-.25,.25],landmarkFeatures=null,previewBitmaps={left:
           timestampKind:message.timestampKind,sentAtMs:message.sentAtMs
         }}));
         if(message.type==='adapt')queueMicrotask(()=>this.onmessage?.({data:{type:'adapted',requestId:message.requestId,points:1}}));
+        if(message.type==='restoreCalibration')queueMicrotask(()=>this.onmessage?.({data:restoreFails?{type:'calibrationRestoreError',requestId:message.requestId,code:'private_worker_detail'}:{type:'calibrationRestored',requestId:message.requestId,points:message.samples.length}}));
       },terminate(){this.terminated=true;}
     };
     workers.push(worker);return worker;
@@ -189,6 +190,33 @@ test('calibration rejects samples older than the callback-time freshness window'
   h.advanceClock(251);
   await assert.rejects(h.controller.calibrate({x:400,y:300},sample.callbackTimestampMs),/fresh open-eye/);
   assert.equal(h.workers[1].messages.filter(entry=>entry.message.type==='adapt').length,0);
+  h.controller.stop();
+});
+
+test('explicit profile replay replaces the active tracker only after worker confirmation',async()=>{
+  const h=harness();
+  await h.controller.start({userInitiated:true,cameraConsent:true});
+  const previous=h.workers[0],samples=Array.from({length:4},()=>({eyePatch:{format:'ImageData'}}));
+  const restored=await h.controller.restoreCalibration({adaptation:{samples}});
+  assert.deepEqual(restored,{restored:true,points:4});
+  assert.equal(h.workers.length,2);
+  assert.equal(h.workers[1].messages.find(entry=>entry.message.type==='restoreCalibration').message.samples,samples);
+  assert.equal(previous.terminated,true);
+  h.video.emit();await h.flush();
+  assert.equal(h.samples.at(-1).valid,true);
+  assert.equal(h.counters().cameraOpens,1);
+  h.controller.stop();
+});
+
+test('failed profile replay leaves the prior tracker active and reports a fixed code',async()=>{
+  const h=harness({restoreFails:true});
+  await h.controller.start({userInitiated:true,cameraConsent:true});
+  const previous=h.workers[0];
+  await assert.rejects(h.controller.restoreCalibration(Array.from({length:4},()=>({}))),error=>error.code==='worker_calibration_restore_failed'&&!error.message.includes('private_worker_detail'));
+  assert.equal(previous.terminated,false);
+  assert.equal(h.workers[1].terminated,true);
+  h.video.emit();await h.flush();
+  assert.equal(h.samples.at(-1).invalidReason,'calibration_required');
   h.controller.stop();
 });
 

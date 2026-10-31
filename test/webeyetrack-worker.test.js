@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {eyeCrop,eyePreviewCrop} from '../src/gaze/index.js';
+import {restoreWebEyeTrackAdaptationSamples,serializeWebEyeTrackAdaptationSamples} from '../src/gaze/calibration-profile.js';
 
 function workerHarness({offscreen=true,transferFails=false,noCrops=false}={}) {
-  const messages=[],bitmaps=[],dots=[],canvases=[];
+  const messages=[],bitmaps=[],dots=[],canvases=[],calibrationResults=new Map(),adaptations=[];
   const features=[.1,-.2,.3];
   const landmarks=Array.from({length:478},()=>({x:.55,y:.5}));
   const leftEye=[263,249,390,373,374,380,381,382,362,398,384,385,386,387,388,466],leftBrow=[276,283,282,295,285,300,293,334,296,336],rightEye=[33,7,163,144,145,153,154,155,133,173,157,158,159,160,161,246],rightBrow=[46,53,52,65,55,70,63,105,66,107];
@@ -19,7 +20,8 @@ function workerHarness({offscreen=true,transferFails=false,noCrops=false}={}) {
   Object.assign(landmarks[473],{x:.55,y:.49});Object.assign(landmarks[474],{x:.54,y:.49});Object.assign(landmarks[475],{x:.55,y:.48});Object.assign(landmarks[476],{x:.56,y:.49});Object.assign(landmarks[477],{x:.55,y:.5});
   Object.assign(landmarks[468],{x:.35,y:.49});Object.assign(landmarks[469],{x:.34,y:.49});Object.assign(landmarks[470],{x:.35,y:.48});Object.assign(landmarks[471],{x:.36,y:.49});Object.assign(landmarks[472],{x:.35,y:.5});
   const faceLandmarks=noCrops?[]:landmarks;
-  const tracker={loaded:true,async step(frame,timestamp){assert.equal(frame.width,100);assert.equal(frame.height,100);assert.equal(timestamp,123);return {facialLandmarks:faceLandmarks,gazeState:'open',normPog:[0,0]};}};
+  let adaptCount=0;
+  const tracker={loaded:true,async step(frame,timestamp){assert.equal(frame.width,100);assert.equal(frame.height,100);assert.equal(timestamp,123);return {facialLandmarks:faceLandmarks,gazeState:'open',normPog:[0,0],eyePatch:new ImageData(new Uint8ClampedArray([1,2,3,255]),1,1),headVector:[0,0,1],faceOrigin3D:[0,0,1]};},async adapt(...args){adaptations.push(args);}};
   class ImageData { constructor(data,width,height){this.data=data;this.width=width;this.height=height;} }
   class OffscreenCanvas {
     constructor(width,height){this.width=width;this.height=height;this.calls=[];canvases.push(this);}
@@ -42,24 +44,26 @@ function workerHarness({offscreen=true,transferFails=false,noCrops=false}={}) {
     },
     '/src/gaze/webeyetrack-bootstrap.js':{initializeWebEyeTrack:async()=>tracker},
     '/src/gaze/webeyetrack-adaptation.js':{
-      WEBEYETRACK_CALIBRATION_POINTS:27,handleWebEyeTrackAdaptation:async()=>({type:'adapted'}),retainWebEyeTrackCalibrationResult(){},
-      takeWebEyeTrackCalibrationResult(){return undefined;},createWebEyeTrackCalibrationAdapter:()=>()=>1
+      WEBEYETRACK_CALIBRATION_POINTS:27,handleWebEyeTrackAdaptation:async(_result,_add,_target,requestId)=>({type:'adapted',requestId,points:++adaptCount}),retainWebEyeTrackCalibrationResult(results,frameId,result){results.set(frameId,result);},
+      takeWebEyeTrackCalibrationResult(results,frameId){const result=results.get(frameId);results.delete(frameId);return result;},createWebEyeTrackCalibrationAdapter:()=>()=>1
     },
+    '/src/gaze/calibration-profile.js':{serializeWebEyeTrackAdaptationSamples,restoreWebEyeTrackAdaptationSamples},
     '/vendor/vision_bundle.mjs':{}
   };
   const self={postMessage(message,transfer=[]){if(transferFails&&transfer.length)throw new Error('bitmap transfer unavailable');messages.push({message,transfer});}};
   const context={self,ImageData,Uint8ClampedArray,importScripts(){},mockImport:path=>Promise.resolve(modules[path]),...(offscreen?{OffscreenCanvas}:{})};
   const source=readFileSync(new URL('../src/gaze/webeyetrack-worker.js',import.meta.url),'utf8').replaceAll('import(','mockImport(');
   vm.runInNewContext(source,context,{filename:'webeyetrack-worker.js'});
-  async function waitForResponse(expected){
-    for(let attempt=0;attempt<20;attempt++){const response=messages.find(entry=>entry.message.type===expected||entry.message.type==='error');if(response)return response;await new Promise(resolve=>setImmediate(resolve));}
+  async function waitForResponse(expected,after=0){
+    for(let attempt=0;attempt<20;attempt++){const response=messages.find((entry,index)=>index>=after&&(entry.message.type===expected||entry.message.type==='error'));if(response)return response;await new Promise(resolve=>setImmediate(resolve));}
     throw new Error('worker did not respond');
   }
-  async function frame(){
-    self.onmessage({data:{type:'frame',frameId:7,width:100,height:100,pixels:new Uint8Array(40000),captureTimestampMs:123,callbackTimestampMs:124,timestampKind:'browser_capture_estimate',sentAtMs:120}});
-    return await waitForResponse('result');
+  async function frame(frameId=7){
+    const after=messages.length;
+    self.onmessage({data:{type:'frame',frameId,width:100,height:100,pixels:new Uint8Array(40000),captureTimestampMs:123,callbackTimestampMs:124,timestampKind:'browser_capture_estimate',sentAtMs:120}});
+    return await waitForResponse('result',after);
   }
-  return {self,waitForResponse,frame,messages,bitmaps,dots,canvases,features,landmarks};
+  return {self,waitForResponse,frame,messages,bitmaps,dots,canvases,features,landmarks,adaptations};
 }
 
 test('worker renders detected eye, eyelid, iris and brow landmarks into the same mirrored frame crop',async()=>{
@@ -95,4 +99,29 @@ test('worker keeps inference results flowing when offscreen bitmaps are unsuppor
     assert.equal(h.messages.some(entry=>entry.message.type==='error'),false);
     if(options.transferFails)assert.ok(h.bitmaps.every(bitmap=>bitmap.closed));
   }
+});
+
+test('worker exports typed ImageData adaptation samples and replays them into tracker.adapt',async()=>{
+  const h=workerHarness({noCrops:true});
+  h.self.onmessage({data:{type:'init'}});await h.waitForResponse('ready');
+  let finalResponse;
+  for(let i=0;i<27;i++){
+    await h.frame(i+1);
+    const after=h.messages.length;
+    h.self.onmessage({data:{type:'adapt',requestId:`adapt-${i+1}`,frameId:i+1,target:{x:(i%9)/20-.2,y:Math.floor(i/9)/4-.25}}});
+    finalResponse=await h.waitForResponse('adapted',after);
+  }
+  assert.equal(finalResponse.message.adaptationSamples.length,27);
+  assert.equal(finalResponse.message.adaptationSamples[0].eyePatch.format,'ImageData');
+  const replay=restoreWebEyeTrackAdaptationSamples(finalResponse.message.adaptationSamples);
+  assert.ok(replay[0].eyePatch.data instanceof Uint8ClampedArray);
+  assert.deepEqual([...replay[0].eyePatch.data],[1,2,3,255]);
+
+  const after=h.messages.length;
+  h.self.onmessage({data:{type:'restoreCalibration',requestId:'restore-1',samples:finalResponse.message.adaptationSamples}});
+  const restored=await h.waitForResponse('calibrationRestored',after);
+  assert.equal(restored.message.type,'calibrationRestored');assert.equal(restored.message.requestId,'restore-1');assert.equal(restored.message.points,27);
+  assert.equal(h.adaptations.length,1);
+  assert.equal(h.adaptations[0][0].length,27);
+  assert.ok(h.adaptations[0][0][0].data instanceof Uint8ClampedArray);
 });

@@ -137,14 +137,16 @@ export function createWebcamGazeController({
         }
         return;
       }
-      if (message?.type === 'adapted' || message?.type === 'adaptError') {
+      if (message?.type === 'adapted' || message?.type === 'adaptError' || message?.type === 'calibrationRestored' || message?.type === 'calibrationRestoreError') {
         const pending = record.pending.get(message.requestId);
         if (!pending) return;
         record.pending.delete(message.requestId);
-        if (message.type === 'adapted') pending.resolve({adapted:true,points:message.points});
+        if (message.type === 'adapted') pending.resolve({adapted:true,points:message.points,...(Array.isArray(message.adaptationSamples)?{adaptationSamples:message.adaptationSamples}:{}),...(message.replayStatus?{replayStatus:message.replayStatus}:{})});
+        else if (message.type === 'calibrationRestored') pending.resolve({restored:true,points:message.points});
         else {
-          diagnose('worker_adaptation_failed');
-          pending.reject(startupError('worker_adaptation_failed'));
+          const code = message.type === 'calibrationRestoreError' ? 'worker_calibration_restore_failed' : 'worker_adaptation_failed';
+          diagnose(code);
+          pending.reject(startupError(code));
         }
         return;
       }
@@ -327,6 +329,32 @@ export function createWebcamGazeController({
       const promise = new Promise((resolve,reject)=>record.pending.set(requestId,{resolve,reject}));
       record.worker.postMessage({type:'adapt',requestId,frameId:sample.frameId,target:{x:target.x/viewport.width-.5,y:target.y/viewport.height-.5}});
       return promise;
+    },
+    async restoreCalibration(profileOrSamples) {
+      const samples = Array.isArray(profileOrSamples) ? profileOrSamples : profileOrSamples?.adaptation?.samples;
+      if (!running || starting || candidateWorker || !Array.isArray(samples) || samples.length < 4) throw new Error('valid calibration replay and running camera required');
+      const created = createRecord(false);
+      candidateWorker = created.record;
+      try {
+        await created.ready;
+        if (!running || candidateWorker !== created.record) throw new Error('calibration restore cancelled');
+        const requestId = `restore-${++requestNumber}`;
+        const promise = new Promise((resolve,reject)=>created.record.pending.set(requestId,{resolve,reject}));
+        created.record.worker.postMessage({type:'restoreCalibration',requestId,samples});
+        const restored = await promise;
+        if (!running || candidateWorker !== created.record) throw new Error('calibration restore cancelled');
+        created.record.calibrated = true;
+        const previous = activeWorker;
+        activeWorker = created.record;
+        candidateWorker = null;
+        if (previous && previous !== activeWorker) terminateRecord(previous);
+        diagnose('calibration_restored');
+        return restored;
+      } catch (error) {
+        if (candidateWorker === created.record) candidateWorker = null;
+        terminateRecord(created.record,error.message);
+        throw error;
+      }
     },
     commitCalibration() {
       if (!candidateWorker || !running) throw new Error('calibration candidate unavailable');
