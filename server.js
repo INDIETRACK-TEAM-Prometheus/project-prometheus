@@ -7,6 +7,7 @@ import { segmentSam } from './server/sam-adapter.js';
 import { reasonScenarios } from './server/reasoner-adapter.js';
 import { project } from './src/runtime/facade.js';
 import { validateNextGaze } from './src/runtime/next-gaze.js';
+import { createRecordingStore } from './server/recording-store.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const files = new Map([['/', ['index.html', 'text/html; charset=utf-8']], ['/style.css', ['style.css', 'text/css; charset=utf-8']]]);
@@ -15,6 +16,7 @@ for (const file of ['app.js','core.js','gaze/index.js','gaze/webcam.js','gaze/we
 for (const [name,type] of [['vision_bundle.mjs','text/javascript; charset=utf-8'],['vision_wasm_internal.js','text/javascript; charset=utf-8'],['vision_wasm_internal.wasm','application/wasm'],['vision_wasm_nosimd_internal.js','text/javascript; charset=utf-8'],['vision_wasm_nosimd_internal.wasm','application/wasm'],['face_landmarker.task','application/octet-stream']]) files.set(`/vendor/${name}`,[`vendor/${name}`,type]);
 files.set('/vendor/webeyetrack.js',['node_modules/webeyetrack/dist/index.js','text/javascript; charset=utf-8']);
 files.set('/src/gaze/webeyetrack-adaptation.js',['src/gaze/webeyetrack-adaptation.js','text/javascript; charset=utf-8']);
+files.set('/src/gaze/local-recorder.js',['src/gaze/local-recorder.js','text/javascript; charset=utf-8']);
 files.set('/web/model.json',['vendor/webeyetrack-model/model.json','application/json; charset=utf-8']);
 files.set('/web/group1-shard1of1.bin',['vendor/webeyetrack-model/group1-shard1of1.bin','application/octet-stream']);
 const maxBody = 8 * 1024 * 1024;
@@ -43,10 +45,22 @@ function validInput(value) {
   const bytes = Buffer.from(match[2], 'base64');
   return match[1] === 'png' ? bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) : bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
 }
-export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line)} = {}) {
+export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')})} = {}) {
   let inFlight = 0;
   const handler = async (req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
+    if(pathname.startsWith('/api/recordings/')){
+      if(req.method!=='POST'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
+      try{
+        if(pathname==='/api/recordings/start'){req.resume();json(res,200,await recordingStore.start());return;}
+        const match=/^\/api\/recordings\/([a-f0-9-]{36})\/(stop|chunks\/(\d{1,8}))$/.exec(pathname);
+        if(!match){req.resume();json(res,404,{error:'not_found'});return;}
+        if(match[2]==='stop'){req.resume();json(res,200,await recordingStore.stop(match[1]));return;}
+        if(req.headers['content-type']!=='video/webm'){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+        let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxBody){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
+        json(res,200,await recordingStore.append(match[1],Number(match[3]),Buffer.concat(chunks)));return;
+      }catch{req.resume();json(res,409,{error:'local_recording_write_failed'});return;}
+    }
     const route = ({'/api/sam/segment':'sam_segment','/api/analyze':'analyze','/api/reason':'reason','/api/reason-provisional':'reason_provisional'})[pathname];
     if (route && req.method === 'POST') {
       let terminal = false;
