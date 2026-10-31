@@ -1,5 +1,6 @@
 let tracker = null;
 let eyeCrop;
+let landmarkGazeFeatures;
 let addCalibrationSample;
 let handleAdaptation;
 let retainCalibrationResult;
@@ -13,13 +14,14 @@ function fail(code, step, requestId) {
 
 async function initialize() {
   importScripts('/vendor/webeyetrack.js');
-  const [{eyeCrop:cropEye,landmarkGazeFeatures}, {initializeWebEyeTrack}, adaptation, vision] = await Promise.all([
+  const [{eyeCrop:cropEye,landmarkGazeFeatures:deriveLandmarkGazeFeatures}, {initializeWebEyeTrack}, adaptation, vision] = await Promise.all([
     import('/src/gaze/index.js'),
     import('/src/gaze/webeyetrack-bootstrap.js'),
     import('/src/gaze/webeyetrack-adaptation.js'),
     import('/vendor/vision_bundle.mjs')
   ]);
   eyeCrop = cropEye;
+  landmarkGazeFeatures = deriveLandmarkGazeFeatures;
   calibrationPoints = adaptation.WEBEYETRACK_CALIBRATION_POINTS;
   handleAdaptation = adaptation.handleWebEyeTrackAdaptation;
   retainCalibrationResult = adaptation.retainWebEyeTrackCalibrationResult;
