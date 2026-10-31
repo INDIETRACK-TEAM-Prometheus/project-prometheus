@@ -7,7 +7,7 @@ import {BackgroundAttentionCoordinator} from './runtime/background-attention.js'
 import {createBackgroundBrowserWork} from './runtime/background-browser.js';
 import {createWebcamGazeController} from './gaze/webcam.js';
 import {gazeViewportPoint,gazeMarkerPosition} from './gaze/overlay.js';
-import {predictCalibration,calibrationMetrics,fitLandmarkResidualCalibration,landmarkResidualMetrics,landmarkResidualPassesSelection,LANDMARK_RESIDUAL_FIT_ATTEMPTS,predictLandmarkResidual} from './gaze/index.js';
+import {withinCalibrationBounds,predictCalibration,calibrationMetrics,fitLandmarkResidualCalibration,landmarkResidualMetrics,landmarkResidualPassesSelection,LANDMARK_RESIDUAL_FIT_ATTEMPTS,predictLandmarkResidual} from './gaze/index.js';
 import {MemoryService,EphemeralStorage} from './memory/index.js';
 import {ProviderJournal,providerOperationId} from './runtime/provider-journal.js';
 import {RuntimeFacade} from './runtime/facade.js';
@@ -697,7 +697,7 @@ async function boot() {
     if(timingCalibration&&!sameTimingSetup(timingCalibration.setup,timingSetup())){handleCalibrationEnvironmentChange('화면/카메라 설정 변경');return;}
     if(sample.features&&Number.isFinite(sample.callbackTimestampMs)){calibrationWindow.push({at:sample.callbackTimestampMs,features:[...sample.features]});while(calibrationWindow.length>30)calibrationWindow.shift();}
     const baseRawScreenXY=sample.rawScreenXY;
-    if(sample.valid&&activeAffine&&sample.features){const p=predictCalibration(activeAffine,sample.features);if(Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.x>=0&&p.x<innerWidth&&p.y>=0&&p.y<innerHeight)sample={...sample,rawScreenXY:p};}
+    if(sample.valid&&activeAffine&&withinCalibrationBounds(activeAffine,sample.features)){const p=predictCalibration(activeAffine,sample.features);if(Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.x>=0&&p.x<innerWidth&&p.y>=0&&p.y<innerHeight)sample={...sample,rawScreenXY:p};}
     const correctedFeatures=sample.valid&&activeLandmarkResidual?predictLandmarkResidual(activeLandmarkResidual,sample.features,sample.landmarkFeatures):null;
     if(correctedFeatures&&baseRawScreenXY&&Number.isFinite(innerWidth)&&Number.isFinite(innerHeight)&&innerWidth>0&&innerHeight>0)sample={...sample,rawScreenXY:{x:Math.min(1-Number.EPSILON,correctedFeatures[0])*innerWidth,y:Math.min(1-Number.EPSILON,correctedFeatures[1])*innerHeight}};
     if(pilot && pilot.stoppedAt===null && pilot.pauseStartedAt==null){
