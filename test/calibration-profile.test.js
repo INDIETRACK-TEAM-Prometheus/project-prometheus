@@ -7,9 +7,12 @@ import {
   identityAffineCalibration,
   loadGazeCalibrationProfile,
   restoreWebEyeTrackAdaptationSamples,
+  restoreLandmarkResidualCalibration,
+  validateGazeCalibrationProfile,
   saveGazeCalibrationProfile,
   selectAffineCalibrationCandidate
 } from '../src/gaze/calibration-profile.js';
+import {fitLandmarkResidualCalibration} from '../src/gaze/index.js';
 
 const environment = {
   viewport:{width:1280,height:720,devicePixelRatio:1},
@@ -87,4 +90,32 @@ test('fits a robust affine candidate and selects it only on independent validati
   assert.ok(model.trainingIds.includes('train-4'));
   assert.throws(()=>selectAffineCalibrationCandidate({candidateModel:model,baselineModel:baseline,selectionSamples:[train[0]],screen:{x:0,y:0,width:1000,height:500}}),/overlaps training/);
   assert.throws(()=>fitAffineCalibration([train[0],train[0],train[2]]));
+});
+
+test('profile round-trips selected landmark residual coefficients and safe feature bounds',async()=>{
+  const screen={width:1000,height:500};
+  const attempts=Array.from({length:18},(_,i)=>{
+    const features=[((i%3)+1)/4,((Math.floor(i/3)%3)+1)/4];
+    return {id:`residual-${i}`,features,landmarkFeatures:[(i%3-1)/4,(Math.floor(i/3)%3-1)/4,((i*7)%17-8)/10],target:{x:400+features[0]*200,y:250+features[1]*200}};
+  });
+  const model=fitLandmarkResidualCalibration(attempts,screen);
+  assert.ok(model);
+  assert.equal(model.dimension,3);assert.equal(model.x.length,4);assert.equal(model.y.length,4);assert.equal(model.featureBounds.length,3);
+  const profile=createGazeCalibrationProfile({adaptationSamples:replaySamples,calibration,environment,runtime,landmarkResidual:model});
+  assert.deepEqual(restoreLandmarkResidualCalibration(profile),model);
+  const store=memoryStore();await saveGazeCalibrationProfile(store,profile);
+  const loaded=await loadGazeCalibrationProfile(store,{environment,runtime});
+  assert.equal(loaded.status,'compatible');assert.deepEqual(restoreLandmarkResidualCalibration(loaded.profile),model);
+  const oldProfile={...profile};delete oldProfile.landmarkResidual;
+  assert.equal(validateGazeCalibrationProfile(oldProfile,{environment,runtime}).status,'compatible');
+});
+
+test('landmark residual profile rejects malformed shapes, nonfinite values, duplicate IDs, and unsafe bounds',()=>{
+  const model={dimension:3,x:[0,1,0,0],y:[0,0,1,0],trainingIds:['a','b','c'],featureBounds:[{min:-.5,max:.5},{min:-1,max:1},{min:0,max:1}]};
+  const args={adaptationSamples:replaySamples,calibration,environment,runtime};
+  assert.throws(()=>createGazeCalibrationProfile({...args,landmarkResidual:{...model,dimension:2}}),/landmark residual/);
+  assert.throws(()=>createGazeCalibrationProfile({...args,landmarkResidual:{...model,x:[0,1,NaN,0]}}),/landmark residual/);
+  assert.throws(()=>createGazeCalibrationProfile({...args,landmarkResidual:{...model,trainingIds:['a','a']}}),/landmark residual/);
+  assert.throws(()=>createGazeCalibrationProfile({...args,landmarkResidual:{...model,featureBounds:[{min:-1.01,max:.5},...model.featureBounds.slice(1)]}}),/landmark residual/);
+  assert.throws(()=>restoreLandmarkResidualCalibration({landmarkResidual:{...model,x:[0,1,Infinity,0]}}));
 });

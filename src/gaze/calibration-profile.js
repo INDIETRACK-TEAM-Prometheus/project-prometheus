@@ -124,6 +124,18 @@ function sanitizeAffineModel(model) {
   return {dimension:2,x:[...model.x],y:[...model.y],trainingIds:[...model.trainingIds],featureBounds:model.featureBounds.map(bound=>({min:bound.min,max:bound.max}))};
 }
 
+function validLandmarkResidualModel(model) {
+  return model?.dimension === 3 && Array.isArray(model.x) && model.x.length === 4 && model.x.every(finite) &&
+    Array.isArray(model.y) && model.y.length === 4 && model.y.every(finite) && Array.isArray(model.trainingIds) &&
+    model.trainingIds.length > 0 && model.trainingIds.every(id => typeof id === 'string' && id.length > 0) && new Set(model.trainingIds).size === model.trainingIds.length &&
+    Array.isArray(model.featureBounds) && model.featureBounds.length === 3 && model.featureBounds.every(bound =>
+      finite(bound?.min) && finite(bound?.max) && bound.min >= -1 && bound.max <= 1 && bound.min <= bound.max);
+}
+
+function sanitizeLandmarkResidualModel(model) {
+  return {dimension:3,x:[...model.x],y:[...model.y],trainingIds:[...model.trainingIds],featureBounds:model.featureBounds.map(bound=>({min:bound.min,max:bound.max}))};
+}
+
 function validMetrics(metrics) {
   if (!metrics || typeof metrics !== 'object' || Array.isArray(metrics)) return false;
   return (metrics.attempts === undefined || (Number.isInteger(metrics.attempts) && metrics.attempts >= 0)) &&
@@ -139,18 +151,21 @@ function validProfile(profile) {
     profile.calibration?.passed === true && validMetrics(profile.calibration) &&
     profile.adaptation?.method === 'webeyetrack_replay' && Array.isArray(profile.adaptation.samples) &&
     profile.adaptation.samples.length >= 4 && profile.adaptation.samples.length <= maxAdaptationSamples && profile.adaptation.samples.every(validSerializedSample) &&
+    (profile.landmarkResidual === undefined || profile.landmarkResidual === null || validLandmarkResidualModel(profile.landmarkResidual)) &&
     (profile.affine === null || (validAffineModel(profile.affine?.model) && validMetrics(profile.affine?.selection?.baseline) && validMetrics(profile.affine?.selection?.candidate) && typeof profile.affine?.selection?.selected === 'boolean'));
 }
 
-export function createGazeCalibrationProfile({adaptationSamples,calibration,environment,runtime,affine=null,createdAtUtc=new Date().toISOString()} = {}) {
+export function createGazeCalibrationProfile({adaptationSamples,calibration,environment,runtime,affine=null,landmarkResidual=null,createdAtUtc=new Date().toISOString()} = {}) {
   if (calibration?.passed !== true || !validEnvironment(environment) || !validRuntime(runtime) || typeof createdAtUtc !== 'string' || Number.isNaN(Date.parse(createdAtUtc))) throw new Error('completed calibration and valid runtime environment required');
+  if (landmarkResidual !== undefined && landmarkResidual !== null && !validLandmarkResidualModel(landmarkResidual)) throw new Error('invalid landmark residual calibration');
   const profile = {
     version:GAZE_CALIBRATION_PROFILE_VERSION,
     createdAtUtc,
     runtime:sanitizeRuntime(runtime),
     environment:sanitizeEnvironment(environment),
     calibration:sanitizeCalibration(calibration),
-    adaptation:{method:'webeyetrack_replay',samples:serializeWebEyeTrackAdaptationSamples(adaptationSamples)}
+    adaptation:{method:'webeyetrack_replay',samples:serializeWebEyeTrackAdaptationSamples(adaptationSamples)},
+    landmarkResidual:landmarkResidual ? sanitizeLandmarkResidualModel(landmarkResidual) : null
   };
   if (affine) {
     if (!validAffineModel(affine.model) || !validMetrics(affine.selection?.baseline) || !validMetrics(affine.selection?.candidate) || typeof affine.selection?.selected !== 'boolean') throw new Error('invalid affine calibration selection');
@@ -169,6 +184,12 @@ export function validateGazeCalibrationProfile(profile, {environment,runtime} = 
   const currentRuntime = sanitizeRuntime(runtime), savedRuntime = sanitizeRuntime(profile.runtime);
   if (JSON.stringify(currentRuntime) !== JSON.stringify(savedRuntime)) return {status:'runtime_changed',compatible:false,profile};
   return {status:'compatible',compatible:true,profile};
+}
+
+export function restoreLandmarkResidualCalibration(profile) {
+  if (profile?.landmarkResidual == null) return null;
+  if (!validLandmarkResidualModel(profile.landmarkResidual)) throw new Error('invalid landmark residual calibration');
+  return sanitizeLandmarkResidualModel(profile.landmarkResidual);
 }
 
 export async function saveGazeCalibrationProfile(storage, profile) {
