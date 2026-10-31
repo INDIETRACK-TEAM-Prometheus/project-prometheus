@@ -1,0 +1,5 @@
+torch==2.6.0+cpu
+torchvision==0.21.0+cpu
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+pillow==11.1.0

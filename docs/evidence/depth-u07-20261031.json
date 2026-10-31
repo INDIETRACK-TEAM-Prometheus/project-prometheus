@@ -1,0 +1,78 @@
+{
+  "gateId": "G0-B",
+  "status": "tested",
+  "testKind": "synthetic_model_smoke",
+  "startedAtUtc": "2026-10-31T08:15:00Z",
+  "finishedAtUtc": "2026-10-31T08:17:00Z",
+  "environment": {
+    "os": "Windows 11",
+    "python": "3.12.10",
+    "torch": "2.6.0+cpu",
+    "torchvision": "0.21.0+cpu",
+    "numpy": "1.26.4",
+    "opencv": "4.10.0",
+    "pillow": "11.1.0",
+    "device": "cpu",
+    "intelIrisXeAcceleration": "not_available_in_this_runtime"
+  },
+  "modelVersions": {
+    "id": "depth-anything/Depth-Anything-V2-Metric-Hypersim-Small",
+    "encoder": "vits",
+    "dataset": "hypersim",
+    "license": "Apache-2.0",
+    "sourceCommit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+    "checkpointSha256": "b782898d8a3e8be1f639de33837ed85e9b4b73e40f8f5e5cd99067588d722545",
+    "units": "m",
+    "convention": "axial_z",
+    "depthSource": "monocular_estimated_depth"
+  },
+  "input": {
+    "frameId": "synthetic-room-001",
+    "observedAt": 1000,
+    "width": 640,
+    "height": 360,
+    "kind": "locally_generated_synthetic_indoor_style_image",
+    "rawInputGitTracked": false
+  },
+  "metrics": {
+    "validCount": 230400,
+    "invalidCount": 0,
+    "minM": 3.171641,
+    "medianM": 4.982113838195801,
+    "maxM": 6.216237,
+    "cli": {
+      "modelLoadMs": 3330.088,
+      "decodeMs": 14.808,
+      "inferenceMs": 1087.055,
+      "totalMs": 4474.726
+    },
+    "nodeWorkerColdRequest": {
+      "modelLoadMs": 4834.549,
+      "decodeMs": 50.387,
+      "inferenceMs": 2084.122,
+      "totalMs": 2143.464,
+      "requestRoundTripMs": 11696.963
+    }
+  },
+  "expectations": {
+    "sameFrameIdAndTimestampReturned": true,
+    "fullResolutionOutput": true,
+    "finitePositiveValuesHaveValidMask": true,
+    "actualOfficialCheckpointLoaded": true,
+    "absoluteDepthAccuracyEvaluated": false,
+    "realCameraInputEvaluated": false,
+    "engineGroundTruthComparison": false,
+    "intelGpuComparison": false
+  },
+  "failures": [],
+  "limitations": [
+    "Synthetic image only; not a live sensor frame.",
+    "No ground-truth depth was available, so no accuracy claim is made.",
+    "Intel Iris Xe acceleration was not tested; this run used CPU-only PyTorch.",
+    "Cold Node round-trip includes process and model startup and is not a warmed inference percentile."
+  ],
+  "evidencePaths": [
+    ".asset-tmp/depth-runtime/smoke-scene.png",
+    ".asset-tmp/depth-runtime/smoke-depth.npz"
+  ]
+}
