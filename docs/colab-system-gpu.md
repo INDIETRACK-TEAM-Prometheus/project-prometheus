@@ -19,7 +19,7 @@ Prerequisites: `google-colab-cli==0.7.5` is installed and authenticated, OpenSSH
 & scripts\colab\start-system.ps1 -Gpu T4 -RunServer
 ```
 
-The launcher starts depth first, then the gaze service in the same named Colab session, verifies that the gaze health response reports the pinned model on CUDA, opens the second tunnel, sets the process environment, and runs `npm start`. Press Ctrl+C to exit the local app; the `finally` cleanup closes both forwards and stops the Colab VM. Startup failures also attempt cleanup. If cleanup reports an error, run `& scripts\colab\stop-system.ps1 -Session <session-name>` using the session name printed by the launcher. The VM remains billable until Colab reports that session stopped.
+The launcher starts depth first and creates one SSH process with both local forwards, then starts gaze in the same named Colab session. Each Python service runs in an isolated persistent namespace through `run-colab-service.py`. After checking the gaze CUDA health, it sets the process environment and runs `npm start`. Press Ctrl+C to exit the local app; the `finally` cleanup closes both forwards and stops the Colab VM. Startup failures also attempt cleanup. If cleanup reports an error, run `& scripts\colab\stop-system.ps1 -Session <session-name>` using the session name printed by the launcher. The VM remains billable until Colab reports that session stopped.
 
 To start the workers without running Node in the same PowerShell process, omit `-RunServer`. The launcher prints the commands to set in that PowerShell window before `npm start`; after Node exits, run `& scripts\colab\stop-system.ps1 -Session <session-name>`. Stopping removes the VM and tunnels but does not delete local recordings or browser data.
 
