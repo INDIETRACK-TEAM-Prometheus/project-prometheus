@@ -30,5 +30,8 @@
     <div class="controls"><button id="createDurable">보존 세션 만들기</button><button id="reopenDurable">보존 세션 다시 열기</button><button id="deleteDurable">보존 세션 삭제</button></div><span id="retentionStatus" role="status">임시 세션 · 기본 저장 안 함</span>
     <div class="controls"><button id="exportTrace">연구 기록 내보내기</button><button id="deleteTrace">연구 기록 삭제</button><button id="exportPilot">측정 요약 내보내기</button><button id="clear">세션 삭제</button></div>
     <div class="controls"><button id="refreshRecordings">로컬 영상 기록 확인</button><button id="deleteRecordings">로컬 영상 기록 모두 삭제</button><button id="deleteCalibrationProfile">저장 교정 삭제</button></div><span id="localRecordingSummary" role="status">로컬 영상 기록 확인 전</span>
+    <section class="accuracy-test"><h3>시선 정확도 시험</h3><p>교정 통과 후 교정에 쓰지 않은 표적 9개×3회(약 60초)를 자동으로 보여줍니다. 클릭하지 말고 표적을 응시하세요. Esc로 취소합니다. 결과는 이 기기 1인·1세션 기준이며 Gate 통과가 아닙니다.</p>
+      <label>안경 <select id="accuracyGlasses"><option value="">모름</option><option value="false">미착용</option><option value="true">착용</option></select></label><label>조명 <input id="accuracyLighting" type="text" maxlength="80" placeholder="예: 천장 조명, 낮"></label><label>화면까지 거리 (cm) <input id="accuracyDistance" type="number" min="20" max="150" step="1"></label>
+      <div class="controls"><button id="startAccuracy">정확도 시험 시작</button><button id="exportAccuracyReport" disabled>보고서 내보내기</button><button id="exportAccuracySamples" disabled>표본 내보내기</button></div><span id="accuracyStatus" role="status">시험 전 · 교정 통과 필요</span></section>
   </div></details>
 </footer><video id="camera" playsinline muted hidden></video><script type="module" src="/src/app.js"></script></body></html>

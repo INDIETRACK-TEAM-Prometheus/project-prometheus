@@ -34,3 +34,4 @@ body{padding:0;overflow:hidden}body>header{display:none}main{display:block;min-h
 
 /* The data button opens the hidden session panel over the full-screen world. */
 footer.session-panel.open{display:block;position:fixed;z-index:6;top:64px;left:12px;width:min(440px,calc(100vw - 24px));max-height:calc(100vh - 76px);overflow:auto;margin:0;box-shadow:0 8px 28px #000a}footer.session-panel.open .demo-disclosure{display:block!important}footer.session-panel.open>#dataSettings{display:block}@media(max-width:600px){footer.session-panel.open{top:56px;left:8px;width:calc(100vw - 16px);max-height:calc(100vh - 64px)}}
+.accuracy-test{border-top:1px solid #263735;padding-top:10px}.accuracy-test h3{font-size:13px;margin:0 0 6px}.accuracy-test p{font-size:11px}

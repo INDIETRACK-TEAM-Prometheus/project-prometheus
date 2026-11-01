@@ -12,9 +12,11 @@ Status: implemented and unit-tested with **synthetic data only**. No camera, per
 | `src/gaze/eye-sphere.js` | Per-eye >=30 node sphere, `validateEyeSphere`, `transformEyeSphere`, `eyeSphereMotion` |
 | `src/gaze/binocular-screen.js` | Ray/screen intersection, `closestApproachOfRays`, depth and screen-hit uncertainty |
 
-## Running the real user test (what is needed in `src/app.js`)
+## Running the real user test
 
-`app.js` is not modified by this work. The CTO wiring is:
+**Wired 2026-11-01.** Open **데이터 → 기록 및 데이터 관리 → 시선 정확도 시험** after the camera is running and calibration has passed. Enter glasses, lighting and distance (blank values are recorded as unknown with a reason), press **정확도 시험 시작**, and look at each target without clicking (27 trials, about 60 s; Esc cancels). The background SAM/Spark loop is paused during the test. A window resize, camera stop or calibration environment change cancels the run. Afterwards **보고서 내보내기** saves the report JSON (put it under `docs/evidence/demo-20261104/`) and **표본 내보내기** saves the per-sample gaze coordinates (keep that file in a git-excluded folder). `src/gaze/accuracy-session.js` implements the steps below.
+
+The wiring follows these rules:
 
 1. **Plan.** After calibration (or after restoring a stored profile), call
    `createAccuracyPlan({seed, screen:{width:innerWidth, height:innerHeight}})`. The default exclusions are the existing 27-point training grid (0.12/0.50/0.88) and validation grid (0.20/0.48/0.76); pass `calibrationTargets` (normalised `{x,y}`) if those change. Record `plan.hash` **before** the first target is shown and keep it (display it, store it). Never regenerate the plan after seeing results.

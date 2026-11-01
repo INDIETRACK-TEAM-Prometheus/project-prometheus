@@ -2,6 +2,8 @@ import {createWorld} from './spatial/world.js';
 import {createLocalRecorder,listLocalRecordings,deleteLocalRecordings} from './gaze/local-recorder.js';
 import {GAZE_CALIBRATION_PROFILE_KEY,restoreLandmarkResidualCalibration,openGazeCalibrationProfileStore,loadGazeCalibrationProfile,createGazeCalibrationProfile,saveGazeCalibrationProfile,fitAffineCalibration,identityAffineCalibration,selectAffineCalibrationCandidate} from './gaze/calibration-profile.js';
 import {createCausalDisplayFilter} from './gaze/display-filter.js';
+import {createAccuracyPlan} from './gaze/accuracy-protocol.js';
+import {createAccuracySession} from './gaze/accuracy-session.js';
 import {stableCalibrationWindow} from './gaze/calibration-window.js';
 import {BackgroundAttentionCoordinator} from './runtime/background-attention.js';
 import {createBackgroundBrowserWork} from './runtime/background-browser.js';
@@ -665,11 +667,32 @@ async function boot() {
   $('#refreshRecordings').addEventListener('click',()=>void refreshRecordingSummary());
   function setDataPanel(open){$('#sessionPanel').classList.toggle('open',open);$('#dataPanel').setAttribute('aria-expanded',String(open));if(open){$('#dataSettings').open=true;void refreshRecordingSummary();}}
   $('#dataPanel').addEventListener('click',()=>setDataPanel(!$('#sessionPanel').classList.contains('open')));
-  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$('#sessionPanel').classList.contains('open')){setDataPanel(false);$('#dataPanel').focus();}});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&accuracySession){accuracySession.cancel('user_cancelled');return;}if(event.key==='Escape'&&$('#sessionPanel').classList.contains('open')){setDataPanel(false);$('#dataPanel').focus();}});
   // Deletion is permanent and the server never removes an open recording, so stopping comes first.
   $('#deleteRecordings').addEventListener('click',async event=>{const button=event.currentTarget;if(coordinator?.status().active){recordingSummary.textContent='녹화 중에는 삭제할 수 없습니다 · 정지(■) 후 다시 시도';return;}if(!confirm('이 기기의 로컬 영상 기록을 모두 영구 삭제합니다. 계속할까요?'))return;button.disabled=true;
     try{const result=await deleteLocalRecordings();recordingSummary.textContent=`로컬 영상 기록 ${result.deleted.length}개 삭제 · ${mib(result.freedBytes)}`+(result.failed.length?` · 삭제 실패 ${result.failed.length}개`:'')+(result.skippedActive.length?` · 녹화 중이라 보류 ${result.skippedActive.length}개`:'');}
     catch{recordingSummary.textContent='로컬 영상 기록 삭제 실패 · 일부만 삭제됐을 수 있음, 확인 버튼으로 다시 확인';}finally{button.disabled=false;}});
+  // Accuracy test (G1-F): frozen plan, fixed timing, no click-through and no adaptation while targets are shown.
+  let accuracySession=null,accuracyResult=null;const accuracyStatus=$('#accuracyStatus');
+  function accuracyConditions(){const glasses=$('#accuracyGlasses').value,lighting=$('#accuracyLighting').value.trim(),distance=Number($('#accuracyDistance').value);
+    return {glasses:glasses===''?{value:null,reason:'not_reported'}:glasses==='true',lighting:lighting?lighting:{value:null,reason:'not_reported'},distanceCm:$('#accuracyDistance').value!==''&&Number.isFinite(distance)&&distance>0&&distance<500?distance:{value:null,reason:'not_measured'}};}
+  function downloadJson(data,name){const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+  $('#startAccuracy').addEventListener('click',()=>{
+    if(accuracySession){accuracyStatus.textContent='시험 진행 중';return;}
+    if(!coordinator?.status().active||coordinator.status().paused){accuracyStatus.textContent='카메라 시작(▶) 후 시험할 수 있습니다';return;}
+    if(calibrationStage||!calibrationPassed()){accuracyStatus.textContent='교정 통과 후 시험할 수 있습니다';return;}
+    let session;try{const seed=crypto.getRandomValues(new Uint32Array(1))[0];const plan=createAccuracyPlan({seed,screen:{width:innerWidth,height:innerHeight}});
+      session=createAccuracySession({plan,conditions:accuracyConditions(),
+        onTrial:({trial,index,total})=>{const target=$('#target');$('#calibration').hidden=false;target.style.pointerEvents='none';target.style.left=trial.x+'px';target.style.top=trial.y+'px';$('#calibrationInfo').textContent=`정확도 시험 ${index+1}/${total} · 표적 응시 · 클릭 불필요 · Esc 취소`;},
+        onFinish:result=>{accuracySession=null;$('#calibration').hidden=true;$('#target').style.pointerEvents='';$('#calibrationInfo').textContent='';
+          if(result.status==='completed'){accuracyResult=result;const v=result.report.verdict,e=result.report.stages[result.report.verdictStage]?.error;accuracyStatus.textContent=`시험 완료 · ${v.status} · p95 ${Number.isFinite(e?.p95)?(e.p95*100).toFixed(1)+'%':'산출 불가'} (대각선) · plan ${result.planHash.slice(0,8)} · Gate 판정 아님`;$('#exportAccuracyReport').disabled=false;$('#exportAccuracySamples').disabled=false;}
+          else accuracyStatus.textContent=result.status==='report_failed'?`보고서 생성 실패 · ${result.reason}`:`시험 취소 · ${result.reason}`;
+          startBackgroundAttention();}});}
+    catch(error){accuracyStatus.textContent=`시험 준비 실패 · ${error.message}`;return;}
+    accuracySession=session;stopBackgroundAttention();setDataPanel(false);accuracyStatus.textContent=`시험 중 · plan ${session.planHash.slice(0,8)}`;session.start();
+  });
+  $('#exportAccuracyReport').addEventListener('click',()=>{if(accuracyResult)downloadJson(accuracyResult.report,`prometheus-gaze-accuracy-${accuracyResult.planHash.slice(0,8)}.json`);});
+  $('#exportAccuracySamples').addEventListener('click',()=>{if(accuracyResult)downloadJson({kind:'gaze_accuracy_samples',planHash:accuracyResult.planHash,reportHash:accuracyResult.report.hash,droppedSamples:accuracyResult.droppedSamples,samples:accuracyResult.samples},`prometheus-gaze-accuracy-samples-${accuracyResult.planHash.slice(0,8)}.json`);});
   $('#deleteCalibrationProfile').addEventListener('click',async event=>{const button=event.currentTarget;button.disabled=true;try{const store=await profileStorage;if(!store)throw new Error('storage_unavailable');await store.removeItem(GAZE_CALIBRATION_PROFILE_KEY);showCalibrationStatus('저장 교정 삭제됨 · 현재 카메라 세션의 적응은 정지 전까지 유지');}catch{showCalibrationStatus('저장 교정 삭제 실패');}finally{button.disabled=false;}});
   let backgroundAttention=null,depthRequest=null;
   const modelDepthStatus=document.createElement('span');modelDepthStatus.id='modelDepthState';modelDepthStatus.setAttribute('role','status');canvas.parentElement.append(modelDepthStatus);
@@ -678,7 +701,7 @@ async function boot() {
   const backgroundStatus=document.createElement('span');backgroundStatus.id='backgroundAttentionState';backgroundStatus.setAttribute('role','status');canvas.parentElement.append(backgroundStatus);
   function backgroundSnapshot(){
     // Paid SAM/Spark calls run only with the start consent in place and a visible tab.
-    if(!$('#localConsent').checked||document.hidden||!coordinator?.status().active||coordinator.status().paused||calibrationStage||!latest?.faceDetected||!latest.rawScreenXY||performance.now()-latest.processedMs>500||!world)return null;
+    if(!$('#localConsent').checked||document.hidden||accuracySession||!coordinator?.status().active||coordinator.status().paused||calibrationStage||!latest?.faceDetected||!latest.rawScreenXY||performance.now()-latest.processedMs>500||!world)return null;
     const source=world.getFrame(),r=canvas.getBoundingClientRect();if(!source||r.width<=0||r.height<=0)return null;
     const x=(latest.rawScreenXY.x-r.left)/r.width,y=(latest.rawScreenXY.y-r.top)/r.height;if(x<0||y<0||x>=1||y>=1)return null;
     const copy=document.createElement('canvas'),scale=Math.min(1,640/canvas.width,480/canvas.height);copy.width=Math.max(1,Math.round(canvas.width*scale));copy.height=Math.max(1,Math.round(canvas.height*scale));copy.getContext('2d').drawImage(canvas,0,0,copy.width,copy.height);
@@ -723,6 +746,7 @@ async function boot() {
       pilot.lastTimestamp=sample.timestampMs;pilot.lastTimestampKind=kind;
       if(Number.isFinite(sample.inferenceMs)&&sample.inferenceMs>=0){pilot.inferenceCount++;pilot.inferenceSum+=sample.inferenceMs;pilot.inferenceMax=Math.max(pilot.inferenceMax,sample.inferenceMs);}
     }
+    accuracySession?.record({valid:sample.valid===true,invalidReason:sample.invalidReason,timestampMs:sample.timestampMs,baseScreenXY:baseRawScreenXY,calibratedScreenXY:sample.rawScreenXY,screen:{width:innerWidth,height:innerHeight}});
     latest=sample;
     const uncalibratedEstimate={status:baseRawScreenXY?'uncalibrated_estimate':'unavailable',calibrationStatus:'uncalibrated',method:'WebEyeTrack base model without user adaptation',eyesUsed:sample.faceDetected?['left','right']:[],point:baseRawScreenXY?{x:baseRawScreenXY.x/innerWidth,y:baseRawScreenXY.y/innerHeight}:null};
     latestProvisionalGaze={estimate:uncalibratedEstimate,sample:{faceDetected:sample.faceDetected===true,timestampMs:sample.timestampMs,processedMs:sample.processedMs,timestampKind:sample.timestampKind}};
@@ -809,7 +833,7 @@ async function boot() {
     else if(result.reason==='start_failed') {const diagnostic=startupFailureDiagnostic(result.error),text=`시작 실패 · 코드 ${diagnostic.code} · 단계 ${diagnostic.step}`;logStartupDiagnostic(diagnostic.code);message.textContent=text;gazeStatus.textContent=text;$('#provisionalSparkStatus').textContent=text;}
   }
   start.addEventListener('click',()=>{for(const id of ['localConsent','provisionalSparkConsent','exploreConsent','reasonConsent','gazeSamConsent','traceConsent','retentionConsent'])$('#'+id).checked=true;void startSession();});
-  function stopSession(){capturedAdaptation=null;calibrationWindow.length=0;stopBackgroundAttention();clearGazeMarker();initialSceneGeneration++;initialScenePending=false;clearFrozenGazeDemo('카메라 정지 · 잠정 시선점 폐기',true);stopRemote();cancelDiagnostic();if(pilot && pilot.stoppedAt===null)pilot.stoppedAt=performance.now();clearInterval(pilotTimer);pilotTimer=null;updatePilot();clearInterval(timer);timer=null;const drained=coordinator?.stop();controller?.cancelCalibration();activeCalibration=null;activeAffine=null;displayFilter.reset();activeLandmarkResidual=null;training=[];validation=[];history.clear();latest=null;latestProvisionalGaze=null;candidate=null;pendingAligned=null;cameraSessionId=null;timingCalibration=null;controller?.setTimingCalibration(null);$('#timingStatus').textContent='카메라 세션 종료 · 광학 측정 다시 적용 필요';$('#runGazeSam').disabled=true;$('#gazeSamStatus').textContent='정지됨 · 카메라 시작 후 시선 정렬 필요';$('#worldSceneState').textContent=$('#localConsent').checked?'정지':'동의 대기';$('#worldGazeState').textContent='미교정 추정 대기';calibrationStage=null;$('#calibration').hidden=true;for(const id of ['leftEye','rightEye'])drawEye(id,null,false,null);gazeStatus.textContent='미교정 추정 대기';showCalibrationStatus('카메라 세션 종료 · 저장된 교정은 다음 시작 때 복원');return Promise.all([drained,maintenance,localRecorder.stop()]);}
+  function stopSession(){accuracySession?.cancel('session_stopped');capturedAdaptation=null;calibrationWindow.length=0;stopBackgroundAttention();clearGazeMarker();initialSceneGeneration++;initialScenePending=false;clearFrozenGazeDemo('카메라 정지 · 잠정 시선점 폐기',true);stopRemote();cancelDiagnostic();if(pilot && pilot.stoppedAt===null)pilot.stoppedAt=performance.now();clearInterval(pilotTimer);pilotTimer=null;updatePilot();clearInterval(timer);timer=null;const drained=coordinator?.stop();controller?.cancelCalibration();activeCalibration=null;activeAffine=null;displayFilter.reset();activeLandmarkResidual=null;training=[];validation=[];history.clear();latest=null;latestProvisionalGaze=null;candidate=null;pendingAligned=null;cameraSessionId=null;timingCalibration=null;controller?.setTimingCalibration(null);$('#timingStatus').textContent='카메라 세션 종료 · 광학 측정 다시 적용 필요';$('#runGazeSam').disabled=true;$('#gazeSamStatus').textContent='정지됨 · 카메라 시작 후 시선 정렬 필요';$('#worldSceneState').textContent=$('#localConsent').checked?'정지':'동의 대기';$('#worldGazeState').textContent='미교정 추정 대기';calibrationStage=null;$('#calibration').hidden=true;for(const id of ['leftEye','rightEye'])drawEye(id,null,false,null);gazeStatus.textContent='미교정 추정 대기';showCalibrationStatus('카메라 세션 종료 · 저장된 교정은 다음 시작 때 복원');return Promise.all([drained,maintenance,localRecorder.stop()]);}
   $('#pause').addEventListener('click',()=>{if(!coordinator?.status().active)return;if(coordinator.status().paused){coordinator.resume();backgroundAttention?.resume();localRecorder.resume();if(pilot?.pauseStartedAt!=null){pilot.pausedMs+=performance.now()-pilot.pauseStartedAt;pilot.pauseStartedAt=null;}$('#pause').textContent='⏸';$('#pause').setAttribute('aria-label','일시정지');$('#pause').title='일시정지';startRemote();startBackgroundAttention();}else{clearGazeMarker();clearFrozenGazeDemo('카메라 일시정지 · 잠정 시선점 폐기',true);coordinator.pause();depthRequest?.abort();depthRequest=null;backgroundAttention?.pause();localRecorder.pause();if(pilot)pilot.pauseStartedAt=performance.now();stopRemote();cancelDiagnostic();$('#pause').textContent='▶';$('#pause').setAttribute('aria-label','재개');$('#pause').title='재개';}updatePilot();updateFrozenGazeControls();});
   $('#localConsent').addEventListener('change',()=>{if($('#localConsent').checked)startSession();else {void stopSession();message.textContent='통합 동의 철회 · 카메라와 진행 중인 SAM 요청을 중단했습니다.';}});
   stop.addEventListener('click',stopSession);
@@ -819,7 +843,7 @@ async function boot() {
     if(activeCalibration){if(pilot)pilot.calibration={...activeCalibration.calibration,passed:true,status:'completed',reused:true,environmentChanged:activeCalibration.environmentChanged===true};}
     else if(pilot)pilot.calibration={passed:false,status:'not_calibrated'};
   }
-  function handleCalibrationEnvironmentChange(reason){capturedAdaptation=null;calibrationWindow.length=0;
+  function handleCalibrationEnvironmentChange(reason){accuracySession?.cancel('environment_changed');capturedAdaptation=null;calibrationWindow.length=0;
     clearGazeMarker();clearFrozenGazeDemo('화면/환경 변경 · 잠정 시선점 폐기',true);
     if(activeCalibration){activeCalibration.environmentChanged=true;if(pilot?.calibration?.passed)pilot.calibration.environmentChanged=true;}
     if(controller)controller.setTimingCalibration(null);

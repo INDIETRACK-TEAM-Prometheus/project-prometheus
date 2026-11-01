@@ -22,6 +22,12 @@
 
 ## Gate 판정
 
+### 2026-11-01 시선 정확도 시험 앱 연결 (G1-F)
+
+`src/gaze/accuracy-session.js`가 고정 plan을 검증한 뒤 표적을 고정 간격(settle 700 + dwell 1200 + 간격 300ms)으로 보여주고, 표적이 그려진 시각(`requestAnimationFrame` 이후)을 trial log에 남긴다. 표적이 보이는 동안의 모든 tracker 샘플(무효 포함)을 raw(WebEyeTrack 적응 출력)·calibrated(affine/잔차 보정 후)·filtered(별도 One-Euro 인스턴스) 세 단계로 기록한다. 시험 중 클릭·적응·피팅은 없고, 백그라운드 SAM/Spark 루프는 멈춘다. Esc, 정지, 화면/환경 변경은 시험을 취소한다. 데이터 패널에 조건 입력(안경·조명·거리, 비우면 사유와 함께 null)과 보고서·표본 export를 넣었다.
+
+시험: 세션 단위 시험 3개(27 trial 순서와 plan hash, trial 밖 샘플 무시·무효 사유 보존·취소, 변조 plan 거부). 전체 회귀 500개 중 499 통과, 1 skip, 실패 0. 브라우저에서 모듈 로드와 카메라 미시작 시 시험 차단을 확인했다. 실제 카메라로 시험을 돌리지 않았으므로 G1-F는 not_evaluated로 두고, gate 기록의 implementationStatus만 tested로 바꿨다.
+
 ### 2026-11-01 감사 P0/P1 구현 유닛 통합 (Sonnet 5.5 high 병렬 5개, CTO 검토)
 
 사용자 지시: Gate 계획·비교 프로토콜에 맞춰 구현·교체를 진행하고 서브에이전트를 병렬로 사용할 것. 실측(사람·장비·공급자) 없이 통과할 수 없는 Gate는 승격하지 않는다는 기존 규칙을 유지했다.

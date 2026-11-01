@@ -20,7 +20,7 @@ files.set('/src/gaze/webeyetrack-adaptation.js',['src/gaze/webeyetrack-adaptatio
 files.set('/src/gaze/local-recorder.js',['src/gaze/local-recorder.js','text/javascript; charset=utf-8']);
 files.set('/src/spatial/mask-association.js',['src/spatial/mask-association.js','text/javascript; charset=utf-8']);
 files.set('/node_modules/munkres/dist/munkres.mjs',['node_modules/munkres/dist/munkres.mjs','text/javascript; charset=utf-8']);
-for(const name of ['calibration-profile.js','calibration-window.js','display-filter.js','eye-sphere.js']) files.set(`/src/gaze/${name}`,[`src/gaze/${name}`,'text/javascript; charset=utf-8']);
+for(const name of ['calibration-profile.js','calibration-window.js','display-filter.js','eye-sphere.js','accuracy-protocol.js','accuracy-report.js','accuracy-session.js']) files.set(`/src/gaze/${name}`,[`src/gaze/${name}`,'text/javascript; charset=utf-8']);
 for(const name of ['background-attention.js','background-browser.js','live-tracking.js']) files.set(`/src/runtime/${name}`,[`src/runtime/${name}`,'text/javascript; charset=utf-8']);
 files.set('/web/model.json',['vendor/webeyetrack-model/model.json','application/json; charset=utf-8']);
 files.set('/web/group1-shard1of1.bin',['vendor/webeyetrack-model/group1-shard1of1.bin','application/octet-stream']);

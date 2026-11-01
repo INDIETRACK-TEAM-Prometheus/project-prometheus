@@ -8,7 +8,7 @@
     "T01"
   ],
   "status": "not_evaluated",
-  "implementationStatus": "implemented",
+  "implementationStatus": "tested",
   "evaluationStatus": "not_evaluated",
   "commit": "c2cd016",
   "testKind": "synthetic",
@@ -42,6 +42,7 @@
   ],
   "failures": [],
   "limitations": [
+    "2026-11-01: 데이터 패널의 정확도 시험(src/gaze/accuracy-session.js, app.js)이 고정 plan·자동 표적·샘플 기록·보고서 export를 수행한다. 합성 세션 시험만 통과했고 실제 사용자 실행 결과는 없다.",
     "실사용자 독립 표적 시험 없음. 필터 벤치마크는 합성 궤적만(실제 jitter 개선 아님)",
     "SRS 20.5 초기 기본값이며 실행 전 설정 버전 고정 필요. 가장자리 5~10%·90~95% 표적과 축별 gain 기준은 GATE_PLAN 제안",
     "raw/보정/필터별 gain·jitter·switch lag·안경·조도 조건 기준 미정: 수치 기준 미정 또는 제안값: 최종 holdout 전에 설정 버전을 고정해야 하며 결과를 본 뒤 변경해 통과시키지 않는다.",
