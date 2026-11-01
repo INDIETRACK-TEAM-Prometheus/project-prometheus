@@ -8,6 +8,7 @@ import { reasonScenarios } from './server/reasoner-adapter.js';
 import { project } from './src/runtime/facade.js';
 import { validateNextGaze } from './src/runtime/next-gaze.js';
 import { createRecordingStore } from './server/recording-store.js';
+import { createCalibrationStageLog } from './server/calibration-stage-log.js';
 import { createConfiguredDepthProvider } from './server/depth-provider.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -50,7 +51,7 @@ function validInput(value) {
   const bytes = Buffer.from(match[2], 'base64');
   return match[1] === 'png' ? bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) : bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
 }
-export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),depthProvider=createConfiguredDepthProvider()} = {}) {
+export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),calibrationStageLog=createCalibrationStageLog({root:path.join(root,'data','diagnostics')}),depthProvider=createConfiguredDepthProvider()} = {}) {
   let inFlight = 0;
   const handler = async (req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
@@ -70,6 +71,21 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
         if(!input||Object.keys(input).sort().join(',')!=='frame,imageDataUrl'){json(res,400,{error:'invalid_request'});return;}
         const result=await depthProvider.infer({...input,signal:abort.signal});json(res,200,result);
       }catch(error){const code=typeof error?.code==='string'&&/^DEPTH_[A-Z_]+$/.test(error.code)?error.code:'DEPTH_INVALID_REQUEST';json(res,code==='DEPTH_PROVIDER_BUSY'?429:503,{error:'depth_unavailable',code});}
+      return;
+    }
+    if(pathname==='/api/diagnostics/calibration-stage'){
+      const expectedOrigin=`${req.socket.encrypted?'https':'http'}://${req.headers.host}`;
+      if(req.method!=='POST'||req.headers.origin!==expectedOrigin||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
+      if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']??'')){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+      const length=req.headers['content-length'];
+      if(length&&(!/^\d+$/.test(length)||Number(length)>1024)){req.resume();json(res,413,{error:'too_large'});return;}
+      try{
+        let size=0;const chunks=[];
+        for await(const chunk of req){size+=chunk.length;if(size>1024){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
+        let input;try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{json(res,400,{error:'invalid_request'});return;}
+        if(!await calibrationStageLog.append(input)){json(res,400,{error:'invalid_request'});return;}
+        json(res,202,{recorded:true});
+      }catch{req.resume();json(res,500,{error:'diagnostic_unavailable'});}
       return;
     }
     if(pathname==='/api/recordings'){

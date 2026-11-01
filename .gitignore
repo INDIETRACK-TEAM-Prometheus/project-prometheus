@@ -10,6 +10,7 @@ __pycache__/
 *.pyc
 artifacts/*.zip
 data/recordings/
+data/diagnostics/
 data/calibration/
 data/models/
 .venv-depth/
