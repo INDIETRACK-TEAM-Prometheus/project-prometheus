@@ -16,7 +16,9 @@ async function readJson(response) {
   try { body = await response.json(); } catch { throw startupError('gaze_protocol_error'); }
   if (!response.ok) {
     const code = allowedCodes.has(body?.code) ? body.code : 'GAZE_REMOTE_UNAVAILABLE';
-    throw startupError(code.toLowerCase());
+    const failure = startupError(code.toLowerCase());
+    if (typeof body?.code === 'string' && /^GAZE_[A-Z_]{3,48}$/.test(body.code)) failure.detail = body.code.toLowerCase();
+    throw failure;
   }
   return body;
 }
@@ -190,7 +192,7 @@ export function createRemoteWebcamGazeController({
     catch (error) {
       if (running && !paused && token === generation && error?.code !== 'GAZE_CANCELLED') {
         if (error?.code === 'gaze_provider_busy') { telemetryCounts.busy++; diagnose('gaze_provider_busy'); }
-        else { telemetryCounts.failed++; const safe=startupError(error?.code==='gaze_frame_too_large'?'gaze_frame_too_large':'gaze_remote_inference_failed');diagnose(safe.code);running=false;generation++;stopCamera();onError(safe); }
+        else { telemetryCounts.failed++; const safe=startupError(error?.code==='gaze_frame_too_large'?'gaze_frame_too_large':'gaze_remote_inference_failed');const reason=error?.detail??error?.code;if(typeof reason==='string'&&/^[a-z_]{3,48}$/.test(reason))safe.detail=reason;diagnose(safe.code);running=false;generation++;stopCamera();onError(safe); }
       }
     } finally {
       if (sessionAbort === abort) sessionAbort = null;

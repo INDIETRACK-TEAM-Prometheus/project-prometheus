@@ -54,7 +54,13 @@ export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs 
     try {
       const response = await fetchImpl(new URL(path, base), {method, headers, body, signal: controller.signal});
       if (response.status === 429) throw fail('GAZE_PROVIDER_BUSY');
-      if (!response.ok) throw fail(response.status === 404 ? 'GAZE_SESSION_UNAVAILABLE' : 'GAZE_REMOTE_UNAVAILABLE');
+      if (!response.ok) {
+        if (response.status === 404) throw fail('GAZE_SESSION_UNAVAILABLE');
+        // The Colab worker reports why it refused (for example GAZE_FRAME_OUT_OF_ORDER or GAZE_INFERENCE_FAILED); keep that bounded token.
+        let workerCode = null;
+        try { const body = await response.json(); if (typeof body?.error === 'string' && /^GAZE_[A-Z_]{3,48}$/.test(body.error)) workerCode = body.error; } catch {}
+        throw fail(workerCode ?? 'GAZE_REMOTE_UNAVAILABLE');
+      }
       if (response.status === 204) return null;
       try { return await response.json(); } catch { throw fail('GAZE_PROTOCOL_ERROR'); }
     } catch (error) {

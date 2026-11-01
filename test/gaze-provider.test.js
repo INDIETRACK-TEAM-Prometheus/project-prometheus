@@ -47,3 +47,14 @@ test('remote gaze provider rejects invalid adapters before opening a remote sess
   await assert.rejects(provider.createSession({adapter:{schemaVersion:1}}),error=>error.code==='GAZE_ADAPTER_INCOMPATIBLE');
   assert.equal(mock.calls.some(call=>call.url.pathname==='/sessions'),false);
 });
+
+test('remote gaze provider keeps the worker failure code and falls back to a generic code for anything else',async()=>{
+  const frame=(status,body)=>async(url,options={})=>{const path=new URL(url).pathname;if(path==='/sessions')return json({status:'ready',sessionId:'session-1',expiresInSeconds:600,calibrated:false},201);return status===null?new Response('<html>',{status:502}):json(body,status);};
+  const attempt=async(status,body)=>{const provider=createRemoteGazeProvider({baseUrl:'http://127.0.0.1:49191/',fetchImpl:frame(status,body)});const {sessionId}=await provider.createSession({});return provider.frame({sessionId,frameId:1,captureTimestampMs:5,bytes:Buffer.from([255,216,255,217])}).then(()=>null,error=>error.code);};
+  assert.equal(await attempt(409,{status:'error',error:'GAZE_FRAME_OUT_OF_ORDER'}),'GAZE_FRAME_OUT_OF_ORDER');
+  assert.equal(await attempt(503,{status:'error',error:'GAZE_INFERENCE_FAILED'}),'GAZE_INFERENCE_FAILED');
+  assert.equal(await attempt(503,{status:'error',error:'not a code <script>'}),'GAZE_REMOTE_UNAVAILABLE');
+  assert.equal(await attempt(502,{status:'error',error:'x'.repeat(100)}),'GAZE_REMOTE_UNAVAILABLE');
+  assert.equal(await attempt(null),'GAZE_REMOTE_UNAVAILABLE');
+  assert.equal(await attempt(404,{status:'error',error:'GAZE_SESSION_NOT_FOUND'}),'GAZE_SESSION_UNAVAILABLE');
+});

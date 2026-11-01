@@ -106,3 +106,18 @@ test('glimpse closes on invalid tracking, excludes gap, and samples are serializ
 });
 
 
+
+test('gaze proxy passes the worker failure code to the browser and logs it without frame content',async()=>{
+  const logs=[];
+  const gazeProvider={async health(){return {ready:true};},async frame(){throw Object.assign(new Error('x'),{code:'GAZE_FRAME_OUT_OF_ORDER'});},async close(){}};
+  const server=createLocalServer({computeProfile:'cloud',gazeProvider,logger:line=>logs.push(line)});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  try{
+    const base=`http://127.0.0.1:${server.address().port}`;
+    const frame=await fetch(base+'/api/gaze/sessions/session_1/frame',{method:'POST',headers:{'content-type':'image/jpeg','x-frame-id':'3','x-capture-timestamp-ms':'9'},body:Buffer.from([255,216,255,217])});
+    assert.equal(frame.status,503);
+    assert.deepEqual(await frame.json(),{error:'gaze_unavailable',code:'GAZE_FRAME_OUT_OF_ORDER'});
+    const entry=logs.map(line=>JSON.parse(line)).find(item=>item.stage?.startsWith('failed:'));
+    assert.deepEqual(entry,{event:'api_stage',route:'gaze_frame',stage:'failed:GAZE_FRAME_OUT_OF_ORDER',status:503});
+    assert.equal(logs.some(line=>line.includes('session_1')||line.includes('255')),false);
+  }finally{await new Promise(resolve=>server.close(resolve));}
+});
