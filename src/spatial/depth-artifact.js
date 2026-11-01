@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { sha256Bytes } from '../runtime/live-tracking.js';
 import { pixelRay } from './geometry.js';
 
 // Deterministic, versioned per-object depth artifact for the LLM input path
@@ -31,7 +31,8 @@ export function canonicalize(value) {
   return bad('unsupported value type');
 }
 
-export const sha256Hex = data => createHash('sha256').update(data).digest('hex');
+// Pure-JS SHA-256 so the artifact can be built in the browser as well as in Node.
+export const sha256Hex = data => sha256Bytes(typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength ?? data.length));
 
 export function hashDepthArtifact(artifact) {
   const canonicalJson = canonicalize(artifact);

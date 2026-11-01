@@ -59,3 +59,9 @@ Observed defect for the CTO (not changed): `BackgroundAttentionCoordinator`'s co
 - IoU thresholds (`minIoU 0.1`, `ambiguityMargin 0.05`, `moveIoU 0.9`) are engineering defaults. SAM per-call latency and mask stability under real video are unknown; mask digests change with any pixel difference.
 - Local track IDs are not semantic identities. `linked` means a clear mask-overlap match, not a verified same object.
 - Telemetry shows timing of what ran; it does not establish the 200 ms goal, a 30-minute run, or next-gaze accuracy.
+
+## Depth in the live path (2026-11-01)
+
+`createBackgroundBrowserWork` takes an optional `depth(frame,{signal})` callback. The app passes one that calls `/api/depth/estimate` (local CPU or the Colab GPU backend, per `PROMETHEUS_DEPTH_BACKEND`) on the same scene frame, in parallel with SAM. After SAM and tracking, the work waits at most `depthWaitMs` (1500 ms). If the result has arrived for the same frame, `buildDepthArtifact` computes foreground-mask median/IQR for **linked** tracks only (raster masks matched by digest), near/far relations only when IQR intervals are disjoint, and the gaze-pixel depth. Availability time is when the result arrived, never the frame time. The reasoner receives a compact `depth` object (no map); `/api/reason-provisional` validates it strictly (object IDs must be candidates, availability no later than the request, metric units) and adds one `kind:'depth'` evidence item for Spark. Late, failed or mismatched depth is withheld with a reason and reasoning still runs. The work result reports `depth:{status, reason, artifactSha256?}`.
+
+Limits: synthetic tests only; the effect of depth on reasoning quality is not measured (comparison v2 `depth_context` arm); depth is a monocular scene-surface estimate, not fixation depth; XYZ is withheld because intrinsics and pose are not passed in this path.

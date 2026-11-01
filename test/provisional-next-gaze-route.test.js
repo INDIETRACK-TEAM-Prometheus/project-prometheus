@@ -69,3 +69,33 @@ test('provisional response omits nextGaze when older callers supply no candidate
 });
 
 function baseRequest(){return structuredClone(base);}
+
+const depthEvidence = {artifactSha256:'a'.repeat(64), modelId:'depth-anything/Depth-Anything-V2-Metric-Hypersim-Small', modelSha256:'b782898d8a3e8be1f639de33837ed85e9b4b73e40f8f5e5cd99067588d722545', observedAtMs:100, availableAtMs:1650, units:'m', convention:'axial_z', depthSource:'monocular_estimated_depth', objects:[{objectId:'f:mask:0', status:'ok', validFraction:1, medianDepthM:1.5, q1M:1.4, q3M:1.6}], relations:[], gazeDepthM:1.5};
+
+test('provisional route passes validated depth statistics to the reasoner as depth evidence', async () => {
+  let received;
+  await withServer(async input => { received = input; return {scenarios:[scenario], nextGaze:{rankedTargetIds:['f:mask:0']}}; }, async base => {
+    const response = await post(base, {...baseRequest(), candidates:[candidate], depth:depthEvidence});
+    assert.equal(response.status, 200);
+    const evidence = received.evidence.find(e => e.kind === 'depth');
+    assert.equal(evidence.processedAt, 1650);
+    assert.equal(evidence.observedAt, 100);
+    assert.deepEqual(JSON.parse(evidence.text).objects, depthEvidence.objects);
+  });
+});
+
+test('provisional route rejects depth for non-candidates, late availability or malformed statistics', async () => {
+  let calls = 0;
+  await withServer(async () => { calls++; return {scenarios:[]}; }, async base => {
+    const bad = [
+      {...depthEvidence, objects:[{...depthEvidence.objects[0], objectId:'other'}]},
+      {...depthEvidence, availableAtMs:1701},
+      {...depthEvidence, observedAtMs:99},
+      {...depthEvidence, objects:[{...depthEvidence.objects[0], q1M:1.7}]},
+      {...depthEvidence, units:'relative'},
+      {...depthEvidence, values:[1]},
+    ];
+    for (const depth of bad) assert.equal((await post(base, {...baseRequest(), candidates:[candidate], depth})).status, 400);
+    assert.equal(calls, 0);
+  });
+});

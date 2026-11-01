@@ -98,3 +98,46 @@ test('gaze must join to the captured frame, a tracker is required, and cancellat
   await assert.rejects(() => stopped(snapshot, {signal: abortAfterSam.signal}), /cancelled/);
   assert.equal(reasonCalls, 0);
 });
+
+const depthModel = {id: 'depth-anything/Depth-Anything-V2-Metric-Hypersim-Small', sha256: 'b782898d8a3e8be1f639de33837ed85e9b4b73e40f8f5e5cd99067588d722545', device: 'cuda'};
+const depthOf = (frame, fill = (x, y) => (x < 8 ? 1.5 : 4)) => ({frame: {frameId: frame.frameId, observedAt: frame.observedAt}, model: depthModel, depth: {frameId: frame.frameId, observedAt: frame.observedAt, width: W, height: H, units: 'm', convention: 'axial_z', depthSource: 'monocular_estimated_depth', values: Array.from({length: W * H}, (_, i) => fill(i % W, Math.floor(i / W))), validMask: Array(W * H).fill(1)}});
+
+test('depth from the same frame reaches reasoning as foreground statistics for linked objects only', async () => {
+  const live = tracker(), inputs = [];
+  let clock = 20;
+  const work = createBackgroundBrowserWork({now: () => clock, tracker: live, depth: async value => { clock += 5; return depthOf(value); },
+    capture: async value => ({frame: {...value.frame}}),
+    sam: async value => samResult(value, [mask(0, 0, 4, 4), mask(10, 10, 14, 14)]),
+    reason: async (input) => { inputs.push(input); return {frame: {frameId: input.frame.frameId, observedAt: input.frame.observedAt}, scenarios: []}; }});
+  await work(snapshotOf(1, 10), {signal: new AbortController().signal});
+  const second = await work(snapshotOf(2, 15), {signal: new AbortController().signal});
+  const depth = inputs[1].depth;
+  assert.equal(second.depth.status, 'ok');
+  assert.equal(second.depth.artifactSha256, depth.artifactSha256);
+  assert.deepEqual(depth.objects.map(o => o.objectId).sort(), inputs[1].candidates.map(c => c.objectId).sort());
+  const near = depth.objects.find(o => o.medianDepthM === 1.5), far = depth.objects.find(o => o.medianDepthM === 4);
+  assert.ok(near && far);
+  assert.deepEqual(depth.relations, [{nearObjectId: near.objectId, farObjectId: far.objectId}]);
+  assert.equal(depth.gazeDepthM, 1.5);
+  assert.ok(depth.availableAtMs >= inputs[1].frame.observedAt);
+  assert.equal(Object.hasOwn(depth, 'values'), false);
+  assert.equal(inputs[0].depth.objects.length, 0);
+});
+
+test('late, failed or mismatched depth is withheld while reasoning still runs', async () => {
+  const cases = [
+    [async () => new Promise(() => {}), 'depth_late'],
+    [async () => { throw Object.assign(new Error('x'), {code: 'DEPTH_RUNTIME_UNAVAILABLE'}); }, 'DEPTH_RUNTIME_UNAVAILABLE'],
+    [async value => depthOf({...value, frameId: 'other'}), 'depth_artifact_invalid'],
+  ];
+  for (const [depth, reason] of cases) {
+    const inputs = [];
+    const work = createBackgroundBrowserWork({now: () => 12, tracker: tracker(), depth, depthWaitMs: 20,
+      capture: async value => ({frame: {...value.frame}}), sam: async value => samResult(value, [mask(0, 0, 2, 2)]),
+      reason: async input => { inputs.push(input); return {frame: {frameId: input.frame.frameId, observedAt: input.frame.observedAt}, scenarios: []}; }});
+    const result = await work(snapshot, {signal: new AbortController().signal});
+    assert.equal(inputs.length, 1);
+    assert.equal(inputs[0].depth, null);
+    assert.deepEqual(result.depth, {status: 'withheld', reason});
+  }
+});

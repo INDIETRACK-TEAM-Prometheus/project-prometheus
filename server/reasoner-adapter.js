@@ -20,7 +20,7 @@ function validateInput(input, timingStatus) {
   if (Buffer.byteLength(JSON.stringify(input.evidence),'utf8') > 16*1024) throw fail('REASONER_INVALID_INPUT');
   const ids = new Set();
   for (const e of input.evidence) {
-    if (!exact(e, ['id','kind','text','observedAt','processedAt','causalStatus']) || !string(e.id) || e.id.length > 128 || ids.has(e.id) || !['scene','gaze','memory','mask'].includes(e.kind) || !string(e.text) || !time(e.observedAt) || !time(e.processedAt) || e.observedAt > input.observedUntil || e.processedAt < e.observedAt || e.processedAt > input.issuedAt || (e.causalStatus !== 'online_causal' && !(timingStatus === 'provisional' && e.causalStatus === 'provisional'))) throw fail('REASONER_INVALID_INPUT');
+    if (!exact(e, ['id','kind','text','observedAt','processedAt','causalStatus']) || !string(e.id) || e.id.length > 128 || ids.has(e.id) || !['scene','gaze','memory','mask','depth'].includes(e.kind) || !string(e.text) || !time(e.observedAt) || !time(e.processedAt) || e.observedAt > input.observedUntil || e.processedAt < e.observedAt || e.processedAt > input.issuedAt || (e.causalStatus !== 'online_causal' && !(timingStatus === 'provisional' && e.causalStatus === 'provisional'))) throw fail('REASONER_INVALID_INPUT');
     ids.add(e.id);
   }
   return ids;
