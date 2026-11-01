@@ -1,5 +1,13 @@
 # CTO 검증 기록 — Prometheus SRS v1.1
 
+### 2026-11-01 shared Colab cloud GPU launcher
+
+`scripts/colab/start-system.ps1` starts the pinned Depth Anything and WebEyeTrack gaze workers in one Colab session, with loopback SSH forwards on local ports 49190 and 49191. It sets `PROMETHEUS_COMPUTE_PROFILE=cloud`, the existing Colab depth backend and URL, and the gaze remote URL for `npm start`; `-RunServer` owns the blocking local-server lifetime and calls `stop-system.ps1` in `finally`. Startup failures also attempt VM/tunnel cleanup. `stop-system.ps1` checks the Colab session and local listeners after shutdown. Worker listeners remain loopback-only. No provider API key is uploaded.
+
+The cloud profile offloads model inference only. Browser camera capture and JPEG encoding, the Node proxy, and scene rendering remain local. After explicit camera consent, gaze inference sends full downscaled camera JPEGs (up to 640 px, 8 fps) through the local proxy and SSH tunnel to Colab; the browser does not send separate eye crops or landmarks. Colab processes raw JPEGs in memory without logging or disk writes, then temporarily holds derived eye patches and head/face vectors for the 27-point calibration in a bounded RAM cache and clears them after adaptation. Sessions are removed on camera stop or after 10 minutes idle. The separate Depth service receives virtual-scene RGB frames only. Local webcam recording remains on this computer. See [shared Colab GPU guide](colab-system-gpu.md) for commands and data flow.
+
+This launcher wiring has not been used for a new GPU session or user-camera run in this review. Its health check confirms the gaze model/device metadata at startup; it does not establish gaze accuracy, optical timing, or real-camera performance. Existing Depth parity and transport records use synthetic scene inputs and do not validate gaze behavior or promote any Gate.
+
 ### 2026-11-01 선택형 Colab T4 Depth Anything backend
 
 기본 Depth Anything 경로는 로컬 CPU이며, 서버 설정 `PROMETHEUS_DEPTH_BACKEND=colab`으로만 선택형 Colab GPU backend를 켠다. Remote worker는 loopback SSH tunnel 뒤에서만 열고, 앱의 데이터 관리 패널은 현재 선택된 backend를 표시한다. Colab으로 보내는 입력은 가상 장면 RGB 프레임이다. 웹캠 원본, 얼굴·눈 영상, 랜드마크, 시선 좌표와 교정 프로필은 depth 요청에 포함하지 않는다. Node Fetch가 reserved port 4190을 `bad port`로 거부하는 원인을 재현해 기본 forward를 49190으로 옮겼다.
