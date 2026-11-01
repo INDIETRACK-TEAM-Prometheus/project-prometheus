@@ -4,7 +4,7 @@ import {GAZE_CALIBRATION_PROFILE_KEY,restoreLandmarkResidualCalibration,openGaze
 import {createCausalDisplayFilter} from './gaze/display-filter.js';
 import {createAccuracyPlan} from './gaze/accuracy-protocol.js';
 import {createAccuracySession} from './gaze/accuracy-session.js';
-import {stableCalibrationWindow,calibrationSampleFreshnessMs,calibrationTargetTimedOut} from './gaze/calibration-window.js';
+import {stableCalibrationWindow,calibrationSampleFreshnessMs,calibrationSampleStatus,calibrationWindowStatus,calibrationTargetTimedOut,CALIBRATION_RUN_TIMEOUT_MS} from './gaze/calibration-window.js';
 import {BackgroundAttentionCoordinator} from './runtime/background-attention.js';
 import {createBackgroundBrowserWork} from './runtime/background-browser.js';
 import {LiveTracking} from './runtime/live-tracking.js';
@@ -873,15 +873,26 @@ async function boot() {
   calibrate.addEventListener('click',()=>{void beginCalibration();});
   setInterval(()=>{
     const now=performance.now();
-    if(calibrationRunStart!==null&&now-calibrationRunStart>60000&&['training','validation'].includes(calibrationStage)){calibrationStage=null;calibrationRunStart=null;capturedAdaptation=null;calibrationWindow.length=0;candidate=null;training=[];validation=[];restorePreviousCalibration();$('#calibration').hidden=true;showCalibrationStatus('교정 표본 수집 시간 초과 · 교정 버튼으로 다시 시도');startBackgroundAttention();return;}
+    if(calibrationRunStart!==null&&now-calibrationRunStart>CALIBRATION_RUN_TIMEOUT_MS&&['training','validation'].includes(calibrationStage)){
+      const hadCalibration=!!activeCalibration;
+      calibrationStage=null;calibrationRunStart=null;capturedAdaptation=null;calibrationWindow.length=0;candidate=null;training=[];validation=[];restorePreviousCalibration();delete $('#target').dataset.pending;
+      if(hadCalibration&&pilot?.calibration)pilot.calibration.lastRecalibrationFailureReason='calibration_run_timeout';else if(pilot)pilot.calibration={...pilot.calibration,passed:false,status:'failed',failureReason:'calibration_run_timeout'};
+      $('#calibration').hidden=false;$('#calibrationInfo').textContent='전체 교정 시간 초과 · 교정을 취소했습니다. 다시 시도하세요.';
+      showCalibrationStatus(hadCalibration?'전체 재교정 시간 초과 · 이전 현재 세션 교정 유지':'전체 교정 시간 초과 · 버튼으로 다시 시도');
+      message.textContent=hadCalibration?'재교정 전체 시간 초과 · 이전 현재 세션 교정은 유지됩니다.':'교정 전체 시간 초과 · 현재 세션 교정은 적용되지 않았습니다.';
+      calibrate.focus();updateFrozenGazeControls();startBackgroundAttention();return;
+    }
     if(!['training','validation'].includes(calibrationStage))return;
-    if(calibrationTargetTimedOut(calibrationTargetShownAt,now)){
+    if(calibrationTargetTimedOut(calibrationTargetShownAt,now,calibrationWindow)&&$('#target').dataset.pending!=='true'){
       const phase=calibrationStage==='training'?'WebEyeTrack 적응':'별도 표본',targetNumber=sequence+1,hadCalibration=!!activeCalibration;
+      const maxSampleAgeMs=calibrationSampleFreshnessMs(calibrationWindow),sampleStatus=calibrationSampleStatus(latest,{targetShownAt:calibrationTargetShownAt,now,maxAgeMs:maxSampleAgeMs}),windowStatus=calibrationWindowStatus(calibrationWindow,{targetShownAt:calibrationTargetShownAt,now});
+      const reason=calibrationStage==='validation'&&windowStatus!=='ready'?windowStatus:sampleStatus==='ready'?'sample_processing_delayed':sampleStatus;
       calibrationStage=null;calibrationRunStart=null;capturedAdaptation=null;calibrationWindow.length=0;candidate=null;training=[];validation=[];restorePreviousCalibration();
-      if(hadCalibration&&pilot?.calibration)pilot.calibration.lastRecalibrationStatus='failed';else if(pilot)pilot.calibration={...pilot.calibration,passed:false,status:'failed',failureReason:'target_sample_timeout'};
-      $('#calibration').hidden=false;$('#calibrationInfo').textContent=`${phase} 표적 ${targetNumber}/27 표본 시간 초과 · 교정을 취소했습니다. 교정 버튼으로 다시 시도하세요.`;
-      showCalibrationStatus(hadCalibration?'재교정 표본 시간 초과 · 이전 현재 세션 교정 유지':'교정 표본 시간 초과 · 교정 버튼으로 다시 시도');
-      message.textContent=hadCalibration?'재교정 표본 수집 시간 초과 · 이전 현재 세션 교정은 유지됩니다.':'교정 표본 수집 시간 초과 · 현재 세션 교정은 적용되지 않았습니다.';
+      if(hadCalibration&&pilot?.calibration)pilot.calibration.lastRecalibrationFailureReason=reason;else if(pilot)pilot.calibration={...pilot.calibration,passed:false,status:'failed',failureReason:reason};
+      const reasonText={no_open_eye_sample:'열린 눈 표본 없음',missing_sample_timestamp:'표본 시각 없음',no_post_dwell_sample:'응시 대기 후 표본 없음',future_sample:'미래 표본 시각',stale_sample:'최근 표본 없음',no_post_dwell_samples:'응시 대기 후 표본 없음',insufficient_recent_samples:'최근 표본 부족',gaze_unstable:'표본 흔들림이 커 안정된 검증 표본 부족',sample_processing_delayed:'WebEyeTrack 처리 응답 지연'}[reason]??reason;
+      $('#calibration').hidden=false;$('#calibrationInfo').textContent=`${phase} 표적 ${targetNumber}/27 시간 초과 · 원인: ${reasonText} · 교정을 취소했습니다. 다시 시도하세요.`;
+      showCalibrationStatus(hadCalibration?`재교정 표본 시간 초과 (${reason}) · 이전 현재 세션 교정 유지`:`교정 표본 시간 초과 (${reason}) · 버튼으로 다시 시도`);
+      message.textContent=hadCalibration?`재교정 표본 수집 시간 초과 (${reason}) · 이전 현재 세션 교정은 유지됩니다.`:`교정 표본 수집 시간 초과 (${reason}) · 현재 세션 교정은 적용되지 않았습니다.`;
       calibrate.focus();updateFrozenGazeControls();startBackgroundAttention();return;
     }
     if(now-calibrationTargetShownAt>=650&&!$('#target').dataset.pending)$('#target').click();
@@ -893,17 +904,20 @@ async function boot() {
       if(screenSize.width!==innerWidth||screenSize.height!==innerHeight){handleCalibrationEnvironmentChange('화면 크기');return;}
       const target=points(calibrationStage==='validation')[sequence], now=performance.now();
       if(now-calibrationTargetShownAt<500){$('#calibrationInfo').textContent='표적이 바뀐 뒤 0.5초 이상 응시한 다음 다시 클릭 또는 Enter/Space를 누르세요.';return;}
-      const sampleAgeLimitMs=calibrationSampleFreshnessMs(calibrationWindow);
-      const fresh=latest?.features && Number.isFinite(latest.callbackTimestampMs) && latest.callbackTimestampMs>=calibrationTargetShownAt+500 && now-latest.callbackTimestampMs>=0 && now-latest.callbackTimestampMs<=sampleAgeLimitMs;
-      if(!stableCalibrationWindow(calibrationWindow,{targetShownAt:calibrationTargetShownAt,now})){ $('#calibrationInfo').textContent='표적을 바라보며 잠시 유지하세요';return;}
-      if(pilot?.calibration)pilot.calibration.attempts.push({phase:calibrationStage,index:sequence,target:{...target},sampleAvailable:!!fresh,atUtc:new Date().toISOString()});
+      const sampleAgeLimitMs=calibrationSampleFreshnessMs(calibrationWindow),sampleStatus=calibrationSampleStatus(latest,{targetShownAt:calibrationTargetShownAt,now,maxAgeMs:sampleAgeLimitMs}),fresh=sampleStatus==='ready';
+      const stabilityStatus=calibrationWindowStatus(calibrationWindow,{targetShownAt:calibrationTargetShownAt,now});
+      if(calibrationStage==='validation'&&!stableCalibrationWindow(calibrationWindow,{targetShownAt:calibrationTargetShownAt,now})){const waitText={settling:'표적 표시 후 0.5초 이상 응시하세요',no_post_dwell_samples:'응시 대기 후 검증 표본을 기다리는 중',insufficient_recent_samples:'최근 검증 표본을 모으는 중',gaze_unstable:'시선 표본 흔들림이 큽니다. 표적을 계속 바라보세요'}[stabilityStatus]??'검증 표본을 기다리는 중';$('#calibrationInfo').textContent=waitText;return;}
       if(calibrationStage==='training'){
-        if(!fresh){$('#calibrationInfo').textContent='열린 눈의 최신 WebEyeTrack 표본이 없습니다. 눈 검출 뒤 다시 클릭하세요.';return;}
+        if(!fresh){const waitText={no_open_eye_sample:'열린 눈 표본이 없습니다. 얼굴과 눈 검출을 기다리는 중',missing_sample_timestamp:'WebEyeTrack 표본 시각을 기다리는 중',no_post_dwell_sample:'표적을 0.5초 이상 바라본 뒤의 표본을 기다리는 중',stale_sample:'최근 열린 눈 표본을 기다리는 중',future_sample:'WebEyeTrack 표본 시각 확인 중'}[sampleStatus]??'열린 눈 표본을 기다리는 중';$('#calibrationInfo').textContent=waitText;return;}
         try{const response=await controller.calibrate(target,calibrationTargetShownAt+500,sampleAgeLimitMs);if(response.adaptationSamples)capturedAdaptation=response.adaptationSamples;}catch(error){
           calibrationStage=null;candidate=null;training=[];validation=[];controller.cancelCalibration();restorePreviousCalibration();if(pilot?.calibration?.passed)pilot.calibration.lastRecalibrationStatus='failed';else if(pilot)pilot.calibration={...pilot.calibration,passed:false,status:'failed'};$('#calibration').hidden=true;message.textContent=`WebEyeTrack 적응 실패: ${error.message}`;showCalibrationStatus(activeCalibration?'재교정 실패 · 이전 현재 세션 적응 유지':'교정 실패 · 버튼으로 다시 시도');calibrate.focus();updateFrozenGazeControls();return;
         }
         training.push({id:`train-${sequence}`,target});
-      } else validation.push(fresh?{id:`validate-${sequence}`,features:latest.features,landmarkFeatures:latest.landmarkFeatures,target}:{id:`validate-${sequence}`,valid:false,target});
+      } else {
+        if(!fresh){const waitText={no_open_eye_sample:'열린 눈 표본이 없습니다. 얼굴과 눈 검출을 기다리는 중',missing_sample_timestamp:'WebEyeTrack 표본 시각을 기다리는 중',no_post_dwell_sample:'응시 대기 후 검증 표본을 기다리는 중',stale_sample:'최근 열린 눈 검증 표본을 기다리는 중',future_sample:'WebEyeTrack 표본 시각 확인 중'}[sampleStatus]??'열린 눈 검증 표본을 기다리는 중';$('#calibrationInfo').textContent=waitText;return;}
+        validation.push({id:`validate-${sequence}`,features:latest.features,landmarkFeatures:latest.landmarkFeatures,target});
+      }
+      if(pilot?.calibration)pilot.calibration.attempts.push({phase:calibrationStage,index:sequence,target:{...target},sampleAvailable:true,atUtc:new Date().toISOString()});
       sequence++;
       if(sequence===27&&calibrationStage==='training'){
         candidate=metricModel();calibrationStage='validation';sequence=0;showCalibrationStatus('27회 WebEyeTrack adapt() 완료 · 별도 27점 표본 수집 · 잔차 후보는 18/9 분할');

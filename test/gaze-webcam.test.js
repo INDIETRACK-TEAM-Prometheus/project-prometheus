@@ -204,7 +204,7 @@ test('calibration accepts a bounded cadence-adaptive freshness window',async()=>
   h.video.emit();await h.flush();
   h.advanceClock(1600);
   await assert.rejects(h.controller.calibrate({x:400,y:300},-Infinity,1500),/fresh open-eye/);
-  await assert.rejects(h.controller.calibrate({x:400,y:300},-Infinity,1501),/invalid calibration sample age/);
+  await assert.rejects(h.controller.calibrate({x:400,y:300},-Infinity,2501),/invalid calibration sample age/);
   h.controller.stop();
 });
 
