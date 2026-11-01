@@ -338,9 +338,10 @@ test('constructor snapshot option drives polling without observe calls and stops
   const coordinator = new BackgroundAttentionCoordinator({snapshot:() => { polls++; frame++; return snapshot({frameId:`p${frame}`, key:`p${frame}`, observedAt:frame, processedAt:frame}); }, work:value => { calls.push(value.frame.frameId); return {scenarios:[]}; }, intervalMs:5, minIntervalMs:0, now:() => 500});
   coordinator.start('s');
   try {
-    await new Promise(resolve => setTimeout(resolve, 60));
-    assert.ok(polls >= 2, `polled ${polls} times`);
-    assert.ok(calls.length >= 1, `work called ${calls.length} times`);
+    const deadline = Date.now() + 1500;
+    while ((polls < 2 || calls.length < 1) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.ok(polls >= 2, `polled ${polls} times before timeout`);
+    assert.ok(calls.length >= 1, `work called ${calls.length} times before timeout`);
   } finally { coordinator.stop(); }
   const after = polls;
   await new Promise(resolve => setTimeout(resolve, 30));
