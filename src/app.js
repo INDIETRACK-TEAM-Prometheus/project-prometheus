@@ -1,6 +1,6 @@
 import {createWorld} from './spatial/world.js';
-import {createLocalRecorder} from './gaze/local-recorder.js';
-import {restoreLandmarkResidualCalibration,openGazeCalibrationProfileStore,loadGazeCalibrationProfile,createGazeCalibrationProfile,saveGazeCalibrationProfile,fitAffineCalibration,identityAffineCalibration,selectAffineCalibrationCandidate} from './gaze/calibration-profile.js';
+import {createLocalRecorder,listLocalRecordings,deleteLocalRecordings} from './gaze/local-recorder.js';
+import {GAZE_CALIBRATION_PROFILE_KEY,restoreLandmarkResidualCalibration,openGazeCalibrationProfileStore,loadGazeCalibrationProfile,createGazeCalibrationProfile,saveGazeCalibrationProfile,fitAffineCalibration,identityAffineCalibration,selectAffineCalibrationCandidate} from './gaze/calibration-profile.js';
 import {createCausalDisplayFilter} from './gaze/display-filter.js';
 import {stableCalibrationWindow} from './gaze/calibration-window.js';
 import {BackgroundAttentionCoordinator} from './runtime/background-attention.js';
@@ -298,7 +298,7 @@ async function boot() {
   const calibrationStatus=$('#calibrationStatus');
   calibrationStatus.id='gazeCalibrationStatus';calibrationStatus.className='row';calibrationStatus.setAttribute('aria-live','polite');gazeStatus.parentElement.after(calibrationStatus);
   const showCalibrationStatus=text=>{calibrationStatus.textContent=text;};
-  showCalibrationStatus('WebEyeTrack 교정 없음 · 카메라 세션에서 교정 필요 · upstream 저장/복원 미지원');
+  showCalibrationStatus('WebEyeTrack 교정 없음 · 시작 시 이 기기에 저장된 교정 복원을 시도');
   let provisionalTrackingStore=null, provisionalTrackingOpening=null, provisionalSparkRecordId=null;
   const provisionalTrackingStatus=$('#provisionalTrackingStatus'), provisionalTrackingList=$('#provisionalTrackingList');
   function renderProvisionalTracking(records){
@@ -658,7 +658,18 @@ async function boot() {
   function bindTraceMemory(){unsubscribeTrace();unsubscribeTrace=memory.subscribeInvalidations(ids=>{researchTrace.withdrawEvidence(ids);if(remoteRuntime){$('#scenarios').replaceChildren();$('#nextGazeStatus').textContent='다음 시선 예측 없음';preparation.clear();$('#scenarioStatus').textContent='증거 변경으로 시나리오가 철회되었습니다';}});}
   const runtime=new RuntimeFacade({sessionId:crypto.randomUUID(),now:()=>performance.now()});
   const recordingStatus=document.createElement('span');recordingStatus.id='recordingState';recordingStatus.setAttribute('role','status');canvas.parentElement.append(recordingStatus);
-  const localRecorder=createLocalRecorder({onStatus:result=>{recordingStatus.textContent=({recording:'로컬 기록 중',saved:'로컬 기록 저장됨',failed:'로컬 기록 저장 실패',unavailable:'로컬 영상 기록 지원 안 됨'})[result.status]??'';}});
+  const recordingSummary=$('#localRecordingSummary'),mib=bytes=>`${(bytes/1048576).toFixed(1)} MiB`;
+  async function refreshRecordingSummary(){try{const {recordings,totalBytes}=await listLocalRecordings();const active=recordings.filter(r=>r.active).length;recordingSummary.textContent=recordings.length?`로컬 영상 기록 ${recordings.length}개 · ${mib(totalBytes)}${active?` · 녹화 중 ${active}개`:''}`:'로컬 영상 기록 없음';}catch{recordingSummary.textContent='로컬 영상 기록 확인 실패';}}
+  const localRecorder=createLocalRecorder({onStatus:result=>{recordingStatus.textContent=({recording:'로컬 기록 중',saved:'로컬 기록 저장됨',failed:'로컬 기록 저장 실패',unavailable:'로컬 영상 기록 지원 안 됨'})[result.status]??'';if(['recording','saved'].includes(result.status))void refreshRecordingSummary();}});
+  $('#refreshRecordings').addEventListener('click',()=>void refreshRecordingSummary());
+  function setDataPanel(open){$('#sessionPanel').classList.toggle('open',open);$('#dataPanel').setAttribute('aria-expanded',String(open));if(open){$('#dataSettings').open=true;void refreshRecordingSummary();}}
+  $('#dataPanel').addEventListener('click',()=>setDataPanel(!$('#sessionPanel').classList.contains('open')));
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$('#sessionPanel').classList.contains('open')){setDataPanel(false);$('#dataPanel').focus();}});
+  // Deletion is permanent and the server never removes an open recording, so stopping comes first.
+  $('#deleteRecordings').addEventListener('click',async event=>{const button=event.currentTarget;if(coordinator?.status().active){recordingSummary.textContent='녹화 중에는 삭제할 수 없습니다 · 정지(■) 후 다시 시도';return;}if(!confirm('이 기기의 로컬 영상 기록을 모두 영구 삭제합니다. 계속할까요?'))return;button.disabled=true;
+    try{const result=await deleteLocalRecordings();recordingSummary.textContent=`로컬 영상 기록 ${result.deleted.length}개 삭제 · ${mib(result.freedBytes)}`+(result.failed.length?` · 삭제 실패 ${result.failed.length}개`:'')+(result.skippedActive.length?` · 녹화 중이라 보류 ${result.skippedActive.length}개`:'');}
+    catch{recordingSummary.textContent='로컬 영상 기록 삭제 실패 · 일부만 삭제됐을 수 있음, 확인 버튼으로 다시 확인';}finally{button.disabled=false;}});
+  $('#deleteCalibrationProfile').addEventListener('click',async event=>{const button=event.currentTarget;button.disabled=true;try{const store=await profileStorage;if(!store)throw new Error('storage_unavailable');await store.removeItem(GAZE_CALIBRATION_PROFILE_KEY);showCalibrationStatus('저장 교정 삭제됨 · 현재 카메라 세션의 적응은 정지 전까지 유지');}catch{showCalibrationStatus('저장 교정 삭제 실패');}finally{button.disabled=false;}});
   let backgroundAttention=null,depthRequest=null;
   const modelDepthStatus=document.createElement('span');modelDepthStatus.id='modelDepthState';modelDepthStatus.setAttribute('role','status');canvas.parentElement.append(modelDepthStatus);
   function requestModelDepth(frame,gaze){if(depthRequest)return;const abort=new AbortController();depthRequest=abort;modelDepthStatus.textContent='Depth Anything 분석 중';fetch('/api/depth/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({frame:{frameId:frame.frameId,observedAt:frame.observedAt,width:frame.width,height:frame.height},imageDataUrl:frame.imageData}),signal:abort.signal}).then(async response=>{const result=await response.json();if(!response.ok)throw Error('depth_unavailable');if(abort.signal.aborted||depthRequest!==abort)return;if(result.frame?.frameId!==frame.frameId||result.frame?.observedAt!==frame.observedAt)throw Error('depth_mismatch');const d=result.depth,i=Math.floor(gaze.y*d.height)*d.width+Math.floor(gaze.x*d.width);modelDepthStatus.textContent=d.validMask?.[i]&&Number.isFinite(d.values?.[i])?`Depth Anything 추정 ${d.values[i].toFixed(2)}m · ${Math.round(result.timing.totalMs)}ms · 원본 프레임 기준`:'Depth Anything 깊이 사용 불가';}).catch(()=>{if(!abort.signal.aborted)modelDepthStatus.textContent='Depth Anything 요청 실패';}).finally(()=>{if(depthRequest===abort)depthRequest=null;});}

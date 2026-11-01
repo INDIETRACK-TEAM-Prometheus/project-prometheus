@@ -1,3 +1,9 @@
+export async function listLocalRecordings({fetchImpl=fetch}={}) {
+ const response=await fetchImpl('/api/recordings',{method:'GET'});if(!response.ok)throw new Error('local_recording_list_failed');return response.json();
+}
+export async function deleteLocalRecordings({fetchImpl=fetch}={}) {
+ const response=await fetchImpl('/api/recordings',{method:'DELETE'});if(!response.ok)throw new Error('local_recording_delete_failed');return response.json();
+}
 // Original webcam data travels only to the loopback recording endpoint.
 export function createLocalRecorder({fetchImpl=fetch,Recorder=globalThis.MediaRecorder,onStatus=()=>{},maxPendingBytes=16*1024*1024}={}) {
  let recorder=null,session=null,chain=Promise.resolve(),pending=0,index=0,failed=false,generation=0,starting=false;

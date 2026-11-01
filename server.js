@@ -65,6 +65,12 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
       }catch(error){const code=typeof error?.code==='string'&&/^DEPTH_[A-Z_]+$/.test(error.code)?error.code:'DEPTH_INVALID_REQUEST';json(res,code==='DEPTH_PROVIDER_BUSY'?429:503,{error:'depth_unavailable',code});}
       return;
     }
+    if(pathname==='/api/recordings'){
+      if(!['GET','DELETE'].includes(req.method)||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
+      req.resume();
+      try{json(res,200,req.method==='GET'?await recordingStore.list():await recordingStore.deleteAll());}catch{json(res,500,{error:'local_recording_store_failed'});}
+      return;
+    }
     if(pathname.startsWith('/api/recordings/')){
       if(req.method!=='POST'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
       try{
