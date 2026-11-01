@@ -4,7 +4,7 @@ The optional `colab` backend runs the same pinned Depth Anything V2 Metric Hyper
 
 The local port is `49190` because the Fetch API rejects reserved port `4190` as a bad port before it attempts a connection. Do not expose the Colab service on a public interface.
 
-## Run a parity check
+## Run a parity and transport comparison
 
 Prerequisites: the official `google-colab-cli` is installed and authenticated, an SSH client is available, and the account can allocate a T4 runtime. The model source commit and checkpoint SHA-256 are pinned and verified by the shared depth worker.
 
@@ -21,7 +21,7 @@ try {
   node scripts/colab/verify-depth-parity.mjs `
     --image fixtures/sam-synthetic.png `
     --output $report `
-    --runs 5
+    --runs 12
   if ($LASTEXITCODE) { throw 'CPU/GPU parity check failed' }
 } finally {
   Remove-Item Env:PROMETHEUS_DEPTH_BACKEND -ErrorAction SilentlyContinue
@@ -34,4 +34,6 @@ The `finally` block closes the SSH forward and stops the named Colab VM on both 
 
 Each report path includes a UTC timestamp because the parity command refuses to overwrite an existing evidence file.
 
-The JSON report records the input hash, model/device metadata, CPU and GPU timings, and per-pixel agreement. It is a single synthetic-image backend parity check; it does not establish depth accuracy, generalization, camera performance, or calibrated metric error. Small CPU/GPU numeric differences and network-dependent round-trip times are expected.
+`--runs 12` records 12 local CPU requests and 12 measured warm requests per remote transport. Each remote transport also gets one discarded warm-up before each five- or six-request block. Legacy sends `Accept-Encoding: identity` and `Connection: close`; optimized leaves gzip negotiation and HTTP/1.1 connection reuse enabled. The blocks run in opposite orders to reduce time-order bias while keeping requests for each mode together. Reports include every request's round-trip and model inference timing, warm p50/p95/max, warm-up timings, and a separate repeated `/health` RTT baseline. The health RTT is not subtracted from inference latency.
+
+The JSON report records the input hash, model/device metadata, local and remote timings, legacy versus optimized remote transport timings, and per-pixel agreement. The comparison uses the same synthetic fixture and Colab session for both transports. It is still a single-image backend parity and transport measurement; it does not establish depth accuracy, generalization, camera performance, calibrated metric error, or a general latency guarantee. Small CPU/GPU numeric differences and network-dependent round-trip times are expected.
