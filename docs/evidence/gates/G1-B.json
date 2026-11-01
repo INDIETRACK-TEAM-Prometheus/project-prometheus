@@ -1,0 +1,51 @@
+{
+  "gateId": "G1-B",
+  "requirementIds": [
+    "EYE-02",
+    "EYE-03",
+    "EYE-06",
+    "EYE-08",
+    "UI-02"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "tested",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {
+    "webeyetrack": "0.0.2",
+    "mediapipeFaceLandmarker": "vendor/face_landmarker.task"
+  },
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "leftRightEyeIndexMismatchCount": 0,
+    "undetectedPupilShownAsDetectedCount": 0,
+    "missingLandmarksPreserved": true
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/webeyetrack-integration.md",
+    "docs/unit-gaze.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "실제 눈 영상과 동일 프레임 overlay, 반전·blink·가림·작은 눈 사례 실측 없음",
+    "표시되는 윤곽·홍채 점은 MediaPipe 모델 예측이며 동공 검출이 아님",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

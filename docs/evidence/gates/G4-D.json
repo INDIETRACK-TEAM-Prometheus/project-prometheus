@@ -1,0 +1,49 @@
+{
+  "gateId": "G4-D",
+  "requirementIds": [
+    "PRE-02",
+    "PRE-03",
+    "PRE-05",
+    "RT-03",
+    "VALID-01",
+    "DEL-01",
+    "T10"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "invalidCacheDisplayedCount": 0,
+    "p95DisplayResponseMsMax": 200
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/unit-runtime.md",
+    "docs/evidence/unit-tests-20261028-preparation-ui.txt"
+  ],
+  "failures": [],
+  "limitations": [
+    "p95 200ms는 GATE_PLAN 제안값. 실제 render 시각·표시 영역 계측 없음",
+    "준비 결과 표시(silent_ready) 문구와 만료 처리만 시험. 캐시 조회 지연 계측 없음: 수치 기준 미정 또는 제안값: 최종 holdout 전에 설정 버전을 고정해야 하며 결과를 본 뒤 변경해 통과시키지 않는다.",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

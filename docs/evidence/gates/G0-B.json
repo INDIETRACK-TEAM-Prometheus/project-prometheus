@@ -1,0 +1,57 @@
+{
+  "gateId": "G0-B",
+  "requirementIds": [
+    "GEO-01",
+    "GEO-02",
+    "GEO-07",
+    "T02",
+    "T22"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "tested",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "synthetic_model_smoke",
+  "environment": {
+    "os": "Windows 11",
+    "python": "3.12.10",
+    "torch": "2.6.0+cpu",
+    "device": "cpu",
+    "note": "depth-u07-20261031.json 스모크 환경"
+  },
+  "modelVersions": {
+    "id": "depth-anything/Depth-Anything-V2-Metric-Hypersim-Small",
+    "encoder": "vits",
+    "checkpointSha256": "b782898d8a3e8be1f639de33837ed85e9b4b73e40f8f5e5cd99067588d722545",
+    "units": "m",
+    "convention": "axial_z",
+    "depthSource": "monocular_estimated_depth"
+  },
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "depthUnits": "m",
+    "depthConvention": "axial_z",
+    "relativeDepthLabeledMetricCount": 0,
+    "mustDifferFromEngineDepth": true
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/evidence/depth-u07-20261031.json",
+    "docs/depth-anything-v2-local.md",
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt"
+  ],
+  "failures": [],
+  "limitations": [
+    "합성 이미지 스모크이며 정답 깊이가 없어 정확도 주장 불가",
+    "Intel Iris Xe 가속 미시험(CPU only)",
+    "실제 카메라 입력·엔진 정답 비교 미실시",
+    "MAE/AbsRel/valid coverage 수치 기준 미정: 수치 기준 미정 또는 제안값: 최종 holdout 전에 설정 버전을 고정해야 하며 결과를 본 뒤 변경해 통과시키지 않는다.",
+    "2026-11-01 작성 시점에 다른 엔지니어의 미커밋 WIP 파일이 있으며 이 기록의 구현 상태 판정에서 제외했다.",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

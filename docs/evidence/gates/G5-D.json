@@ -1,0 +1,46 @@
+{
+  "gateId": "G5-D",
+  "requirementIds": [
+    "SCP-08",
+    "DATA-02",
+    "T08"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {},
+  "thresholdVersion": null,
+  "evidencePaths": [
+    "docs/COMPARISON_PROTOCOL.md",
+    "docs/evaluation-replay.md",
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/GATE_PROTOCOL_AUDIT_20261101.md",
+    "docs/evidence/unit-tests-20261028-paired-replay.txt"
+  ],
+  "failures": [],
+  "limitations": [
+    "v1 채점기(9조건)만 구현. 독립 공간 기억·SAM 효과·선행 deadline 비교는 미구현(감사 A02–A05, A11)",
+    "실제 paired generation 원장·정답 격리·독립 주석 없음. 실제 비교 결과 없음",
+    "동결 필요 manifest 필드: primaryEndpoint, primaryContrast, practicalDelta, noninferiorityMargins, coverageFloor, deadlineMs, maxResultAgeMs, samplePlan, stoppingRule, exclusionRules, multiplicityPolicy, annotationPolicy, thresholdVersion",
+    "2026-11-01 작성 시점에 다른 엔지니어의 미커밋 WIP 파일이 있으며 이 기록의 구현 상태 판정에서 제외했다.",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

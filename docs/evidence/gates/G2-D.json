@@ -1,0 +1,64 @@
+{
+  "gateId": "G2-D",
+  "requirementIds": [
+    "GEO-03",
+    "GEO-08",
+    "OBJ-04",
+    "OBJ-05",
+    "OBJ-06",
+    "PATH-01",
+    "PATH-02",
+    "PATH-03",
+    "PATH-04",
+    "SYNC-01",
+    "SYNC-02",
+    "SYNC-03",
+    "BUF-01",
+    "BUF-02",
+    "BUF-03",
+    "MAP-02",
+    "MAP-04",
+    "T04",
+    "T15",
+    "T16"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "synthetic_live_provider",
+  "environment": {
+    "note": "합성 시퀀스 실호출 및 단위 시험 기록"
+  },
+  "modelVersions": {
+    "segmentation": "sam-3.1"
+  },
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "wrongTimeJoinCount": 0,
+    "alignmentErrorBudgetMs": 50,
+    "dynamicScenesMin": 3,
+    "annotatedEventsMin": 100,
+    "pinMissWithinLimitsCount": 0
+  },
+  "thresholdVersion": "SRS-v1.1-s20.5",
+  "evidencePaths": [
+    "docs/evidence/spatial-live.json",
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/browser-timing-calibration.md",
+    "docs/unit-spatial.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "광학 시간 측정 없음(포토다이오드·시간코드 로그 부재). SYNC/T15는 합성 시계 시험뿐",
+    "실제 100–500ms glimpse 50건·동적 3장면 주석 미수집. 지속 ID는 백그라운드 경로에 미연결(감사 A03)",
+    "세 동선 종단 표시 없음. 50ms는 SRS 20.2 총 정렬 오차 예산 제안",
+    "2026-11-01 작성 시점에 다른 엔지니어의 미커밋 WIP 파일이 있으며 이 기록의 구현 상태 판정에서 제외했다.",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

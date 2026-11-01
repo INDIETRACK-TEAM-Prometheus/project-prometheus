@@ -1,0 +1,37 @@
+{
+  "gateId": "G0-C",
+  "requirementIds": [
+    "EYE-04",
+    "T22"
+  ],
+  "status": "blocked",
+  "implementationStatus": "planned",
+  "evaluationStatus": "blocked",
+  "commit": "c2cd016",
+  "testKind": "not_run",
+  "environment": {},
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "randomWeightsAllowed": false,
+    "requiredWeights": "verified_pretrained_or_real_trained_checkpoint"
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/DEMO_BRIEF_20261104.md",
+    "docs/IMPLEMENTATION_PLAN_20261104.md",
+    "docs/OPEN_SOURCE_SELECTION_20261101.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "blocked: 10/31 조사에서 EMC-Gaze encoder 공개 가중치와 LightGazeNet 공개 코드를 확인하지 못함(DEMO_BRIEF). 소스에 GNN 코드·체크포인트 없음",
+    "무작위 초기화 모델은 사용 불가. 30~60초 개인 교정만으로 범용 GNN 학습을 주장하지 않음",
+    "SRS v1.1에 없는 사용자·구현 계획 요구이며 가장 가까운 EYE-04에 연결",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

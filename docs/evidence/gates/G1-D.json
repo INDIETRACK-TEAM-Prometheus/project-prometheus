@@ -1,0 +1,39 @@
+{
+  "gateId": "G1-D",
+  "requirementIds": [
+    "EYE-02",
+    "T02"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {},
+  "thresholdVersion": null,
+  "evidencePaths": [
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt"
+  ],
+  "failures": [],
+  "limitations": [
+    "양안 광선 화면 교차 기하(binocular-screen)만 구현. 개인별 구면 fit, kappa, 재투영 오차 검증 없음",
+    "수치 기준 미정 또는 제안값: 최종 holdout 전에 설정 버전을 고정해야 하며 결과를 본 뒤 변경해 통과시키지 않는다.",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

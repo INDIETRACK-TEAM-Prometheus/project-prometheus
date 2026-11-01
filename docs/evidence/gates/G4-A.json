@@ -1,0 +1,56 @@
+{
+  "gateId": "G4-A",
+  "requirementIds": [
+    "SCP-07",
+    "OBJ-02",
+    "INF-07",
+    "RT-01",
+    "RT-02",
+    "RT-03",
+    "RT-04",
+    "RT-05",
+    "T09",
+    "T10"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "tested",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "sessionMinutes": 30,
+    "maxInFlightPerProvider": 1,
+    "maxPendingLatest": 1,
+    "newCallsAfterStopCount": 0,
+    "staleOverwriteCount": 0,
+    "unboundedQueueGrowthCount": 0
+  },
+  "thresholdVersion": "SRS-v1.1-s20.5",
+  "evidencePaths": [
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/unit-runtime.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "주입형 시험만. 30분 실행·hidden tab·네트워크 실패 실측 없음",
+    "진행 1+최신 대기 1 한도는 구현 계약이며 실제 공급자 병렬 한도와 별개",
+    "백그라운드 경로 파일(background-attention/background-browser)은 2026-11-01 작성 시점에 미커밋 수정 중",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

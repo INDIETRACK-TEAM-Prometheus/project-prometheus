@@ -1,0 +1,57 @@
+{
+  "gateId": "G5-C",
+  "requirementIds": [
+    "T01",
+    "T02",
+    "T03",
+    "T04",
+    "T05",
+    "T06",
+    "T07",
+    "T08",
+    "T09",
+    "T10",
+    "T11",
+    "T12",
+    "T13",
+    "T14",
+    "T15",
+    "T16",
+    "T17",
+    "T18",
+    "T19",
+    "T20",
+    "T21",
+    "T22"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "not_run",
+  "environment": {},
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "requiredTests": "T01-T22",
+    "hiddenFailureCount": 0
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/REQUIREMENT_TRACE.md",
+    "docs/GATE_PLAN_20261104.md",
+    "docs/GATE_PROTOCOL_AUDIT_20261101.md",
+    "docs/CTO_REVIEW.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "요구 ID별 추적표는 작성되었으나 T01–T22 어느 것도 실제 원본 증거로 판정되지 않음",
+    "전 요구 passed가 되기 전에는 이 Gate를 passed로 올리지 않음",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

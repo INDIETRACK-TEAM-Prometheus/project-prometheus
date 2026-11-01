@@ -1,0 +1,48 @@
+{
+  "gateId": "G1-E",
+  "requirementIds": [
+    "EYE-04",
+    "T01"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {
+    "webeyetrack": "0.0.2"
+  },
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "initialCollectionSecondsMin": 30,
+    "initialCollectionSecondsMax": 60,
+    "restoreTrials": 3,
+    "autoRecalibrationBeforeUserRequest": 0
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/webeyetrack-integration.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "현재 교정은 27+27 클릭 방식으로 30~60초 자동 수집 요구 미충족(DEMO_BRIEF)",
+    "프로필 저장·복원은 구현. 복원 뒤 독립 정확도 재검증 미실시",
+    "2026-11-01 작성 시점에 다른 엔지니어의 미커밋 WIP 파일이 있으며 이 기록의 구현 상태 판정에서 제외했다.",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

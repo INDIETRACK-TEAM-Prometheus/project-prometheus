@@ -33,6 +33,8 @@ function intersect(origin,dir,tri) {
   const q=cross(s,e1),v=inv*dot(dir,q); if(v<0||u+v>1)return Infinity;
   const t=inv*dot(e2,q); return t>1e-6?t:Infinity;
 }
+// Axial depth along the camera's forward (+z) axis of a row-major camera-to-world matrix, valid for rotated cameras.
+function axialDepth(point,m){return (point[0]-m[3])*m[2]+(point[1]-m[7])*m[6]+(point[2]-m[11])*m[10];}
 // Pure, deterministic metric fixture; exposes current visible hit only, no IDs.
 export function sampleWorld(timeMs,width,height,x,y) {
   if (![timeMs,width,height,x,y].every(Number.isFinite)||width<=0||height<=0||x<0||y<0||x>=width||y>=height) return {status:'unavailable',point:null,reason:'invalid_viewport_or_pixel'};
@@ -41,7 +43,7 @@ export function sampleWorld(timeMs,width,height,x,y) {
   for(const triangle of sceneAt(timeMs)) distance=Math.min(distance,intersect(ray.origin,ray.direction,triangle));
   if(!Number.isFinite(distance))return {status:'no_hit',point:null,reason:'no_visible_surface',depthSource:'engine_geometry'};
   const point=ray.origin.map((v,i)=>v+distance*ray.direction[i]);
-  return {status:'hit',point,rayRangeM:distance,axialZM:point[2]-camera.position[2],depthSource:'engine_geometry',provenance:'synthetic_webgl_current_geometry'};
+  return {status:'hit',point,rayRangeM:distance,axialZM:axialDepth(point,camera.cameraToWorld),depthSource:'engine_geometry',provenance:'synthetic_webgl_current_geometry'};
 }
 function shader(gl,type,source) { const s=gl.createShader(type);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(`WebGL shader: ${gl.getShaderInfoLog(s)}`);return s; }
 export function createWorld(canvas, {maxFrameHistory=300,maxFramePins=4}={}) {
@@ -86,7 +88,7 @@ export function createWorld(canvas, {maxFrameHistory=300,maxFramePins=4}={}) {
     let distance=Infinity;for(const triangle of sceneAt(snapshot.renderTsMs))distance=Math.min(distance,intersect(ray.origin,ray.direction,triangle));
     if(!Number.isFinite(distance))return {status:'no_hit',point:null,reason:'no_visible_surface',depthSource:'engine_geometry'};
     const point=ray.origin.map((v,i)=>v+distance*ray.direction[i]);
-    return {status:'hit',point,rayRangeM:distance,axialZM:point[2]-snapshot.cameraToWorld[11],depthSource:'engine_geometry',provenance:'synthetic_webgl_current_geometry'};
+    return {status:'hit',point,rayRangeM:distance,axialZM:axialDepth(point,snapshot.cameraToWorld),depthSource:'engine_geometry',provenance:'synthetic_webgl_current_geometry'};
   }
   function pinFrame(frame) {
     const snapshot=frame && (pins.get(frame.frameId)?.frame ?? frames.get(frame.frameId));

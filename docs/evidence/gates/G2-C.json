@@ -1,0 +1,53 @@
+{
+  "gateId": "G2-C",
+  "requirementIds": [
+    "GEO-04",
+    "GEO-05",
+    "GEO-06",
+    "T02"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "objectLinkPrecisionMin": 0.9,
+    "objectLinkCoverageMin": 0.6,
+    "dynamicScenesMin": 3,
+    "annotatedEventsMin": 100,
+    "minObjectWidthOver95ErrorDiameter": 2,
+    "wrongFrameJoinCount": 0
+  },
+  "thresholdVersion": "SRS-v1.1-s20.5",
+  "evidencePaths": [
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/evidence/spatial-live.json",
+    "docs/unit-spatial.md",
+    "docs/mask-association.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "동적 장면 3개·주석 사건 100건 실측 없음. SRS 20.5 초기 기본값이며 실행 전 설정 버전 고정 필요",
+    "작은 객체·시선 오류·후보 누락을 별도 보고해야 함(감사 A06)",
+    "실제 시선의 시간 정렬 미검증으로 라이브 시선-장면 연결 보류 상태",
+    "2026-11-01 작성 시점에 다른 엔지니어의 미커밋 WIP 파일이 있으며 이 기록의 구현 상태 판정에서 제외했다.",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

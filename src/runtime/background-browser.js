@@ -25,9 +25,10 @@ function validBounds(bounds, frame) {
 }
 
 // capture must return an immutable copy of the requested rendered frame; no world pause is used.
-export function createBackgroundBrowserWork({capture, sam, reason, now = () => performance.now()} = {}) {
-  if (typeof capture !== 'function' || typeof sam !== 'function' || typeof reason !== 'function' || typeof now !== 'function') throw new TypeError('capture, sam, and reason callbacks required');
-  return async function work(snapshot, {signal} = {}) {
+// tracker (required, injected) must expose async ingest(); a per-camera-session LiveTracking supplies persistent local IDs from decoded SAM masks.
+export function createBackgroundBrowserWork({capture, sam, reason, tracker, now = () => performance.now()} = {}) {
+  if (typeof capture !== 'function' || typeof sam !== 'function' || typeof reason !== 'function' || typeof now !== 'function' || typeof tracker?.ingest !== 'function') throw new TypeError('capture, sam, reason callbacks and tracker required');
+  return async function work(snapshot, {signal, mark, invalidate} = {}) {
     if (!snapshot?.frame || !snapshot.dependencies || signal?.aborted) throw new TypeError('causal snapshot required');
     const captured = await capture(structuredClone(snapshot), {signal});
     if (signal?.aborted) throw new Error('background work cancelled');
@@ -42,15 +43,26 @@ export function createBackgroundBrowserWork({capture, sam, reason, now = () => p
     const masks = unwrap(rawMasks);
     requireResponseFrame(masks, frame);
     if (!Array.isArray(masks.masks)) throw new TypeError('SAM masks required');
+    mark?.('samDone');
     const boxes = masks.masks.slice(0,10).map(mask=>mask?.bounds).filter(bounds=>validBounds(bounds,frame));
-    const candidates = frame.frameId.length <= 116 ? boxes.map((bounds,index)=>({objectId:`${frame.frameId}:mask:${index}`,bounds:structuredClone(bounds)})) : [];
 
-    const input = {frame:{frameId:frame.frameId, observedAt:frame.observedAt, processedAt:frame.processedAt, width:frame.width, height:frame.height, imageData:frame.imageData}, gaze, masks:boxes.map(bounds=>({bounds:structuredClone(bounds)})), observedUntil:snapshot.observedUntil, dependencies:structuredClone(snapshot.dependencies), candidates:structuredClone(candidates), events:structuredClone(snapshot.events ?? []), context:structuredClone(snapshot.context ?? {memory:[]})};
-    const rawHypotheses = await reason(input, {signal});
+    // Decoded raster masks (not bounds) drive identity; masks without a valid raster are never tracked or offered as candidates.
+    const tracked = await tracker.ingest({scope:{sessionId:snapshot.sessionId ?? null, mapId:snapshot.dependencies.mapId, mapVersion:snapshot.dependencies.mapVersion}, frameId:frame.frameId, observedAt:frame.observedAt, processedAt:frame.processedAt, width:frame.width, height:frame.height, masks:masks.masks, sam:{model:masks.model, provider:masks.provider, requestId:masks.requestId}});
+    if (signal?.aborted) throw new Error('background work cancelled');
+    // Reported immediately so cache dependencies are invalidated even if reasoning later fails or is cancelled.
+    if (typeof invalidate === 'function') for (const change of tracked.changes) invalidate({type:change.type, objectId:change.objectId});
+    const tracks = tracked.tracks.map(track=>({objectId:track.objectId, identityStatus:track.identityStatus, maskDigest:track.maskDigest, area:track.area, bounds:structuredClone(track.bounds), candidateObjectIds:[...track.candidateObjectIds], firstSeenFrameId:track.firstSeenFrameId, observations:track.observations}));
+    const linked = tracks.filter(track=>track.identityStatus === 'linked').slice(0,10);
+    const candidates = linked.map(track=>({objectId:track.objectId, bounds:structuredClone(track.bounds)}));
+    const provenance = {frameId:frame.frameId, observedAt:frame.observedAt, samModel:tracked.provenance.samModel, samRequestId:tracked.provenance.samRequestId};
+
+    const input = {frame:{frameId:frame.frameId, observedAt:frame.observedAt, processedAt:frame.processedAt, width:frame.width, height:frame.height, imageData:frame.imageData}, gaze, masks:boxes.map(bounds=>({bounds:structuredClone(bounds)})), observedUntil:snapshot.observedUntil, dependencies:structuredClone(snapshot.dependencies), candidates:structuredClone(candidates), tracks:structuredClone(tracks), provenance:structuredClone(provenance), events:structuredClone(snapshot.events ?? []), context:structuredClone(snapshot.context ?? {memory:[]})};
+    const rawHypotheses = await reason(input, {signal, firstByte:()=>mark?.('reasonFirstByte')});
     if (signal?.aborted) throw new Error('background work cancelled');
     const hypotheses = unwrap(rawHypotheses);
     requireResponseFrame(hypotheses, frame);
     if (!Array.isArray(hypotheses.scenarios)) throw new TypeError('hypotheses required');
-    return {scenarios:structuredClone(hypotheses.scenarios), ...(Object.hasOwn(hypotheses, 'nextGaze') ? {nextGaze:structuredClone(hypotheses.nextGaze)} : {}), ...(candidates.length ? {candidateSpace:{frameId:frame.frameId,observedAt:frame.observedAt,candidates:structuredClone(candidates)}} : {})};
+    const candidateSpace = candidates.length ? {frameId:frame.frameId, observedAt:frame.observedAt, candidates:linked.map(track=>({objectId:track.objectId, bounds:structuredClone(track.bounds), maskDigest:track.maskDigest, identityStatus:'linked', area:track.area})), provenance:{...provenance, samModel:provenance.samModel ?? null, samRequestId:provenance.samRequestId ?? null}} : null;
+    return {scenarios:structuredClone(hypotheses.scenarios), ...(Object.hasOwn(hypotheses, 'nextGaze') ? {nextGaze:structuredClone(hypotheses.nextGaze)} : {}), ...(candidateSpace ? {candidateSpace} : {}), objectDependencies:{objectIds:linked.map(track=>track.objectId), objectVersions:Object.fromEntries(linked.map(track=>[track.objectId, track.maskDigest]))}};
   };
 }

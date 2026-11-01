@@ -22,6 +22,24 @@
 
 ## Gate 판정
 
+### 2026-11-01 감사 P0/P1 구현 유닛 통합 (Sonnet 5.5 high 병렬 5개, CTO 검토)
+
+사용자 지시: Gate 계획·비교 프로토콜에 맞춰 구현·교체를 진행하고 서브에이전트를 병렬로 사용할 것. 실측(사람·장비·공급자) 없이 통과할 수 없는 Gate는 승격하지 않는다는 기존 규칙을 유지했다.
+
+| 유닛 | 감사/Gate | 산출물 | 상태 |
+|---|---|---|---|
+| 비교 평가 v2 | A02/A04/A05/A06/A10/A11, G4-B·G5-D | `src/evaluation/manifest.js`, `generator.js`(해시 체인 append-only 원장, 라벨 유출 거부, 예산/호출 상한, artifact 재해시), `comparison-v2.js`(look/interaction 분리, 검열, deadline 선행, 오류 분해, Markov·유지 기준선, ECE·coverage-risk, Holm·session bootstrap 판정), CLI 2개, `COMPARISON_PROTOCOL_V2.md` | implemented/tested, 실연구 미실행 |
+| Depth 평가 | A07, G2-B·C | `src/spatial/depth-artifact.js`(foreground mask median/IQR, 겹치지 않을 때만 near/far, K·pose 없으면 XYZ 보류), `src/evaluation/depth-metrics.js`, `world-depth-export.js`(engine oracle, 모델 출력과 분리), `scripts/evaluate-depth.mjs` | implemented/tested, 합성 GT만 |
+| 라이브 경로 | A03/A12, G2-A·D, G4-A·C·D | `src/runtime/live-tracking.js`(디코딩 마스크 기반 지속 ID·digest·identity_status), background work/coordinator의 persistent 의존성·telemetry | implemented/tested, 앱 연결 완료 |
+| 시선 정확도 | A06/A08, G1-C·D·E·F | `accuracy-protocol.js`(교정과 분리된 9×3 표적·가장자리 band·plan hash), `accuracy-report.js`, `eye-fit.js`, 구면/양안 확장 | implemented/tested, 앱 UI 미연결 |
+| 추적표 | A13/A14, G5-C | `docs/REQUIREMENT_TRACE.md`(127행), `docs/evidence/gates/*.json` 26개, `scripts/validate-gate-records.mjs` | 검증기 0 오류 |
+
+CTO 통합: `app.js`에 카메라 세션별 `LiveTracking` 연결, 서버 정적 허용 목록에 `/src/runtime/live-tracking.js` 추가, `/api/reason-provisional`이 마스크 경계와 일치하는 고유 지속 ID(≤128자)를 받도록 검증 규칙 교체(형식 오류·경계 불일치·중복은 계속 400), `world.js`의 axial depth를 카메라 전방축 기준으로 수정(현재 카메라는 회전하지 않아 기존 값과 동일). 브라우저에서 새 모듈 로드·콘솔 오류 없음을 확인했다.
+
+**발견된 결함:** `BackgroundAttentionCoordinator` 생성자가 `snapshot`을 저장하지 않아 `55bd193` 이후 백그라운드 주기 실행이 시작된 적이 없다. 앞선 정합성 기록과 README의 "1초 주기 실행" 서술을 정정했다. 사용자 승인("켜고 커밋")에 따라 생성자에 `snapshot`을 저장하도록 고쳤다. 앱 스냅샷은 시작 동의 해제·탭 숨김·일시정지·교정 중·얼굴 미검출·500ms 넘은 시선 샘플이면 null을 돌려 유료 호출을 만들지 않는다. 생성자 snapshot으로 실제 polling과 정지 후 polling 중단을 확인하는 회귀 시험을 추가했다. 실제 카메라로 루프 비용·주기를 측정하지는 않았다(G4-A not_evaluated).
+
+회귀: `npm test` 497개 중 496 통과, 1 skip, 실패 0. Gate 판정은 변경하지 않는다. 남은 실측 조건은 `docs/REQUIREMENT_TRACE.md`의 사람/장비 의존 목록과 `docs/evidence/gates/`를 따른다.
+
 ### 2026-11-01 로컬 녹화 고지·삭제
 
 `server/recording-store.js`에 `list`/`deleteAll`, `server.js`에 loopback 전용 `GET`/`DELETE /api/recordings`를 추가했다. 삭제는 열린 녹화 세션을 건드리지 않고 `skippedActive`로 보고하며, 실패 ID와 해제 바이트를 반환하고 quota 합계를 디스크 기준으로 다시 계산한다. 합계는 이제 manifest를 빼고 WebM chunk만 센다. 설정 패널에 녹화 확인·전체 삭제(확인 대화상자)·저장 교정 삭제 버튼을 넣고, 시작 동의 문구에 로컬 원본 녹화와 눈 patch 교정 프로필 저장을 고지했다.

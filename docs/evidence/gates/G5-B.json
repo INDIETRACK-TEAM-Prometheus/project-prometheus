@@ -1,0 +1,35 @@
+{
+  "gateId": "G5-B",
+  "requirementIds": [
+    "SCP-06",
+    "T14"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "planned",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "not_run",
+  "environment": {},
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "sessionMinutes": 30,
+    "sameCommitModelProfileReproducible": true
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/DEMO_BRIEF_20261104.md",
+    "docs/IMPLEMENTATION_PLAN_20261104.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "종단 시험 도구 없음. 실제 사용자 교정→관찰→SAM/DA→기억→예측 30분 실행 없음",
+    "단계별 p50/p95·실패·드롭·age·비용 기준 미정: 수치 기준 미정 또는 제안값: 최종 holdout 전에 설정 버전을 고정해야 하며 결과를 본 뒤 변경해 통과시키지 않는다.",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

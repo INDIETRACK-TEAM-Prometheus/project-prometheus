@@ -25,11 +25,23 @@ test('provisional route validates frame-scoped mask candidates and allows only r
   });
 });
 
-test('provisional route rejects arbitrary candidate IDs or bounds before calling the reasoner',async()=>{
+test('provisional route accepts persistent track IDs whose bounds match a mask',async()=>{
+  let received;
+  await withServer(async input=>{received=input;return {scenarios:[scenario],nextGaze:{rankedTargetIds:['trk:e1:3']}};},async base=>{
+    const request={...baseRequest(),masks:[{left:0,top:0,right:1,bottom:1},{left:1,top:0,right:3,bottom:2}],candidates:[{objectId:'trk:e1:3',bounds:{left:1,top:0,right:3,bottom:2}}]};
+    const response=await post(base,request);
+    assert.equal(response.status,200);
+    assert.deepEqual(received.candidates,request.candidates);
+    assert.deepEqual((await response.json()).nextGaze,{rankedTargetIds:['trk:e1:3']});
+  });
+});
+
+test('provisional route rejects malformed candidate IDs or bounds before calling the reasoner',async()=>{
   let calls=0;
   await withServer(async()=>{calls++;return {scenarios:[]};},async base=>{
     const requests=[
-      {...baseRequest(),candidates:[{...candidate,objectId:'invented'}]},
+      {...baseRequest(),candidates:[{...candidate,objectId:'has space'}]},
+      {...baseRequest(),candidates:[{...candidate,objectId:'x'.repeat(129)}]},
       {...baseRequest(),candidates:[{...candidate,bounds:{left:0,top:0,right:3,bottom:2}}]},
       {...baseRequest(),candidates:[{...candidate,extra:true}]},
       {...baseRequest(),candidates:[candidate,candidate]}

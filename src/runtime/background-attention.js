@@ -85,13 +85,24 @@ function cacheId(sessionId, key) {
   return `attention:${hash.toString(16)}`;
 }
 
+const HEX64 = /^[0-9a-f]{64}$/;
+const boxKeys = 'bottom,left,right,top';
+// Candidates carry persistent local track IDs; only linked tracks may appear. Digest/area/status are optional provenance.
 function validateCandidateSpace(space, snapshot) {
   if (space == null) return snapshot.candidates ?? snapshot.scene?.candidates ?? [];
   const frame = snapshot.frame;
-  if (!space || typeof space !== 'object' || Array.isArray(space) || Object.keys(space).sort().join(',') !== 'candidates,frameId,observedAt' || space.frameId !== frame.frameId || space.observedAt !== frame.observedAt || !Array.isArray(space.candidates) || space.candidates.length < 1 || space.candidates.length > 10 || !Number.isInteger(frame.width) || !Number.isInteger(frame.height)) throw new TypeError('invalid candidate space');
-  for (let i=0; i<space.candidates.length; i++) {
-    const candidate=space.candidates[i], bounds=candidate?.bounds;
-    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || Object.keys(candidate).sort().join(',') !== 'bounds,objectId' || candidate.objectId !== `${frame.frameId}:mask:${i}` || candidate.objectId.length > 128 || !bounds || typeof bounds !== 'object' || Array.isArray(bounds) || Object.keys(bounds).sort().join(',') !== 'bottom,left,right,top' || !['left','top','right','bottom'].every(key=>Number.isInteger(bounds[key])) || bounds.left<0 || bounds.top<0 || bounds.right>frame.width || bounds.bottom>frame.height || bounds.right<=bounds.left || bounds.bottom<=bounds.top) throw new TypeError('invalid candidate space');
+  const keys = space && typeof space === 'object' && !Array.isArray(space) ? Object.keys(space).sort().join(',') : '';
+  if (!['candidates,frameId,observedAt', 'candidates,frameId,observedAt,provenance'].includes(keys) || space.frameId !== frame.frameId || space.observedAt !== frame.observedAt || !Array.isArray(space.candidates) || space.candidates.length < 1 || space.candidates.length > 10 || !Number.isInteger(frame.width) || !Number.isInteger(frame.height)) throw new TypeError('invalid candidate space');
+  const provenance = space.provenance;
+  if (provenance !== undefined && (!provenance || typeof provenance !== 'object' || Array.isArray(provenance) || Object.keys(provenance).sort().join(',') !== 'frameId,observedAt,samModel,samRequestId' || provenance.frameId !== frame.frameId || provenance.observedAt !== frame.observedAt || (provenance.samModel !== null && (!text(provenance.samModel) || provenance.samModel.length > 128)) || (provenance.samRequestId !== null && (!text(provenance.samRequestId) || provenance.samRequestId.length > 128)))) throw new TypeError('invalid candidate space');
+  const seen = new Set();
+  for (const candidate of space.candidates) {
+    const bounds = candidate?.bounds;
+    const extra = Object.keys(candidate ?? {}).filter(key => !['bounds', 'objectId'].includes(key));
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || !text(candidate.objectId) || candidate.objectId.length > 128 || seen.has(candidate.objectId) || extra.some(key => !['maskDigest', 'identityStatus', 'area'].includes(key)) ||
+      (candidate.maskDigest !== undefined && !HEX64.test(candidate.maskDigest)) || (candidate.identityStatus !== undefined && candidate.identityStatus !== 'linked') || (candidate.area !== undefined && !(Number.isInteger(candidate.area) && candidate.area >= 0)) ||
+      !bounds || typeof bounds !== 'object' || Array.isArray(bounds) || Object.keys(bounds).sort().join(',') !== boxKeys || !['left','top','right','bottom'].every(key=>Number.isInteger(bounds[key])) || bounds.left<0 || bounds.top<0 || bounds.right>frame.width || bounds.bottom>frame.height || bounds.right<=bounds.left || bounds.bottom<=bounds.top) throw new TypeError('invalid candidate space');
+    seen.add(candidate.objectId);
   }
   return space.candidates;
 }
@@ -112,10 +123,19 @@ function validatePrepared(value, snapshot, now, evidenceIds = snapshot.dependenc
   return {scenarios:structuredClone(value.scenarios), nextGaze:structuredClone(nextGaze), ...(value.candidateSpace ? {candidateSpace:structuredClone(value.candidateSpace)} : {}), observedUntil, expiresAt:expiresAt ?? null, frameId:value.frameId ?? snapshot.frame.frameId, dependencies:structuredClone(value.dependencies ?? snapshot.dependencies)};
 }
 
+// Nearest-rank percentile over a bounded sample; null when empty.
+export function percentile(values, p) {
+  if (!Array.isArray(values) || !values.length || !(p >= 0 && p <= 100)) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.max(0, Math.ceil(p / 100 * sorted.length) - 1)];
+}
+const summary = values => ({n: values.length, p50: percentile(values, 50), p95: percentile(values, 95), max: values.length ? Math.max(...values) : null});
+const round = value => value === null ? null : Math.round(value * 1000) / 1000;
+
 export class BackgroundAttentionCoordinator {
-  constructor({work, publish = () => {}, nextTargets = null, lookupPrepared = null, cache = null, maxCacheEntries = 256, cacheTtlMs = 30000, refreshIntervalMs = cacheTtlMs, snapshot = null, now = () => performance.now(), intervalMs = 250, minIntervalMs = 1000, timeoutMs = 30000, retryIntervalMs = 5000, onStatus = () => {}} = {}) {
-    if (typeof work !== 'function' || typeof publish !== 'function' || (nextTargets !== null && typeof nextTargets !== 'function') || (lookupPrepared !== null && typeof lookupPrepared !== 'function') || (snapshot !== null && typeof snapshot !== 'function') || typeof now !== 'function' || typeof onStatus !== 'function' || !time(cacheTtlMs) || cacheTtlMs === 0 || !time(refreshIntervalMs) || refreshIntervalMs === 0 || !time(intervalMs) || intervalMs === 0 || !time(minIntervalMs) || !time(timeoutMs) || timeoutMs === 0 || !time(retryIntervalMs)) throw new TypeError('invalid background attention configuration');
-    Object.assign(this, {work, publish, nextTargets, lookupPrepared, now, intervalMs, minIntervalMs, timeoutMs, retryIntervalMs, refreshIntervalMs, onStatus});
+  constructor({work, publish = () => {}, nextTargets = null, lookupPrepared = null, cache = null, maxCacheEntries = 256, cacheTtlMs = 30000, refreshIntervalMs = cacheTtlMs, snapshot = null, now = () => performance.now(), intervalMs = 250, minIntervalMs = 1000, timeoutMs = 30000, retryIntervalMs = 5000, onStatus = () => {}, deadlineMs = 200, telemetrySamples = 256, telemetryWindowMs = 60000} = {}) {
+    if (typeof work !== 'function' || typeof publish !== 'function' || (nextTargets !== null && typeof nextTargets !== 'function') || (lookupPrepared !== null && typeof lookupPrepared !== 'function') || (snapshot !== null && typeof snapshot !== 'function') || typeof now !== 'function' || typeof onStatus !== 'function' || !time(cacheTtlMs) || cacheTtlMs === 0 || !time(refreshIntervalMs) || refreshIntervalMs === 0 || !time(intervalMs) || intervalMs === 0 || !time(minIntervalMs) || !time(timeoutMs) || timeoutMs === 0 || !time(retryIntervalMs) || !time(deadlineMs) || deadlineMs === 0 || !Number.isInteger(telemetrySamples) || telemetrySamples < 1 || telemetrySamples > 4096 || !time(telemetryWindowMs) || telemetryWindowMs === 0) throw new TypeError('invalid background attention configuration');
+    Object.assign(this, {deadlineMs, telemetrySamples, telemetryWindowMs, work, publish, nextTargets, lookupPrepared, snapshot, now, intervalMs, minIntervalMs, timeoutMs, retryIntervalMs, refreshIntervalMs, onStatus});
     this.cache = cache ?? new DependencyCache(maxCacheEntries);
     this.cacheTtlMs = cacheTtlMs;
     this.phase = 'stopped'; this.sessionId = null; this.running = false; this.pending = null; this.current = null;
@@ -123,6 +143,8 @@ export class BackgroundAttentionCoordinator {
     this.lastStateKey = null; this.lastFailure = null; this.lastPublishedAt = -Infinity; this.latest = null; this.previousSnapshot = null;
     this.epochs = new Map();
     this.workAt = [];
+    this.lastPublishedSequence = -1;
+    this._resetTelemetry();
     this.metrics = {observed:0, accepted:0, duplicates:0, coalesced:0, dropped:0, cacheLookups:0, cacheHits:0, cacheErrors:0, workCalls:0, workFailures:0, nextTargetCalls:0, nextTargetFailures:0, timeouts:0, invalidations:0, invalidatedResults:0, lifecycleResults:0, published:0, publishFailures:0, snapshotFailures:0, maxConcurrent:0, maxPending:0, totalWorkMs:0, lastWorkMs:null, totalQueueMs:0, lastQueueMs:null, lastSourceAgeMs:null};
     if (this.cache === null || typeof this.cache.get !== 'function' || typeof this.cache.put !== 'function' || typeof this.cache.invalidate !== 'function') throw new TypeError('invalid dependency cache');
   }
@@ -131,6 +153,7 @@ export class BackgroundAttentionCoordinator {
     if (!text(sessionId)) throw new TypeError('sessionId required');
     if (this.phase !== 'stopped') this.stop();
     this.lifecycle++; this.phase = 'running'; this.sessionId = sessionId; this.pending = null; this.lastStateKey = null; this.lastFailure = null; this.lastPublishedAt = -Infinity; this.previousSnapshot = null;
+    this.lastPublishedSequence = -1; this._resetTelemetry();
     this._schedulePoll(0);
     this._status('started');
     return this.status();
@@ -140,7 +163,7 @@ export class BackgroundAttentionCoordinator {
     if (this.phase !== 'running') return {accepted:false, reason:this.phase};
     const now = this.now(); if (!time(now)) throw new TypeError('invalid clock');
     const request = normalizeSnapshot(input, this.sessionId, ++this.sequence, now);
-    this.metrics.observed++;
+    this.metrics.observed++; this.tel.counts.observed++;
     this._invalidateSnapshotChanges(request);
     this.latest = request;
     this.previousSnapshot = request;
@@ -151,7 +174,7 @@ export class BackgroundAttentionCoordinator {
     if (sameAsCurrent && !this.pending) { this.metrics.duplicates++; return {accepted:false, reason:'duplicate'}; }
     if (this.lastFailure?.stateKey === request.stateKey && now - this.lastFailure.at < this.retryIntervalMs) { this.metrics.duplicates++; return {accepted:false, reason:'retry_limited'}; }
     if (this.running) {
-      if (this.pending && this.pending.stateKey !== request.stateKey) { this.metrics.dropped++; this.metrics.coalesced++; }
+      if (this.pending && this.pending.stateKey !== request.stateKey) { this.metrics.dropped++; this.metrics.coalesced++; this.tel.counts.dropped++; }
       this.pending = request;
       this.metrics.maxPending = Math.max(this.metrics.maxPending, 1);
     } else {
@@ -251,8 +274,9 @@ export class BackgroundAttentionCoordinator {
   }
 
   _cacheObjectsStillPresent(entry, request) {
-    const current = new Set(request.dependencies.objectIds);
-    return Array.isArray(entry.objectIds) && entry.objectIds.every(id => current.has(id));
+    // Persistent track IDs are only known after segmentation, so presence is checked against the snapshot-time list.
+    const current = new Set(request.dependencies.objectIds), present = entry.snapshotObjectIds ?? entry.objectIds;
+    return Array.isArray(entry.objectIds) && Array.isArray(present) && present.every(id => current.has(id));
   }
 
   _drain() {
@@ -273,10 +297,15 @@ export class BackgroundAttentionCoordinator {
     this.current = context;
     const queuedAt = request.queuedAt ?? request.processedAt;
     this.metrics.lastQueueMs = Math.max(0, this.now() - queuedAt); this.metrics.totalQueueMs += this.metrics.lastQueueMs;
+    const cycle = context.cycle = {sequence:request.sequence, snapshotAt:request.processedAt, observedUntil:request.observedUntil, queuedAt, dispatchAt:this.now(), samDoneAt:null, reasonFirstByteAt:null, doneAt:null, publishedAt:null, outcome:null, tel:this.tel};
     let timer, generated = false, prepared = null, cacheLookupMs = 0, generationMs = null, nextTargetsMs = null;
     const isLive = () => this.phase === 'running' && this.sessionId === request.sessionId && this.lifecycle === context.lifecycle && !controller.signal.aborted && !this._contextAffected(context);
+    const stamps = {samDone:'samDoneAt', reasonFirstByte:'reasonFirstByteAt'};
+    // Work may report stage times and tracker-driven invalidations; both are ignored once the cycle is no longer live.
+    const mark = name => { const key = stamps[name]; if (key && cycle[key] === null && isLive()) cycle[key] = this.now(); };
+    const invalidate = change => isLive() ? this.invalidate(change) : 0;
     try {
-      timer = setTimeout(() => { this.metrics.timeouts++; controller.abort(); this._status('timeout'); }, this.timeoutMs);
+      timer = setTimeout(() => { this.metrics.timeouts++; this.tel.counts.timeouts++; controller.abort(); this._status('timeout'); }, this.timeoutMs);
       const cacheStarted = this.now();
       prepared = this._cached(request);
       if (!prepared && this.lookupPrepared && isLive()) {
@@ -298,9 +327,17 @@ export class BackgroundAttentionCoordinator {
         const generateStarted = this.now();
         let output;
         try {
-          output = await this.work(structuredClone(request), {signal:controller.signal});
+          output = await this.work(structuredClone(request), {signal:controller.signal, mark, invalidate});
           if (!isLive()) { this._recordDiscard(context); return; }
           if (!output || !Array.isArray(output.scenarios)) throw new TypeError('hypothesis result required');
+          const merged = structuredClone(request.dependencies);
+          const extra = output.objectDependencies ?? null;
+          if (extra !== null) {
+            const versions = extra?.objectVersions;
+            if (!extra || typeof extra !== 'object' || Array.isArray(extra) || !ids(extra.objectIds, 128) || (versions !== undefined && (!versions || typeof versions !== 'object' || Array.isArray(versions) || Object.entries(versions).some(([id, version]) => !extra.objectIds.includes(id) || !text(version) || version.length > 128)))) throw new TypeError('invalid object dependencies');
+            merged.objectIds = [...new Set([...merged.objectIds, ...extra.objectIds])];
+            if (versions) merged.objectVersions = {...merged.objectVersions, ...versions};
+          }
           generationMs = Math.max(0, this.now() - generateStarted);
           let nextGaze;
           if (Object.hasOwn(output, 'nextGaze')) nextGaze = output.nextGaze ?? null;
@@ -316,13 +353,15 @@ export class BackgroundAttentionCoordinator {
           prepared = normalized;
           generated = true;
           this.metrics.lastWorkMs = generationMs; this.metrics.totalWorkMs += generationMs;
+          // Persistent object IDs (from tracking) are cache dependencies: only a related change invalidates this entry.
+          prepared.frameId = request.frame.frameId; prepared.dependencies = merged;
           const expiry = Math.min(request.dependencies.expiresAt ?? this.now() + this.cacheTtlMs, this.now() + this.cacheTtlMs);
           if (expiry > this.now()) {
-            prepared.expiresAt = expiry; prepared.frameId = request.frame.frameId; prepared.dependencies = structuredClone(request.dependencies);
-            this.cache.put({id:cacheId(request.sessionId, request.stateKey), sessionId:request.sessionId, mapId:request.dependencies.mapId, mapVersion:request.dependencies.mapVersion, objectIds:[...request.dependencies.objectIds], evidenceIds:[...request.dependencies.evidenceIds], expiresAt:expiry, observedUntil:prepared.observedUntil, prepared});
+            prepared.expiresAt = expiry;
+            this.cache.put({id:cacheId(request.sessionId, request.stateKey), sessionId:request.sessionId, mapId:request.dependencies.mapId, mapVersion:request.dependencies.mapVersion, objectIds:[...merged.objectIds], snapshotObjectIds:[...request.dependencies.objectIds], evidenceIds:[...request.dependencies.evidenceIds], expiresAt:expiry, observedUntil:prepared.observedUntil, prepared});
           }
         } catch (error) {
-          if (isLive()) { this.metrics.workFailures++; this.lastFailure = {stateKey:request.stateKey, at:this.now()}; this.lastStateKey = null; this._status(error instanceof TypeError ? 'invalid_result' : 'work_failed'); }
+          if (isLive()) { this.metrics.workFailures++; this.tel.counts.failed++; this._recordCycle(cycle, 'failed'); this.lastFailure = {stateKey:request.stateKey, at:this.now()}; this.lastStateKey = null; this._status(error instanceof TypeError ? 'invalid_result' : 'work_failed'); }
           else this._recordDiscard(context);
           return;
         }
@@ -331,22 +370,56 @@ export class BackgroundAttentionCoordinator {
         this._recordDiscard(context);
         return;
       }
+      cycle.doneAt = this.now();
+      if (request.sequence <= this.lastPublishedSequence) { this.tel.counts.superseded++; this._recordCycle(cycle, 'superseded'); return; }
       const publishedAt = this.now();
-      if (prepared.expiresAt != null && publishedAt >= prepared.expiresAt) return;
+      if (prepared.expiresAt != null && publishedAt >= prepared.expiresAt) { this.tel.counts.stale++; this._recordCycle(cycle, 'expired'); return; }
       const value = {id:`${request.sessionId}:${request.sequence}`, sessionId:request.sessionId, sequence:request.sequence, frameId:prepared.frameId, observedUntil:prepared.observedUntil, sourceAgeMs:Math.max(0, publishedAt - prepared.observedUntil), dependencies:structuredClone(prepared.dependencies), scenarios:structuredClone(prepared.scenarios), nextGaze:structuredClone(prepared.nextGaze), ...(prepared.candidateSpace ? {candidateSpace:structuredClone(prepared.candidateSpace)} : {}), deliveryState:generated ? 'generated' : 'cache_hit', timings:{cacheLookupMs, generationMs, nextTargetsMs, totalMs:Math.max(0,publishedAt-request.processedAt), publishedAt}};
-      this.metrics.lastSourceAgeMs = value.sourceAgeMs; this.metrics.published++; this.lastStateKey = request.stateKey; this.lastPublishedAt = publishedAt; this.lastFailure = null;
+      this.metrics.lastSourceAgeMs = value.sourceAgeMs; this.metrics.published++; this.lastStateKey = request.stateKey; this.lastPublishedAt = publishedAt; this.lastFailure = null; this.lastPublishedSequence = request.sequence;
       this.latest = request;
+      cycle.publishedAt = publishedAt;
       try { this.publish(structuredClone(value)); }
-      catch { this.metrics.publishFailures++; this._status('publish_failed'); return; }
+      catch { this.metrics.publishFailures++; this.tel.counts.failed++; this._recordCycle(cycle, 'publish_failed'); this._status('publish_failed'); return; }
+      this._recordCycle(cycle, value.deliveryState, value.sourceAgeMs);
       this._status(value.deliveryState);
     } catch {
-      if (isLive()) { this.metrics.workFailures++; this.lastFailure = {stateKey:request.stateKey, at:this.now()}; this._status('processing_failed'); }
+      if (isLive()) { this.metrics.workFailures++; this.tel.counts.failed++; this._recordCycle(cycle, 'failed'); this.lastFailure = {stateKey:request.stateKey, at:this.now()}; this._status('processing_failed'); }
       else this._recordDiscard(context);
     } finally {
       clearTimeout(timer);
       this.current = null; this.running = false;
       if (this.phase === 'running' && this.pending) this._drain();
     }
+  }
+
+  _resetTelemetry() {
+    this.tel = {startedAt:this.now(), counts:{observed:0, dropped:0, superseded:0, stale:0, failed:0, timeouts:0, published:0, generated:0, cacheHits:0}, cycles:[], publishes:[]};
+  }
+
+  // Bounded: at most telemetrySamples cycles and publish timestamps are retained.
+  _recordCycle(cycle, outcome, sourceAgeMs = null) {
+    if (cycle.outcome !== null) return;
+    cycle.outcome = outcome;
+    const published = outcome === 'generated' || outcome === 'cache_hit';
+    const record = {sequence:cycle.sequence, outcome, snapshotAt:cycle.snapshotAt, observedUntil:cycle.observedUntil, dispatchAt:cycle.dispatchAt, samDoneAt:cycle.samDoneAt, reasonFirstByteAt:cycle.reasonFirstByteAt, doneAt:cycle.doneAt, publishedAt:cycle.publishedAt, resultAgeMs:published ? sourceAgeMs : null, latencyMs:published ? Math.max(0, cycle.publishedAt - cycle.snapshotAt) : null};
+    record.deadlineMet = published ? record.latencyMs <= this.deadlineMs : null;
+    const tel = cycle.tel, counts = tel.counts; // a late cycle from a previous start() lands in its own (discarded) telemetry, not the new session's
+    if (published) { counts.published++; if (outcome === 'generated') counts.generated++; else counts.cacheHits++; tel.publishes.push({at:cycle.publishedAt, kind:outcome}); if (tel.publishes.length > this.telemetrySamples) tel.publishes.shift(); }
+    tel.cycles.push(record); if (tel.cycles.length > this.telemetrySamples) tel.cycles.shift();
+  }
+
+  // Per-session (reset by start()) bounded summaries. Cached publish (G4-D) and fresh generation (G4-E) are separate.
+  // latencyMs = publishedAt - snapshotAt (frame processedAt); resultAgeMs = publishedAt - observedUntil of the data used.
+  telemetry() {
+    const now = this.now(), {counts, cycles, publishes} = this.tel;
+    const stat = name => {
+      const items = cycles.filter(c => c.outcome === name), met = items.filter(c => c.deadlineMet).length;
+      return {latencyMs:summary(items.map(c => c.latencyMs)), resultAgeMs:summary(items.map(c => c.resultAgeMs)), samMs:summary(items.filter(c => c.samDoneAt !== null).map(c => c.samDoneAt - c.dispatchAt)), reasonFirstByteMs:summary(items.filter(c => c.reasonFirstByteAt !== null).map(c => c.reasonFirstByteAt - (c.samDoneAt ?? c.dispatchAt))), deadlineMet:met, deadlineMissed:items.length - met, deadlineMetRate:items.length ? round(met / items.length) : null};
+    };
+    let since = Math.max(this.tel.startedAt, now - this.telemetryWindowMs);
+    if (publishes.length === this.telemetrySamples && publishes[0].at > since) since = publishes[0].at;
+    const hz = name => { const seconds = (now - since) / 1000; return seconds > 0 ? round(publishes.filter(item => item.at >= since && (name === 'all' || item.kind === name)).length / seconds) : null; };
+    return {deadlineMs:this.deadlineMs, windowMs:this.telemetryWindowMs, retainedCycles:cycles.length, maxRetainedCycles:this.telemetrySamples, counts:{...counts}, effectiveHz:{all:hz('all'), generated:hz('generated'), cache_hit:hz('cache_hit')}, generated:stat('generated'), cached:stat('cache_hit'), recent:cycles.slice(-8).map(c => ({...c}))};
   }
 
   _cached(request) {
@@ -364,7 +437,7 @@ export class BackgroundAttentionCoordinator {
 
   _recordDiscard(context) {
     if (context.discarded) return;
-    context.discarded = true;
+    context.discarded = true; context.cycle.tel.counts.stale++; this._recordCycle(context.cycle, 'stale');
     if (this._contextAffected(context)) this.metrics.invalidatedResults++;
     else this.metrics.lifecycleResults++;
   }

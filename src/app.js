@@ -5,6 +5,7 @@ import {createCausalDisplayFilter} from './gaze/display-filter.js';
 import {stableCalibrationWindow} from './gaze/calibration-window.js';
 import {BackgroundAttentionCoordinator} from './runtime/background-attention.js';
 import {createBackgroundBrowserWork} from './runtime/background-browser.js';
+import {LiveTracking} from './runtime/live-tracking.js';
 import {createWebcamGazeController} from './gaze/webcam.js';
 import {gazeViewportPoint,gazeMarkerPosition} from './gaze/overlay.js';
 import {withinCalibrationBounds,predictCalibration,calibrationMetrics,fitLandmarkResidualCalibration,landmarkResidualMetrics,landmarkResidualPassesSelection,LANDMARK_RESIDUAL_FIT_ATTEMPTS,predictLandmarkResidual} from './gaze/index.js';
@@ -676,16 +677,20 @@ async function boot() {
 
   const backgroundStatus=document.createElement('span');backgroundStatus.id='backgroundAttentionState';backgroundStatus.setAttribute('role','status');canvas.parentElement.append(backgroundStatus);
   function backgroundSnapshot(){
-    if(!coordinator?.status().active||coordinator.status().paused||calibrationStage||!latest?.faceDetected||!latest.rawScreenXY||performance.now()-latest.processedMs>500||!world)return null;
+    // Paid SAM/Spark calls run only with the start consent in place and a visible tab.
+    if(!$('#localConsent').checked||document.hidden||!coordinator?.status().active||coordinator.status().paused||calibrationStage||!latest?.faceDetected||!latest.rawScreenXY||performance.now()-latest.processedMs>500||!world)return null;
     const source=world.getFrame(),r=canvas.getBoundingClientRect();if(!source||r.width<=0||r.height<=0)return null;
     const x=(latest.rawScreenXY.x-r.left)/r.width,y=(latest.rawScreenXY.y-r.top)/r.height;if(x<0||y<0||x>=1||y>=1)return null;
     const copy=document.createElement('canvas'),scale=Math.min(1,640/canvas.width,480/canvas.height);copy.width=Math.max(1,Math.round(canvas.width*scale));copy.height=Math.max(1,Math.round(canvas.height*scale));copy.getContext('2d').drawImage(canvas,0,0,copy.width,copy.height);
     const at=performance.now();
     return {frame:{frameId:source.frameId,observedAt:source.renderTsMs,processedAt:at,width:copy.width,height:copy.height,imageData:copy.toDataURL('image/png')},gaze:{frameId:source.frameId,x,y,observedAt:latest.timestampMs,processedAt:latest.processedMs,timestampKind:latest.timestampKind,estimateStatus:latest.valid&&latest.timestampKind==='browser_capture_estimate'?'validated_calibration_estimate':'uncalibrated_estimate'},dependencies:{mapId:'synthetic-world',mapVersion:1,objectIds:[],evidenceIds:[source.frameId],expiresAt:at+120000},timingStatus:'provisional_browser_association',stateKey:source.frameId};
   }
+  let liveTracker=null;
   function startBackgroundAttention(){
     if(backgroundAttention||!coordinator?.status().active)return;
-    const work=createBackgroundBrowserWork({capture:async snapshot=>({frame:snapshot.frame}),
+    // One tracker per camera session keeps persistent object IDs across pause/resume.
+    const trackingSession=cameraSessionId??'no-camera-session';if(!liveTracker||liveTracker.sessionId!==trackingSession)liveTracker={sessionId:trackingSession,tracker:new LiveTracking()};
+    const work=createBackgroundBrowserWork({tracker:liveTracker.tracker,capture:async snapshot=>({frame:snapshot.frame}),
       sam:async(frame,{signal,gaze})=>{requestModelDepth(frame,gaze);const response=await fetch('/api/sam/segment',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({frame:{frameId:frame.frameId,observedAt:frame.observedAt},imageDataUrl:frame.imageData,prompt:gazeSamPrompt(frame,gaze)}),signal});if(!response.ok)throw new Error('background_sam_failed');const result=await response.json();$('#worldSceneState').textContent=`백그라운드 SAM · ${result.masks?.length??0} 마스크`;return result;},
       reason:async(input,{signal})=>sendProvisionalSparkRequest({consent:$('#provisionalSparkConsent').checked,frame:input.frame,imageDataUrl:input.frame.imageData,gazePoint:input.gaze,gazeTiming:{sampleAtMs:input.gaze.observedAt,processedAtMs:input.gaze.processedAt,timestampKind:input.gaze.timestampKind,estimateStatus:input.gaze.estimateStatus},masks:input.masks,candidates:input.candidates,issuedAtMs:performance.now(),signal})});
     backgroundAttention=new BackgroundAttentionCoordinator({work,snapshot:backgroundSnapshot,intervalMs:1000,minIntervalMs:1000,timeoutMs:110000,retryIntervalMs:5000,

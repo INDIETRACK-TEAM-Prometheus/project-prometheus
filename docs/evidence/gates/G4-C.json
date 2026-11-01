@@ -1,0 +1,81 @@
+{
+  "gateId": "G4-C",
+  "requirementIds": [
+    "SCP-01",
+    "SCP-02",
+    "SCP-04",
+    "SCP-05",
+    "SCP-08",
+    "INF-01",
+    "INF-02",
+    "INF-03",
+    "INF-04",
+    "INF-08",
+    "PRE-01",
+    "PRE-02",
+    "PRE-03",
+    "PRE-04",
+    "PRE-05",
+    "SEC-05",
+    "OPEN-01",
+    "OPEN-02",
+    "OPEN-03",
+    "OPEN-04",
+    "VALID-01",
+    "VALID-02",
+    "T08",
+    "T10",
+    "T11",
+    "T12",
+    "T17",
+    "T18",
+    "T19"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "tested",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "synthetic_live_provider",
+  "environment": {
+    "note": "합성 입력 실호출 과거 기록 및 단위 시험"
+  },
+  "modelVersions": {
+    "reasoner": "muse-spark-1.3",
+    "segmentation": "sam-3.1"
+  },
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "dependentCacheInvalidationRate": 1,
+    "unrelatedChangeCacheRetained": true,
+    "futureOrGroundTruthChannelCount": 0,
+    "maxScenarios": 5,
+    "independentBlindReviewers": 2
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/evidence/reasoner-live-v2.json",
+    "docs/evidence/reasoner-live-v3.json",
+    "docs/evidence/reasoner-live-v4.json",
+    "docs/evidence/perception-live.json",
+    "docs/evidence/provisional-spark-synthetic-live.json",
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/unit-runtime.md",
+    "docs/reasoner-api-contract.md"
+  ],
+  "failures": [
+    "reasoner-live-v3.json: HTTP 502 provider_failed, 원인 미확정",
+    "CTO_REVIEW 2026-10-30: 출력 2048 토큰 한도에서 2회 미완료 후 4096으로 변경"
+  ],
+  "limitations": [
+    "기능 통과와 열린 가설 품질 통과를 분리해야 하며 독립 2인 blind review 원본·사전 품질 기준 없음",
+    "합성 입력·소수 표본. 실제 행동 정확도 주장 불가",
+    "Wonder는 비가용으로 muse-spark-1.3 대체(SRS 20.8)",
+    "잠재 질문·추천 출력(INF-02) 없음",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

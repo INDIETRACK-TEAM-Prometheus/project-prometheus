@@ -1,0 +1,45 @@
+{
+  "gateId": "G3-C",
+  "requirementIds": [
+    "DATA-01",
+    "DATA-02",
+    "T13",
+    "T20",
+    "T21"
+  ],
+  "status": "blocked",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "blocked",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "공식 Gen 2 샘플 MPS CSV 단위 시험만. VRS SDK 미실행"
+  },
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "unverifiedArtifactOnlineUseCount": 0
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/evidence/aria-sample.json",
+    "docs/aria-linux-validation.md",
+    "docs/aria-mps-bridge.md",
+    "artifacts/aria-kali-handoff.json",
+    "artifacts/aria-kali/manifest.json",
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt"
+  ],
+  "failures": [],
+  "limitations": [
+    "blocked: 공개 Pilot Dataset RGB/gaze/pose/depth 자료 미확보. 보유 자료는 공식 Gen 2 샘플이며 Pilot이 아님",
+    "Windows 검증기 결과는 sdk_unavailable(로컬 data/aria/windows-verifier-check.json, Git 제외). Kali 검증 패키지는 미실행(linuxSdkExecuted=false)",
+    "MPS CSV는 offline_assisted. 샘플에는 일반 시선 없음(generalGazePresent=false)",
+    "Aria 장비는 필요 조건이 아님(DEMO_BRIEF)",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

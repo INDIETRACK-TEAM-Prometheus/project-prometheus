@@ -1,0 +1,53 @@
+{
+  "gateId": "G1-F",
+  "requirementIds": [
+    "EYE-04",
+    "EYE-05",
+    "EYE-07",
+    "EYE-09",
+    "T01"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "synthetic",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {
+    "webeyetrack": "0.0.2"
+  },
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "independentTargetsMin": 9,
+    "repetitionsPerTarget": 3,
+    "p95ErrorFractionOfScreenDiagonalMax": 0.05,
+    "validSampleRateMin": 0.8
+  },
+  "thresholdVersion": "SRS-v1.1-s20.5",
+  "evidencePaths": [
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/evidence/display-filter-synthetic-benchmark.json",
+    "docs/webeyetrack-integration.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "실사용자 독립 표적 시험 없음. 필터 벤치마크는 합성 궤적만(실제 jitter 개선 아님)",
+    "SRS 20.5 초기 기본값이며 실행 전 설정 버전 고정 필요. 가장자리 5~10%·90~95% 표적과 축별 gain 기준은 GATE_PLAN 제안",
+    "raw/보정/필터별 gain·jitter·switch lag·안경·조도 조건 기준 미정: 수치 기준 미정 또는 제안값: 최종 holdout 전에 설정 버전을 고정해야 하며 결과를 본 뒤 변경해 통과시키지 않는다.",
+    "2026-11-01 작성 시점에 다른 엔지니어의 미커밋 WIP 파일이 있으며 이 기록의 구현 상태 판정에서 제외했다.",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

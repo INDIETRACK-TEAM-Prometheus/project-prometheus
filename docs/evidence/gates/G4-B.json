@@ -1,0 +1,53 @@
+{
+  "gateId": "G4-B",
+  "requirementIds": [
+    "INF-02",
+    "INF-05",
+    "INF-06",
+    "T08"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "synthetic_live_provider",
+  "environment": {
+    "note": "합성 장면·합성 시선 실호출 과거 기록"
+  },
+  "modelVersions": {
+    "reasoner": "muse-spark-1.3"
+  },
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "horizonsMs": [
+      1000,
+      3000,
+      5000
+    ],
+    "outOfCandidateIdCount": 0
+  },
+  "thresholdVersion": "SRS-v1.1-s20.5",
+  "evidencePaths": [
+    "docs/evidence/next-gaze-spark-live.json",
+    "docs/evidence/next-gaze-spark-live-v2.json",
+    "docs/evidence/provisional-spark-synthetic-live.json",
+    "docs/next-gaze-evaluation.md",
+    "docs/next-gaze-prediction-audit.md",
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt"
+  ],
+  "failures": [
+    "next-gaze-spark-live.json: REASONER_INCOMPLETE(10,874ms), 원인 미기록"
+  ],
+  "limitations": [
+    "미래 정답이 있는 시험 자료 없음. Top-1/Top-3·coverage·Brier 산출은 오프라인 채점기 존재뿐",
+    "Top-k 최소 개선·coverage 하한·ECE bin 기준 미정: 수치 기준 미정 또는 제안값: 최종 holdout 전에 설정 버전을 고정해야 하며 결과를 본 뒤 변경해 통과시키지 않는다.",
+    "현재 객체를 그대로 답한 예측과 새 객체 전환 성능을 분리해야 함",
+    "후보 ID는 프레임 단위(감사 A03)",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

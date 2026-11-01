@@ -1,0 +1,53 @@
+{
+  "gateId": "G2-A",
+  "requirementIds": [
+    "OBJ-01",
+    "OBJ-02",
+    "OBJ-03",
+    "OBJ-04",
+    "OBJ-06",
+    "T03",
+    "T04"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "tested",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "synthetic_live_provider",
+  "environment": {
+    "note": "합성 이미지 실호출 과거 기록"
+  },
+  "modelVersions": {
+    "segmentation": "sam-3.1",
+    "samParser": "@meta-sam/parser 0.1.0"
+  },
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {},
+  "thresholdVersion": null,
+  "evidencePaths": [
+    "docs/evidence/sam-live.json",
+    "docs/evidence/sam-point-pipeline-live.json",
+    "docs/evidence/sam-scene-pipeline-live.json",
+    "docs/evidence/sam-objects-exploration-live.json",
+    "docs/evidence/sam-objects-exploration-live-v2.json",
+    "docs/evidence/perception-live.json",
+    "docs/sam-api-contract.md",
+    "docs/mask-association.md"
+  ],
+  "failures": [
+    "sam-objects-exploration-live.json: PROVIDER_NETWORK_ERROR(42ms)",
+    "sam-objects-exploration-live-v2.json: 일반 `objects` 프롬프트가 마스크 0개 반환(IoU 산출 불가)"
+  ],
+  "limitations": [
+    "합성 단일 장면 IoU만 존재. 수동 라벨 동적 장면 평가 없음",
+    "IoU/coverage/0mask 비율 수치 기준 미정: 수치 기준 미정 또는 제안값: 최종 holdout 전에 설정 버전을 고정해야 하며 결과를 본 뒤 변경해 통과시키지 않는다.",
+    "백그라운드 경로는 마스크를 경계 박스로 축약(감사 A03)",
+    "2026-11-01 작성 시점에 다른 엔지니어의 미커밋 WIP 파일이 있으며 이 기록의 구현 상태 판정에서 제외했다.",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

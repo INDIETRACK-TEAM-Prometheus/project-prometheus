@@ -1,0 +1,49 @@
+{
+  "gateId": "G1-A",
+  "requirementIds": [
+    "EYE-01",
+    "RT-01",
+    "RT-02",
+    "UI-07"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "browserCrashCount": 0,
+    "unboundedMemoryGrowthCount": 0,
+    "sessionMinutes": 30,
+    "newCaptureOrTransmissionAfterStop": 0
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/unit-gaze.md",
+    "docs/webeyetrack-integration.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "HTTPS 시작→30분·pause/resume·stop/restart 실행 없음. pilotReport의 30분 판정은 not_passed가 기본",
+    "장치 ID 미기록(EYE-01 부분 구현)",
+    "실제 브라우저 crash·메모리 증가 관찰 없음. 단위·주입형 시험만 존재",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

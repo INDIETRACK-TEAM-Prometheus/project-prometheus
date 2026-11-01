@@ -1,0 +1,52 @@
+{
+  "gateId": "G3-A",
+  "requirementIds": [
+    "MEM-08",
+    "SEC-01",
+    "SEC-02",
+    "SEC-04",
+    "OPS-01",
+    "T11",
+    "T12",
+    "T20",
+    "T21"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "rawVideoOrApiKeyGitIngestCount": 0,
+    "externalRawTransmissionCount": 0,
+    "boundedStorageRequired": true
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/DEMO_BRIEF_20261104.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "WebM chunk만 기록(세션 1GiB·전체 5GiB). 랜드마크·표적·모델·프레임 manifest 연결과 디스크 오류·강제 종료 실측 없음",
+    "SEC-01/OPS-01 SRS 문구(기본 비저장)와 충돌하며 사용자 지시가 우선(DEMO_BRIEF)",
+    "export 기능 없음(삭제만)",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

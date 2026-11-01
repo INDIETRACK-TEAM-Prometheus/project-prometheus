@@ -1,0 +1,42 @@
+{
+  "gateId": "G1-C",
+  "requirementIds": [
+    "EYE-02"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "tested",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {},
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "minUniqueSpherePointsPerEye": 30,
+    "normalNormErrorMax": 0.000001,
+    "observedVsModelDistinctionRate": 1
+  },
+  "thresholdVersion": "GATE_PLAN_20261104",
+  "evidencePaths": [
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt"
+  ],
+  "failures": [],
+  "limitations": [
+    "생성된 구면 모델 노드의 수치 시험만 존재. 실제 눈 영상과의 정합·물리 정확도 아님(감사 A08)",
+    "법선 시험은 합성 회전이며 독립 검출점 30개를 뜻하지 않음",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}

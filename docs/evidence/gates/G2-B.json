@@ -1,0 +1,54 @@
+{
+  "gateId": "G2-B",
+  "requirementIds": [
+    "GEO-01",
+    "GEO-02",
+    "GEO-03",
+    "GEO-05",
+    "GEO-07",
+    "GEO-09",
+    "T02"
+  ],
+  "status": "not_evaluated",
+  "implementationStatus": "implemented",
+  "evaluationStatus": "not_evaluated",
+  "commit": "c2cd016",
+  "testKind": "unit",
+  "environment": {
+    "note": "단위·주입형 시험 기록. Gate 판정 환경이 아님",
+    "evidenceRun": {
+      "os": "Windows 11",
+      "node": "v24.22.1",
+      "command": "npm test",
+      "regressionCommit": "9811e07"
+    }
+  },
+  "modelVersions": {
+    "id": "depth-anything/Depth-Anything-V2-Metric-Hypersim-Small"
+  },
+  "profileHash": null,
+  "startedAtUtc": null,
+  "finishedAtUtc": null,
+  "metrics": {},
+  "thresholds": {
+    "engineGeometryErrorMaxMeters": 0.01,
+    "engineGeometryErrorMaxFractionOfDistance": 0.01,
+    "relativeDepthLabeledMetricCount": 0
+  },
+  "thresholdVersion": "SRS-v1.1-T02-proposed",
+  "evidencePaths": [
+    "docs/evidence/depth-u07-20261031.json",
+    "docs/evidence/unit-tests-20261101-doc-consistency.txt",
+    "docs/depth-anything-v2-local.md",
+    "docs/COMPARISON_PROTOCOL.md"
+  ],
+  "failures": [],
+  "limitations": [
+    "엔진 기하 오차 1cm 또는 거리 1%는 SRS T02 제안값이며 신경 깊이 오차와 구분. 신경 깊이 MAE/AbsRel/valid coverage 기준 미정: 수치 기준 미정 또는 제안값: 최종 holdout 전에 설정 버전을 고정해야 하며 결과를 본 뒤 변경해 통과시키지 않는다.",
+    "엔진 GT와 DA 출력 동일 프레임 비교 미실시. 깊이 평가기와 아티팩트 모듈은 미커밋 WIP",
+    "GEO-02 신뢰도 필드·GEO-09 유리·반사 처리 없음",
+    "이 기록은 2026-11-01 문서 작성이며 해당 Gate 판정 시험의 실행이 아니다. startedAtUtc/finishedAtUtc는 판정 시험이 실행될 때 채운다.",
+    "commit은 기록 작성 시점 HEAD이며 작업 트리에 미커밋 변경이 있을 수 있다."
+  ],
+  "reviewer": "pending_cto"
+}
