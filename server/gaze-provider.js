@@ -104,7 +104,9 @@ export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs 
         // The Colab worker reports why it refused (for example GAZE_FRAME_OUT_OF_ORDER or GAZE_INFERENCE_FAILED); keep that bounded token.
         let workerCode = null;
         try { const body = await response.json(); if (typeof body?.error === 'string' && /^GAZE_[A-Z_]{3,48}$/.test(body.error)) workerCode = body.error; } catch {}
-        throw fail(workerCode ?? 'GAZE_REMOTE_UNAVAILABLE');
+        const rejected = fail(workerCode ?? 'GAZE_REMOTE_UNAVAILABLE');
+        if (!workerCode) rejected.cause = `HTTP_${response.status}`;
+        throw rejected;
       }
       if (response.status === 204) return null;
       try { return await response.json(); } catch { throw fail('GAZE_PROTOCOL_ERROR'); }
@@ -112,7 +114,11 @@ export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs 
       if (error?.code) throw error;
       if (signal?.aborted) throw fail('GAZE_CANCELLED');
       if (controller.signal.aborted) throw fail('GAZE_REMOTE_TIMEOUT');
-      throw fail('GAZE_REMOTE_UNAVAILABLE');
+      // Keep the network-level reason (for example ECONNRESET) as a bounded token so the server log can name it.
+      const unavailable = fail('GAZE_REMOTE_UNAVAILABLE');
+      const reason = error?.cause?.code ?? error?.cause?.name ?? error?.name;
+      if (typeof reason === 'string' && /^[A-Za-z0-9_]{3,48}$/.test(reason)) unavailable.cause = reason;
+      throw unavailable;
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener('abort', abort);

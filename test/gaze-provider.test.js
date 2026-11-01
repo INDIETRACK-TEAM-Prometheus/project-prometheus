@@ -161,3 +161,12 @@ test('calibration target summaries carry eye patch failure counts and a bounded 
   assert.equal((await run({eyePatchFailures: 1, failureMessage: '<b>x</b>'})).failureMessage, null);
   await assert.rejects(run({eyePatchFailures: 99}), {code: 'GAZE_PROTOCOL_ERROR'});
 });
+
+test('connection failures keep a bounded network reason on the unavailable error', async () => {
+  const frame = async fetchImpl => { const provider = createRemoteGazeProvider({baseUrl: 'http://127.0.0.1:49191/', fetchImpl}); const {sessionId} = await provider.createSession({}); return provider.frame({sessionId, frameId: 1, captureTimestampMs: 5, bytes: Buffer.from([255, 216, 255, 217])}).then(() => null, error => [error.code, error.cause ?? null]); };
+  const session = async (url) => new URL(url).pathname === '/sessions' ? json({status: 'ready', sessionId: 'session-1', expiresInSeconds: 600, calibrated: false}, 201) : null;
+  const reset = Object.assign(new TypeError('fetch failed'), {cause: Object.assign(new Error('read ECONNRESET'), {code: 'ECONNRESET'})});
+  assert.deepEqual(await frame(async url => (await session(url)) ?? Promise.reject(reset)), ['GAZE_REMOTE_UNAVAILABLE', 'ECONNRESET']);
+  assert.deepEqual(await frame(async url => (await session(url)) ?? Promise.reject(Object.assign(new TypeError('x'), {cause: {code: 'bad value!'}}))), ['GAZE_REMOTE_UNAVAILABLE', null]);
+  assert.deepEqual(await frame(async url => (await session(url)) ?? new Response('<html>', {status: 502})), ['GAZE_REMOTE_UNAVAILABLE', 'HTTP_502']);
+});

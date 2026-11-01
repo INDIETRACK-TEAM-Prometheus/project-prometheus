@@ -108,7 +108,7 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
     if(gazeSession){
       const [,sessionId,operation]=gazeSession;
       if(!localRequest(req)||computeProfile!=='cloud'){req.resume();json(res,403,{error:'forbidden'});return;}
-      const respondError=error=>{const code=typeof error?.code==='string'&&/^GAZE_[A-Z_]+$/.test(error.code)?error.code:'GAZE_REMOTE_UNAVAILABLE';const route=`gaze_${operation??'session'}`;const status=code==='GAZE_PROVIDER_BUSY'?429:code==='GAZE_REMOTE_TIMEOUT'?504:code==='GAZE_SESSION_UNAVAILABLE'?404:code==='GAZE_INVALID_REQUEST'?400:503;logApiStage(logger,route,`failed:${code}`,status);json(res,status,{error:'gaze_unavailable',code});};
+      const respondError=error=>{const code=typeof error?.code==='string'&&/^GAZE_[A-Z_]+$/.test(error.code)?error.code:'GAZE_REMOTE_UNAVAILABLE';const route=`gaze_${operation??'session'}`;const status=code==='GAZE_PROVIDER_BUSY'?429:code==='GAZE_REMOTE_TIMEOUT'?504:code==='GAZE_SESSION_UNAVAILABLE'?404:code==='GAZE_INVALID_REQUEST'?400:503;const cause=typeof error?.cause==='string'&&/^[A-Za-z0-9_]{3,48}$/.test(error.cause)?`:${error.cause}`:'';logApiStage(logger,route,`failed:${code}${cause}`,status);json(res,status,{error:'gaze_unavailable',code});};
       if(!operation&&req.method==='DELETE'){
         req.resume();try{await gazeProvider.deleteSession(sessionId);json(res,200,{deleted:true});}catch(error){respondError(error);}return;
       }

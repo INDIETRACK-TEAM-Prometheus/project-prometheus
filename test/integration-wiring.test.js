@@ -147,3 +147,15 @@ test('calibration target and adapt routes validate the body and relay to the pro
     assert.equal((await fetch(base + '/api/gaze/sessions/session_1/calibration/target')).status, 404);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
+
+test('gaze proxy logs the network reason next to a generic unavailable failure', async () => {
+  const logs = [];
+  const gazeProvider = {async health() { return {ready: true}; }, async frame() { throw Object.assign(new Error('x'), {code: 'GAZE_REMOTE_UNAVAILABLE', cause: 'ECONNRESET'}); }, async close() {}};
+  const server = createLocalServer({computeProfile: 'cloud', gazeProvider, logger: line => logs.push(line)}); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/gaze/sessions/session_1/frame`, {method: 'POST', headers: {'content-type': 'image/jpeg', 'x-frame-id': '1', 'x-capture-timestamp-ms': '1'}, body: Buffer.from([255, 216, 255, 217])});
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {error: 'gaze_unavailable', code: 'GAZE_REMOTE_UNAVAILABLE'});
+    assert.deepEqual(logs.map(line => JSON.parse(line)).find(item => item.stage?.startsWith('failed:')), {event: 'api_stage', route: 'gaze_frame', stage: 'failed:GAZE_REMOTE_UNAVAILABLE:ECONNRESET', status: 503});
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
