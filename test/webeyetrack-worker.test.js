@@ -51,7 +51,8 @@ function workerHarness({offscreen=true,transferFails=false,noCrops=false}={}) {
     '/vendor/vision_bundle.mjs':{}
   };
   const self={postMessage(message,transfer=[]){if(transferFails&&transfer.length)throw new Error('bitmap transfer unavailable');messages.push({message,transfer});}};
-  const context={self,ImageData,Uint8ClampedArray,importScripts(){},mockImport:path=>Promise.resolve(modules[path]),...(offscreen?{OffscreenCanvas}:{})};
+  let clock=0;
+  const context={self,ImageData,Uint8ClampedArray,performance:{now:()=>++clock},importScripts(){},mockImport:path=>Promise.resolve(modules[path]),...(offscreen?{OffscreenCanvas}:{})};
   const source=readFileSync(new URL('../src/gaze/webeyetrack-worker.js',import.meta.url),'utf8').replaceAll('import(','mockImport(');
   vm.runInNewContext(source,context,{filename:'webeyetrack-worker.js'});
   async function waitForResponse(expected,after=0){
@@ -60,13 +61,15 @@ function workerHarness({offscreen=true,transferFails=false,noCrops=false}={}) {
   }
   async function frame(frameId=7){
     const after=messages.length;
-    self.onmessage({data:{type:'frame',frameId,width:100,height:100,pixels:new Uint8Array(40000),captureTimestampMs:123,callbackTimestampMs:124,timestampKind:'browser_capture_estimate',sentAtMs:120}});
+    const pixels=new Uint8Array(40000);
+    for(let index=0;index<10000;index++)pixels[index*4]=(index&255);
+    self.onmessage({data:{type:'frame',frameId,width:100,height:100,pixels,captureTimestampMs:123,callbackTimestampMs:124,timestampKind:'browser_capture_estimate',sentAtMs:120}});
     return await waitForResponse('result',after);
   }
   return {self,waitForResponse,frame,messages,bitmaps,dots,canvases,features,landmarks,adaptations};
 }
 
-test('worker renders detected eye, eyelid, iris and brow landmarks into the same mirrored frame crop',async()=>{
+test('worker renders eye, eyelid, iris and brow landmarks from eye-only frame pixel copies',async()=>{
   const h=workerHarness();
   h.self.onmessage({data:{type:'init'}});
   assert.equal((await h.waitForResponse('ready')).message.type,'ready');
@@ -75,12 +78,19 @@ test('worker renders detected eye, eyelid, iris and brow landmarks into the same
   assert.equal(message.frameId,7);assert.equal(message.previewBitmaps.left,h.bitmaps[0]);assert.equal(message.previewBitmaps.right,h.bitmaps[1]);
   assert.equal(transfer.length,2);assert.equal(transfer[0],h.bitmaps[0]);assert.equal(transfer[1],h.bitmaps[1]);assert.equal(h.dots.length,68);
   assert.equal(message.eyeCrops.left.x,47.5);assert.equal(message.eyeCrops.left.y,40.5);assert.equal(message.eyeCrops.left.width,15);assert.equal(message.eyeCrops.left.height,13.5);
+  assert.ok(Number.isFinite(message.durations.eyeRegionMs));assert.ok(Number.isFinite(message.durations.eyePreviewMs));assert.ok(Number.isFinite(message.durations.workerTotalMs));
   const leftPreview=h.canvases.filter(canvas=>canvas.width===320)[0],transformCalls=leftPreview.calls.map(call=>call[0]);
   assert.ok(transformCalls.indexOf('translate')<transformCalls.indexOf('scale')&&transformCalls.indexOf('scale')<transformCalls.indexOf('drawImage'));
   assert.ok(transformCalls.indexOf('drawImage')<transformCalls.indexOf('arc'));
+  assert.deepEqual(leftPreview.calls.find(call=>call[0]==='drawImage').slice(2,6),[.5,.5,15,13.5]);
   assert.ok(Math.abs(h.dots[0].x-(320-((60-47.5)/15)*320))<1e-9);assert.ok(Math.abs(h.dots[0].y-((50-40.5)/13.5)*260)<1e-9);
   assert.ok(Math.abs(h.dots[19].x-160)<1e-9);assert.ok(Math.abs(h.dots[19].y-((42-40.5)/13.5)*260)<1e-9);
-  assert.equal(h.canvases.filter(canvas=>canvas.width===100)[0].calls.filter(call=>call[0]==='putImageData').length,1);
+  assert.equal(h.canvases.some(canvas=>canvas.width===100),false);
+  const source=h.canvases.find(canvas=>canvas.width===16&&canvas.height===14),writes=source.calls.filter(call=>call[0]==='putImageData');
+  assert.equal(writes.length,2);assert.ok(writes.every(call=>call[1].width*call[1].height<100*100));
+  const copiedBytes=writes.reduce((sum,call)=>sum+call[1].data.byteLength,0);
+  assert.equal(copiedBytes,2*16*14*4);assert.ok(copiedBytes<100*100*4/20);
+  assert.equal(writes[0][1].data[0],(40*100+47)&255);assert.equal(writes[1][1].data[0],(40*100+27)&255);
   assert.equal('facialLandmarks' in message,false);assert.equal('landmarks' in message,false);
 });
 

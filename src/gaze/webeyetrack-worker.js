@@ -80,21 +80,32 @@ function drawLandmarkPath(context,indices,points,width,height,crop,color,{close=
   for(const point of path)drawLandmarkDot(context,point,color,radius);
 }
 
-function preparePreviewFrame(frame) {
+function preparePreviewFrame(frame,crop) {
   if(typeof OffscreenCanvas!=='function')return false;
   try {
-    if(!previewFrameCanvas||previewFrameCanvas.width!==frame.width||previewFrameCanvas.height!==frame.height){
-      previewFrameCanvas=new OffscreenCanvas(frame.width,frame.height);
+    const left=Math.max(0,Math.floor(crop.x)),top=Math.max(0,Math.floor(crop.y));
+    const right=Math.min(frame.width,Math.ceil(crop.x+crop.width)),bottom=Math.min(frame.height,Math.ceil(crop.y+crop.height));
+    const width=right-left,height=bottom-top;
+    if(width<1||height<1)return false;
+    if(!previewFrameCanvas){
+      previewFrameCanvas=new OffscreenCanvas(width,height);
       previewFrameContext=previewFrameCanvas.getContext('2d');
     }
+    if(previewFrameCanvas.width!==width)previewFrameCanvas.width=width;
+    if(previewFrameCanvas.height!==height)previewFrameCanvas.height=height;
     if(!previewFrameContext)return false;
-    previewFrameContext.putImageData(frame,0,0);
+    const rowBytes=width*4,pixels=new Uint8ClampedArray(rowBytes*height);
+    for(let row=0;row<height;row++){
+      const offset=((top+row)*frame.width+left)*4;
+      pixels.set(frame.data.subarray(offset,offset+rowBytes),row*rowBytes);
+    }
+    previewFrameContext.putImageData(new ImageData(pixels,width,height),0,0);
     return true;
   } catch { return false; }
 }
 
-function renderEyePreview(crop,points,side,width,height) {
-  if(!crop||!previewFrameCanvas||!previewFrameContext)return null;
+function renderEyePreview(frame,crop,points,side,width,height) {
+  if(!crop||!preparePreviewFrame(frame,crop)||!previewFrameCanvas||!previewFrameContext)return null;
   try {
     let preview=eyePreviewCanvases[side];
     if(!preview){const canvas=new OffscreenCanvas(eyePreviewSize.width,eyePreviewSize.height);preview={canvas,context:canvas.getContext('2d')};eyePreviewCanvases[side]=preview;}
@@ -102,7 +113,7 @@ function renderEyePreview(crop,points,side,width,height) {
     if(!context)return null;
     context.clearRect(0,0,eyePreviewSize.width,eyePreviewSize.height);
     context.save();context.translate(eyePreviewSize.width,0);context.scale(-1,1);
-    context.drawImage(previewFrameCanvas,crop.x,crop.y,crop.width,crop.height,0,0,eyePreviewSize.width,eyePreviewSize.height);
+    context.drawImage(previewFrameCanvas,crop.x-Math.floor(crop.x),crop.y-Math.floor(crop.y),crop.width,crop.height,0,0,eyePreviewSize.width,eyePreviewSize.height);
     const indices=eyeLandmarkIndices[side];
     drawLandmarkPath(context,indices.eye,points,width,height,crop,'#55e6d1',{close:true,radius:2.5,lineWidth:1.5});
     drawLandmarkPath(context,indices.upperLid,points,width,height,crop,'#ffe08a',{radius:3.5,lineWidth:2.5});
@@ -124,9 +135,12 @@ function postFrameResult(result,previewBitmaps) {
 }
 
 async function processFrame(message) {
+  const workerStartedAt=performance.now();
   const frame = new ImageData(new Uint8ClampedArray(message.pixels),message.width,message.height);
+  // Current WebEyeTrack still needs full-face MediaPipe landmarks, head pose and face origin.
   const result = await tracker.step(frame,message.captureTimestampMs);
   retainCalibrationResult(calibrationResults,message.frameId,result);
+  const eyeRegionStartedAt=performance.now();
   const points = result?.facialLandmarks;
   const pixel = index => {
     const point = points?.[index];
@@ -141,11 +155,13 @@ async function processFrame(message) {
     right:rightA&&rightB?eyePreviewCrop(eyeCrop(rightA,rightB,cropFrame),cropFrame,Math.hypot(rightB.x-rightA.x,rightB.y-rightA.y)):null
   };
   const gazeFeatures=landmarkGazeFeatures(points,message.width,message.height);
-  const canRenderPreview=!!(eyeCrops.left||eyeCrops.right)&&preparePreviewFrame(frame);
+  const eyeRegionMs=performance.now()-eyeRegionStartedAt;
+  const eyePreviewStartedAt=performance.now();
   const previewBitmaps={
-    left:canRenderPreview?renderEyePreview(eyeCrops.left,points,'left',message.width,message.height):null,
-    right:canRenderPreview?renderEyePreview(eyeCrops.right,points,'right',message.width,message.height):null
+    left:renderEyePreview(frame,eyeCrops.left,points,'left',message.width,message.height),
+    right:renderEyePreview(frame,eyeCrops.right,points,'right',message.width,message.height)
   };
+  const durations={...(result?.durations??{}),eyeRegionMs,eyePreviewMs:performance.now()-eyePreviewStartedAt,workerTotalMs:performance.now()-workerStartedAt};
   postFrameResult({
     type:'result',
     faceDetected:Array.isArray(result?.facialLandmarks)&&result.facialLandmarks.length>0,
@@ -153,7 +169,7 @@ async function processFrame(message) {
     normPog:Array.isArray(result?.normPog)?result.normPog:null,
     landmarkFeatures:gazeFeatures,
     eyeCrops,
-    durations:result?.durations??null,
+    durations,
     width:message.width,
     height:message.height,
     frameId:message.frameId,
