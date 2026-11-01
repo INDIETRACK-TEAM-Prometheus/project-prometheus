@@ -54,3 +54,32 @@ function New-PrometheusColabProxyOption {
   $command = '"{0}" ssh --proxy-mode -s {1} -i "{2}"' -f $Executable, $Session, $IdentityFile
   '"ProxyCommand={0}"' -f $command.Replace('"', '\"')
 }
+
+function Get-PrometheusColabForwardArguments {
+  param(
+    [Parameter(Mandatory)][ValidateRange(1, 65535)][int]$LocalPort,
+    [Parameter(Mandatory)][ValidateRange(1, 65535)][int]$RemotePort,
+    [ValidateRange(0, 65535)][int]$AdditionalLocalPort = 0,
+    [ValidateRange(0, 65535)][int]$AdditionalRemotePort = 0
+  )
+
+  $hasAdditionalLocal = $AdditionalLocalPort -gt 0
+  $hasAdditionalRemote = $AdditionalRemotePort -gt 0
+  if ($hasAdditionalLocal -ne $hasAdditionalRemote) { throw 'Additional local and remote ports must be specified together.' }
+
+  $arguments = @('-L', "127.0.0.1:${LocalPort}:127.0.0.1:${RemotePort}")
+  if ($hasAdditionalLocal) { $arguments += @('-L', "127.0.0.1:${AdditionalLocalPort}:127.0.0.1:${AdditionalRemotePort}") }
+  return $arguments
+}
+
+function Test-PrometheusColabForwards {
+  param(
+    [Parameter(Mandatory)][string]$CommandLine,
+    [Parameter(Mandatory)][string[]]$Forwards
+  )
+
+  foreach ($forward in $Forwards) {
+    if ($CommandLine -notlike "*$forward*") { return $false }
+  }
+  return $true
+}

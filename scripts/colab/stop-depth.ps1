@@ -2,6 +2,7 @@
 param([string]$Session = 'prom-depth')
 . (Join-Path $PSScriptRoot 'colab-cli.ps1')
 $pidFile = Join-Path $env:LOCALAPPDATA 'Prometheus\colab\tunnel.pid'
+$tunnelStderr = Join-Path $env:LOCALAPPDATA 'Prometheus\colab\depth-tunnel.stderr.log'
 $env:PYTHONIOENCODING = 'utf-8'
 if (Test-Path $pidFile) {
   $tunnelPid, $savedSession = (Get-Content $pidFile -Raw).Trim() -split ' '
@@ -13,3 +14,8 @@ if (Test-Path $pidFile) {
 $colab = Resolve-PrometheusColabCLI
 & $colab stop -s $Session
 & $colab sessions
+try {
+  Remove-Item -LiteralPath $tunnelStderr -Force -ErrorAction Stop
+} catch {
+  if (Test-Path $tunnelStderr) { Write-Warning 'The VM and tunnel are stopped, but the SSH diagnostic log is still in use.' }
+}

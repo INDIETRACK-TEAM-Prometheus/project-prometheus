@@ -1,4 +1,4 @@
-# Closes both local SSH forwards and stops the Colab VM owned by start-system.ps1.
+# Closes managed SSH forwards and stops the Colab VM owned by start-system.ps1.
 param([string]$Session)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'colab-cli.ps1')
@@ -25,15 +25,18 @@ foreach ($tunnel in $managedTunnelFiles) {
   $process = Get-Process -Id ([int]$parts[0]) -ErrorAction SilentlyContinue
   if ($process -and $process.ProcessName -eq 'ssh') {
     $details = Get-CimInstance Win32_Process -Filter "ProcessId = $($process.Id)" -ErrorAction SilentlyContinue
-    if (-not $details -or $details.CommandLine -notlike "*$($tunnel.Forward)*") {
-      throw "PID $($process.Id) is ssh but does not match the recorded forward; leaving it untouched."
+    $requiredForwards = @($tunnel.Forward)
+    if ($savedSession -and $tunnel.Path -eq (Join-Path $stateDir 'tunnel.pid') -and -not (Test-Path (Join-Path $stateDir 'gaze-tunnel.pid'))) {
+      $requiredForwards += '127.0.0.1:49191:127.0.0.1:8766'
+    }
+    if (-not $details -or -not (Test-PrometheusColabForwards -CommandLine $details.CommandLine -Forwards $requiredForwards)) {
+      throw "PID $($process.Id) is ssh but does not match every managed forward ($($requiredForwards -join ', ')); leaving it untouched."
     }
     Stop-Process -Id $process.Id -Confirm:$false
     Wait-Process -Id $process.Id -Timeout 10 -ErrorAction SilentlyContinue
   }
   Remove-Item $tunnel.Path -Confirm:$false
 }
-
 $colab = Resolve-PrometheusColabCLI
 $sessions = (& $colab sessions 2>&1 | Out-String)
 if ($LASTEXITCODE) { throw 'Could not inspect Colab sessions after closing the local tunnels.' }
@@ -50,4 +53,9 @@ if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
   if ($listeners.Count) { throw 'A listener remains on local port 49190 or 49191 after stopping the VM.' }
 }
 if (Test-Path $activeSessionFile) { Remove-Item $activeSessionFile -Confirm:$false }
+try {
+  Remove-Item -LiteralPath (Join-Path $stateDir 'depth-tunnel.stderr.log') -Force -ErrorAction Stop
+} catch {
+  if (Test-Path (Join-Path $stateDir 'depth-tunnel.stderr.log')) { Write-Warning 'The VM and tunnels are stopped, but the SSH diagnostic log is still in use.' }
+}
 Write-Output "stopped: Colab session [$Session], depth and gaze tunnels closed"

@@ -30,7 +30,28 @@ try {
   if ($proxy -notmatch 'ProxyCommand=\\"C:\\Users\\A User\\.prometheus\\bin\\colab\.exe\\" ssh --proxy-mode -s prometheus-test -i \\"C:\\Users\\A User\\.prometheus\\colab\\id_ed25519\\"') {
     throw "ProxyCommand did not quote paths with spaces safely: $proxy"
   }
-  Write-Output 'Colab CLI resolver and ProxyCommand checks passed (no installation or session start performed).'
+  $depthForward = @(Get-PrometheusColabForwardArguments -LocalPort 49190 -RemotePort 8765)
+  if (($depthForward -join '|') -ne '-L|127.0.0.1:49190:127.0.0.1:8765') { throw "Unexpected depth forward arguments: $($depthForward -join '|')" }
+  $combinedForward = @(Get-PrometheusColabForwardArguments -LocalPort 49190 -RemotePort 8765 -AdditionalLocalPort 49191 -AdditionalRemotePort 8766)
+  if (($combinedForward -join '|') -ne '-L|127.0.0.1:49190:127.0.0.1:8765|-L|127.0.0.1:49191:127.0.0.1:8766') {
+    throw "Combined forwards are not bound to the expected local and Colab ports: $($combinedForward -join '|')"
+  }
+  try {
+    Get-PrometheusColabForwardArguments -LocalPort 49190 -RemotePort 8765 -AdditionalLocalPort 49191 | Out-Null
+    throw 'Forward builder accepted an incomplete additional port mapping.'
+  } catch {
+    if ($_.Exception.Message -eq 'Forward builder accepted an incomplete additional port mapping.') { throw }
+    if ($_.Exception.Message -notmatch 'specified together') { throw }
+  }
+  $combinedCommandLine = 'ssh -L 127.0.0.1:49190:127.0.0.1:8765 -L 127.0.0.1:49191:127.0.0.1:8766'
+  if (-not (Test-PrometheusColabForwards -CommandLine $combinedCommandLine -Forwards @('127.0.0.1:49190:127.0.0.1:8765', '127.0.0.1:49191:127.0.0.1:8766'))) {
+    throw 'Combined tunnel ownership check rejected its two managed forwards.'
+  }
+  if (Test-PrometheusColabForwards -CommandLine 'ssh -L 127.0.0.1:49190:127.0.0.1:8765' -Forwards @('127.0.0.1:49190:127.0.0.1:8765', '127.0.0.1:49191:127.0.0.1:8766')) {
+    throw 'Combined tunnel ownership check accepted a missing gaze forward.'
+  }
+
+  Write-Output 'Colab CLI resolver, ProxyCommand and tunnel forward checks passed (no installation or session start performed).'
 } finally {
   Remove-Item -LiteralPath $testRoot -Recurse -Force
 }

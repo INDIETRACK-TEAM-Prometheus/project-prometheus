@@ -1,4 +1,4 @@
-# Starts depth and gaze GPU workers in one Colab session with separate loopback SSH forwards.
+# Starts depth and gaze GPU workers in one Colab session behind one SSH tunnel with two loopback forwards.
 # The optional local server mode owns the full VM lifetime and stops it when the server exits.
 param(
   [string]$Session,
@@ -12,11 +12,11 @@ $stateDir = Join-Path $env:LOCALAPPDATA 'Prometheus\colab'
 $activeSessionFile = Join-Path $stateDir 'system-session.txt'
 $gazePidFile = Join-Path $stateDir 'gaze-tunnel.pid'
 $depthPidFile = Join-Path $stateDir 'tunnel.pid'
-$key = Join-Path $stateDir 'id_ed25519'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $depthStarter = Join-Path $PSScriptRoot 'start-depth.ps1'
 $stopper = Join-Path $PSScriptRoot 'stop-system.ps1'
 $gazeService = Join-Path $PSScriptRoot 'gaze_service.py'
+$serviceRunner = Join-Path $PSScriptRoot 'run-colab-service.py'
 $depthPort = 49190
 $gazePort = 49191
 $remoteGazePort = 8766
@@ -27,6 +27,7 @@ if ($Session -notmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,63}$') { throw 'Session may c
 if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) { throw 'OpenSSH client (ssh) is required.' }
 if (-not (Test-Path $depthStarter)) { throw "Depth starter not found: $depthStarter" }
 if (-not (Test-Path $gazeService)) { throw "Gaze service not found: $gazeService" }
+if (-not (Test-Path $serviceRunner)) { throw "Colab service runner not found: $serviceRunner" }
 New-Item -ItemType Directory -Force $stateDir | Out-Null
 if ((Test-Path $activeSessionFile) -or (Test-Path $depthPidFile) -or (Test-Path $gazePidFile)) {
   throw 'A managed Colab session or tunnel already exists. Run scripts\colab\stop-system.ps1 or stop-depth.ps1 first.'
@@ -37,35 +38,36 @@ if ($sessions -match [regex]::Escape("[$Session]")) { throw "Colab session [$Ses
 
 Set-Content -Path $activeSessionFile -Value $Session -Encoding ascii
 $systemReady = $false
-$gazeTunnel = $null
 try {
-  # start-depth owns the first forward and downloads/loads the pinned depth checkpoint.
-  $depthOutput = @(& $depthStarter -Session $Session -Gpu $Gpu -LocalPort $depthPort)
+  # start-depth downloads/loads depth and owns the SSH process for both forwards.
+  $depthOutput = @(& $depthStarter -Session $Session -Gpu $Gpu -LocalPort $depthPort -AdditionalLocalPort $gazePort -AdditionalRemotePort $remoteGazePort)
   if ($depthOutput.Count) { Write-Output $depthOutput[0] }
 
   # The service checks this copy before bootstrapping its pinned runtime and weights.
   $null | & $colab upload -s $Session $gazeService '/content/prometheus-gaze/app/gaze_service.py'
   if ($LASTEXITCODE) { throw 'Could not upload the gaze service source to the Colab session.' }
-  & $colab exec -s $Session --timeout 1200 -f $gazeService
+  & $colab exec -s $Session --timeout 1200 --env 'PROMETHEUS_COLAB_SERVICE_PATH=/content/prometheus-gaze/app/gaze_service.py' --env 'PROMETHEUS_COLAB_SERVICE_NAME=gaze' -f $serviceRunner
   if ($LASTEXITCODE) { throw 'Colab gaze service failed to start.' }
 
-  $proxyOption = New-PrometheusColabProxyOption -Executable $colab -Session $Session -IdentityFile $key
-  $sshArgs = @('-i', "`"$key`"", '-o', $proxyOption, '-o', 'StrictHostKeyChecking=accept-new',
-    '-o', "UserKnownHostsFile=$(Join-Path $stateDir 'known_hosts')", '-o', 'ExitOnForwardFailure=yes',
-    '-o', 'ServerAliveInterval=15', '-N', '-L', "127.0.0.1:${gazePort}:127.0.0.1:${remoteGazePort}", "root@$Session")
-  $gazeTunnel = Start-Process -FilePath ssh -ArgumentList $sshArgs -WindowStyle Hidden -PassThru
-  Set-Content -Path $gazePidFile -Value "$($gazeTunnel.Id) $Session" -Encoding ascii
-
+  $depthTunnelParts = (Get-Content -LiteralPath $depthPidFile -Raw).Trim() -split '\s+'
+  if ($depthTunnelParts.Count -lt 2 -or $depthTunnelParts[0] -notmatch '^\d+$' -or $depthTunnelParts[1] -ne $Session) {
+    throw 'Depth starter did not record the combined SSH tunnel for this session.'
+  }
+  $tunnelPid = [int]$depthTunnelParts[0]
   $health = $null
+  $lastHealthFailure = 'no /health response received'
   for ($i = 0; $i -lt 30 -and -not $health; $i++) {
     Start-Sleep -Seconds 2
-    if (-not (Get-Process -Id $gazeTunnel.Id -ErrorAction SilentlyContinue)) { break }
+    if (-not (Get-Process -Id $tunnelPid -ErrorAction SilentlyContinue)) { break }
     try {
       $reply = Invoke-RestMethod -TimeoutSec 5 "http://127.0.0.1:$gazePort/health"
       if ($reply.status -eq 'ready' -and $reply.backend -eq 'colab_remote' -and $reply.device -eq 'cuda' -and $reply.model.id -eq 'webeyetrack-blazegaze-mpiifacegaze') { $health = $reply }
-    } catch {}
+      else {
+        $lastHealthFailure = 'HTTP health mismatch: status={0}, backend={1}, device={2}, model={3}' -f $reply.status, $reply.backend, $reply.device, $reply.model.id
+      }
+    } catch { $lastHealthFailure = '{0}: {1}' -f $_.Exception.GetType().Name, $_.Exception.Message }
   }
-  if (-not $health) { throw 'Gaze tunnel opened but the expected CUDA /health response did not arrive.' }
+  if (-not $health) { throw "Gaze tunnel did not return the expected CUDA /health response ($lastHealthFailure)." }
   $systemReady = $true
 
   Write-Output "Colab session: [$Session]"
@@ -104,7 +106,6 @@ try {
   }
 } finally {
   if (-not $systemReady -or $RunServer) {
-    if ($gazeTunnel -and -not (Test-Path $gazePidFile)) { Stop-Process -Id $gazeTunnel.Id -Confirm:$false -ErrorAction SilentlyContinue }
     try { & $stopper -Session $Session }
     catch {
       if ($systemReady) { throw }

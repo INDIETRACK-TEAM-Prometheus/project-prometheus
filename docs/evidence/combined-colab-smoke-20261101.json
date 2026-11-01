@@ -1,0 +1,41 @@
+{
+  "recordedAt": "2026-11-01",
+  "gpu": "Tesla T4",
+  "sameColabSession": true,
+  "services": {
+    "depth": {
+      "health": {
+        "status": "ready",
+        "backend": "colab_remote",
+        "device": "cuda",
+        "modelId": "depth-anything/Depth-Anything-V2-Metric-Hypersim-Small"
+      },
+      "syntheticInference": {
+        "status": "ok",
+        "device": "cuda",
+        "width": 64,
+        "height": 48
+      }
+    },
+    "gaze": {
+      "health": {
+        "status": "ready",
+        "backend": "colab_remote",
+        "device": "cuda",
+        "modelId": "webeyetrack-blazegaze-mpiifacegaze"
+      },
+      "syntheticGpuSelfTest": {
+        "status": "passed",
+        "device": "cuda",
+        "calibrationPoints": 27,
+        "adapterRoundTripMaxDelta": 0,
+        "blankFrameFaceDetected": false
+      }
+    }
+  },
+  "cleanup": {
+    "colabSessionStopped": true,
+    "localPorts": [49190, 49191],
+    "remainingListeners": 0
+  }
+}
