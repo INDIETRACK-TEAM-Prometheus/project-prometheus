@@ -193,6 +193,21 @@ test('calibration rejects samples older than the callback-time freshness window'
   h.controller.stop();
 });
 
+test('calibration accepts a bounded cadence-adaptive freshness window',async()=>{
+  const h=harness();
+  await h.controller.start({userInitiated:true,cameraConsent:true});
+  await h.controller.beginCalibration();
+  h.video.emit();await h.flush();
+  const sample=h.samples.at(-1);
+  h.advanceClock(400);
+  assert.deepEqual(await h.controller.calibrate({x:400,y:300},sample.callbackTimestampMs,500),{adapted:true,points:1});
+  h.video.emit();await h.flush();
+  h.advanceClock(1600);
+  await assert.rejects(h.controller.calibrate({x:400,y:300},-Infinity,1500),/fresh open-eye/);
+  await assert.rejects(h.controller.calibrate({x:400,y:300},-Infinity,1501),/invalid calibration sample age/);
+  h.controller.stop();
+});
+
 test('explicit profile replay replaces the active tracker only after worker confirmation',async()=>{
   const h=harness();
   await h.controller.start({userInitiated:true,cameraConsent:true});

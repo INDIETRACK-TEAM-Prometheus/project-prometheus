@@ -1,4 +1,5 @@
 import {ClockDriftMonitor} from '../runtime/clock.js';
+import {MAX_CALIBRATION_SAMPLE_AGE_MS} from './calibration-window.js';
 
 const finite = Number.isFinite;
 const cameraStartupCodes = {
@@ -317,12 +318,13 @@ export function createWebcamGazeController({
         throw error;
       }
     },
-    async calibrate(target, notBeforeTimestampMs = -Infinity) {
+    async calibrate(target, notBeforeTimestampMs = -Infinity, maxSampleAgeMs = 250) {
       const record = candidateWorker;
       const sample = record?.latestSample;
       if (notBeforeTimestampMs !== -Infinity && !finite(notBeforeTimestampMs)) throw new Error('invalid calibration timestamp');
+      if (!finite(maxSampleAgeMs) || maxSampleAgeMs < 0 || maxSampleAgeMs > MAX_CALIBRATION_SAMPLE_AGE_MS) throw new Error('invalid calibration sample age');
       const sampleAgeMs = sample?.callbackTimestampMs===undefined ? Infinity : clockNow()-sample.callbackTimestampMs;
-      if (!record || !running || !Number.isSafeInteger(sample?.frameId) || !sample?.faceDetected || sample.gazeState !== 'open' || !sample.features || !finite(sample.callbackTimestampMs) || sample.callbackTimestampMs<notBeforeTimestampMs || sampleAgeMs<0 || sampleAgeMs>250) throw new Error('fresh open-eye WebEyeTrack sample required');
+      if (!record || !running || !Number.isSafeInteger(sample?.frameId) || !sample?.faceDetected || sample.gazeState !== 'open' || !sample.features || !finite(sample.callbackTimestampMs) || sample.callbackTimestampMs<notBeforeTimestampMs || sampleAgeMs<0 || sampleAgeMs>maxSampleAgeMs) throw new Error('fresh open-eye WebEyeTrack sample required');
       const viewport = getViewport();
       if (!finite(target?.x) || !finite(target?.y) || !finite(viewport?.width) || !finite(viewport?.height) || viewport.width<=0 || viewport.height<=0) throw new Error('invalid calibration target');
       const requestId = `adapt-${++requestNumber}`;
