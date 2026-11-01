@@ -1,6 +1,6 @@
 ﻿# Closes the depth tunnel and releases the Colab VM started by start-depth.ps1.
 param([string]$Session = 'prom-depth')
-$colab = Join-Path $env:USERPROFILE '.local\bin\colab.exe'
+. (Join-Path $PSScriptRoot 'colab-cli.ps1')
 $pidFile = Join-Path $env:LOCALAPPDATA 'Prometheus\colab\tunnel.pid'
 $env:PYTHONIOENCODING = 'utf-8'
 if (Test-Path $pidFile) {
@@ -10,5 +10,6 @@ if (Test-Path $pidFile) {
   if ($process -and $process.ProcessName -eq 'ssh') { Stop-Process -Id $tunnelPid -Confirm:$false }
   Remove-Item $pidFile -Confirm:$false
 }
+$colab = Resolve-PrometheusColabCLI
 & $colab stop -s $Session
 & $colab sessions

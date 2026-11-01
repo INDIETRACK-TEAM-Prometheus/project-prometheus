@@ -6,7 +6,8 @@ param(
   [switch]$RunServer
 )
 $ErrorActionPreference = 'Stop'
-$colab = Join-Path $env:USERPROFILE '.local\bin\colab.exe'
+. (Join-Path $PSScriptRoot 'colab-cli.ps1')
+$colab = Resolve-PrometheusColabCLI
 $stateDir = Join-Path $env:LOCALAPPDATA 'Prometheus\colab'
 $activeSessionFile = Join-Path $stateDir 'system-session.txt'
 $gazePidFile = Join-Path $stateDir 'gaze-tunnel.pid'
@@ -23,7 +24,6 @@ $env:PYTHONIOENCODING = 'utf-8'
 
 if (-not $Session) { $Session = 'prometheus-system-' + [guid]::NewGuid().ToString('N').Substring(0, 8) }
 if ($Session -notmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,63}$') { throw 'Session may contain only letters, numbers, and hyphens (up to 64 characters).' }
-if (-not (Test-Path $colab)) { throw "colab CLI not found at $colab (uv tool install google-colab-cli==0.7.5)" }
 if (-not (Get-Command ssh -ErrorAction SilentlyContinue)) { throw 'OpenSSH client (ssh) is required.' }
 if (-not (Test-Path $depthStarter)) { throw "Depth starter not found: $depthStarter" }
 if (-not (Test-Path $gazeService)) { throw "Gaze service not found: $gazeService" }
@@ -49,8 +49,8 @@ try {
   & $colab exec -s $Session --timeout 1200 -f $gazeService
   if ($LASTEXITCODE) { throw 'Colab gaze service failed to start.' }
 
-  $proxy = "$colab ssh --proxy-mode -s $Session -i $key"
-  $sshArgs = @('-i', "`"$key`"", '-o', "`"ProxyCommand=$proxy`"", '-o', 'StrictHostKeyChecking=accept-new',
+  $proxyOption = New-PrometheusColabProxyOption -Executable $colab -Session $Session -IdentityFile $key
+  $sshArgs = @('-i', "`"$key`"", '-o', $proxyOption, '-o', 'StrictHostKeyChecking=accept-new',
     '-o', "UserKnownHostsFile=$(Join-Path $stateDir 'known_hosts')", '-o', 'ExitOnForwardFailure=yes',
     '-o', 'ServerAliveInterval=15', '-N', '-L', "127.0.0.1:${gazePort}:127.0.0.1:${remoteGazePort}", "root@$Session")
   $gazeTunnel = Start-Process -FilePath ssh -ArgumentList $sshArgs -WindowStyle Hidden -PassThru

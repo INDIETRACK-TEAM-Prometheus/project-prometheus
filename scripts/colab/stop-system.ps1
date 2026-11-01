@@ -1,7 +1,7 @@
 # Closes both local SSH forwards and stops the Colab VM owned by start-system.ps1.
 param([string]$Session)
 $ErrorActionPreference = 'Stop'
-$colab = Join-Path $env:USERPROFILE '.local\bin\colab.exe'
+. (Join-Path $PSScriptRoot 'colab-cli.ps1')
 $stateDir = Join-Path $env:LOCALAPPDATA 'Prometheus\colab'
 $activeSessionFile = Join-Path $stateDir 'system-session.txt'
 $tunnels = @(
@@ -34,7 +34,7 @@ foreach ($tunnel in $managedTunnelFiles) {
   Remove-Item $tunnel.Path -Confirm:$false
 }
 
-if (-not (Test-Path $colab)) { throw "Cannot stop Colab VM: colab CLI not found at $colab." }
+$colab = Resolve-PrometheusColabCLI
 $sessions = (& $colab sessions 2>&1 | Out-String)
 if ($LASTEXITCODE) { throw 'Could not inspect Colab sessions after closing the local tunnels.' }
 if ($sessions -match [regex]::Escape("[$Session]")) {

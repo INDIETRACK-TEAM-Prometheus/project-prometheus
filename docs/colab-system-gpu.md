@@ -13,7 +13,7 @@ The Colab services expose no public listener. The launcher creates its SSH key u
 
 ## Start both workers and the local app
 
-Prerequisites: `google-colab-cli==0.7.5` is installed and authenticated, OpenSSH is available, Node.js meets the version in the project README, and the Google account can allocate the selected GPU. Run from the project root:
+Prerequisites: `google-colab-cli==0.7.5` is installed and authenticated, OpenSSH is available, Node.js meets the version in the project README, and the Google account can allocate the selected GPU. On Windows, install the pinned CLI once from the project root with `pwsh -NoProfile -File scripts\colab\setup-colab.ps1`. It stores the uv environment in `%USERPROFILE%\.prometheus\uv-tools` and the executable in `%USERPROFILE%\.prometheus\bin`; this only installs the CLI and does not log in or start a GPU session. Run the launcher from the project root:
 
 ```powershell
 & scripts\colab\start-system.ps1 -Gpu T4 -RunServer

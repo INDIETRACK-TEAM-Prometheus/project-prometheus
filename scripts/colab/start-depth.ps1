@@ -8,14 +8,14 @@ param(
 )
 # Native tools write warnings to stderr; failures are judged by exit codes, not stderr.
 $ErrorActionPreference = 'Continue'
-$colab = Join-Path $env:USERPROFILE '.local\bin\colab.exe'
+. (Join-Path $PSScriptRoot 'colab-cli.ps1')
+$colab = Resolve-PrometheusColabCLI
 $stateDir = Join-Path $env:LOCALAPPDATA 'Prometheus\colab'
 $key = Join-Path $stateDir 'id_ed25519'
 $pidFile = Join-Path $stateDir 'tunnel.pid'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $env:PYTHONIOENCODING = 'utf-8'
 
-if (-not (Test-Path $colab)) { throw "colab CLI not found at $colab (uv tool install google-colab-cli==0.7.5)" }
 New-Item -ItemType Directory -Force $stateDir | Out-Null
 # Dedicated key outside ~/.ssh and the repository; used only for this tunnel.
 if (-not (Test-Path $key)) { & ssh-keygen -q -t ed25519 -N '""' -C 'prometheus-colab' -f $key; if ($LASTEXITCODE) { throw 'ssh-keygen failed' } }
@@ -36,9 +36,9 @@ foreach ($name in 'model.py', 'worker.py') {
 & $colab exec -s $Session --timeout 900 -f (Join-Path $PSScriptRoot 'depth_service.py')
 if ($LASTEXITCODE) { throw 'remote depth service failed to start' }
 
-$proxy = "$colab ssh --proxy-mode -s $Session -i $key"
+$proxyOption = New-PrometheusColabProxyOption -Executable $colab -Session $Session -IdentityFile $key
 # Start-Process joins arguments with spaces, so values containing spaces are quoted explicitly.
-$sshArgs = @('-i', "`"$key`"", '-o', "`"ProxyCommand=$proxy`"", '-o', 'StrictHostKeyChecking=accept-new', '-o', "UserKnownHostsFile=$(Join-Path $stateDir 'known_hosts')",
+$sshArgs = @('-i', "`"$key`"", '-o', $proxyOption, '-o', 'StrictHostKeyChecking=accept-new', '-o', "UserKnownHostsFile=$(Join-Path $stateDir 'known_hosts')",
   '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15', '-N', '-L', "127.0.0.1:${LocalPort}:127.0.0.1:8765", "root@$Session")
 $tunnel = Start-Process -FilePath ssh -ArgumentList $sshArgs -WindowStyle Hidden -PassThru
 Set-Content -Path $pidFile -Value "$($tunnel.Id) $Session" -Encoding ascii

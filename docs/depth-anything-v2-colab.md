@@ -6,7 +6,7 @@ The local port is `49190` because the Fetch API rejects reserved port `4190` as 
 
 ## Run a parity and transport comparison
 
-Prerequisites: the official `google-colab-cli` is installed and authenticated, an SSH client is available, and the account can allocate a T4 runtime. The model source commit and checkpoint SHA-256 are pinned and verified by the shared depth worker.
+Prerequisites: the official `google-colab-cli==0.7.5` is installed and authenticated, an SSH client is available, and the account can allocate a T4 runtime. On Windows, install the pinned CLI once from the project root with `pwsh -NoProfile -File scripts\colab\setup-colab.ps1`. It stores the uv environment in `%USERPROFILE%\.prometheus\uv-tools` and the executable in `%USERPROFILE%\.prometheus\bin`; this only installs the CLI and does not log in or start a GPU session. The model source commit and checkpoint SHA-256 are pinned and verified by the shared depth worker.
 
 Run from the project root. The checked-in `fixtures/sam-synthetic.png` is a generated geometric image with no camera or user data.
 
