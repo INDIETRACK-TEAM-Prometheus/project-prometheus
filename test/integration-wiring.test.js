@@ -8,9 +8,30 @@ import {createLocalServer} from '../server.js';
 test('server serves only explicit integration modules and rejects unknown paths',async()=>{
   const server=createLocalServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   try { const base=`http://127.0.0.1:${server.address().port}`;
-    for(const path of ['/','/src/app.js','/src/gaze/index.js','/src/gaze/persistence.js','/src/gaze/webcam.js','/src/gaze/webeyetrack-worker.js','/src/gaze/webeyetrack-bootstrap.js','/src/gaze/overlay.js','/src/spatial/world.js','/src/memory/index.js','/src/memory/session.js','/src/memory/provisional-tracking.js','/src/evaluation/ledger.js','/src/runtime/facade.js','/src/runtime/provider-journal.js']) assert.equal((await fetch(base+path)).status,200,path);
+    for(const path of ['/','/src/app.js','/src/gaze/index.js','/src/gaze/persistence.js','/src/gaze/webcam.js','/src/gaze/remote-webcam.js','/src/gaze/calibration-window.js','/src/runtime/clock.js','/src/gaze/webeyetrack-worker.js','/src/gaze/webeyetrack-bootstrap.js','/src/gaze/overlay.js','/src/spatial/world.js','/src/memory/index.js','/src/memory/session.js','/src/memory/provisional-tracking.js','/src/evaluation/ledger.js','/src/runtime/facade.js','/src/runtime/provider-journal.js']) assert.equal((await fetch(base+path)).status,200,path);
     for(const path of ['/README.md','/%2e%2e/server.js','/src/not-listed.js','/vendor/not-allowed.js','/server/reasoner-adapter.js','/server.js','/.env','/data/session.json','/artifacts/result.json']) assert.equal((await fetch(base+path)).status,404,path);
   } finally {await new Promise(resolve=>server.close(resolve));}
+});
+
+test('cloud profile exposes safe runtime config and a same-origin bounded gaze frame proxy',async()=>{
+  const forwarded=[];const gazeProvider={
+    async health(){return {ready:true,model:{id:'webeyetrack-blazegaze-mpiifacegaze',sourceCommit:'75fbd2f5f784f2eb3a39675a8dcbf1b01c697f1c',sha256:'a'.repeat(64)}};},
+    async createSession(input){forwarded.push(['create',input]);return {sessionId:'session_1',expiresInSeconds:600,calibrated:false};},
+    async frame(input){forwarded.push(['frame',input]);return {frameId:input.frameId,captureTimestampMs:input.captureTimestampMs,faceDetected:true,gazeState:'open',normPog:[0,0],durations:{total:1}};},
+    async startCandidate(){return {status:'ready'};},async addCalibrationSample(){return {adapted:false,points:1};},
+    async acceptCandidate(){return {status:'accepted',calibrated:true,adapter:{schemaVersion:1}};},async discardCandidate(){},async deleteSession(id){forwarded.push(['delete',id]);},async close(){}
+  };
+  const server=createLocalServer({computeProfile:'cloud',gazeProvider});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  try{
+    const base=`http://127.0.0.1:${server.address().port}`;
+    const config=await (await fetch(base+'/api/runtime/config')).json();assert.deepEqual(config,{computeProfile:'cloud',gazeBackend:'remote_gpu'});
+    const health=await (await fetch(base+'/api/gaze/health')).json();assert.equal(health.ready,true);assert.equal(health.backend,'remote_gpu');assert.equal('url' in health,false);
+    const created=await fetch(base+'/api/gaze/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({screenPxDimensions:[800,600]})});assert.equal(created.status,201);assert.equal((await created.json()).sessionId,'session_1');
+    const frame=await fetch(base+'/api/gaze/sessions/session_1/frame',{method:'POST',headers:{'content-type':'image/jpeg','x-frame-id':'1','x-capture-timestamp-ms':'12.5'},body:Buffer.from([255,216,255,217])});assert.equal(frame.status,200);assert.deepEqual(await frame.json(),{frameId:1,captureTimestampMs:12.5,faceDetected:true,gazeState:'open',normPog:[0,0],durations:{total:1}});
+    const oversized=await fetch(base+'/api/gaze/sessions/session_1/frame',{method:'POST',headers:{'content-type':'image/jpeg','x-frame-id':'2','x-capture-timestamp-ms':'13'},body:Buffer.alloc(512*1024+1)});assert.equal(oversized.status,413);assert.equal(forwarded.filter(item=>item[0]==='frame').length,1);
+    const deleted=await fetch(base+'/api/gaze/sessions/session_1',{method:'DELETE'});assert.equal(deleted.status,200);assert.equal(forwarded.at(-1)[0],'delete');
+    const local=createLocalServer({computeProfile:'local'});await new Promise(resolve=>local.listen(0,'127.0.0.1',resolve));try{const localBase=`http://127.0.0.1:${local.address().port}`,localConfig=await (await fetch(localBase+'/api/runtime/config')).json();assert.deepEqual(localConfig,{computeProfile:'local',gazeBackend:'browser_local'});}finally{await new Promise(resolve=>local.close(resolve));}
+  }finally{await new Promise(resolve=>server.close(resolve));}
 });
 
 test('landmark worker sends derived gaze features rather than raw MediaPipe landmarks',async()=>{

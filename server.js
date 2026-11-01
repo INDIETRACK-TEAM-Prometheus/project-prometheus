@@ -10,10 +10,11 @@ import { validateNextGaze } from './src/runtime/next-gaze.js';
 import { createRecordingStore } from './server/recording-store.js';
 import { createCalibrationStageLog } from './server/calibration-stage-log.js';
 import { createConfiguredDepthProvider } from './server/depth-provider.js';
+import { createRemoteGazeProvider } from './server/gaze-provider.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const files = new Map([['/', ['index.html', 'text/html; charset=utf-8']], ['/style.css', ['style.css', 'text/css; charset=utf-8']]]);
-for (const file of ['app.js','core.js','gaze/index.js','gaze/webcam.js','gaze/webeyetrack-worker.js','gaze/webeyetrack-bootstrap.js','gaze/overlay.js','gaze/frozen-demo.js','gaze/uncalibrated.js','gaze/persistence.js','spatial/world.js','spatial/geometry.js','spatial/tracker.js','spatial/scene-diagnostic.js','memory/index.js','memory/session.js','memory/provisional-tracking.js','evaluation/ledger.js','runtime/facade.js','runtime/perception.js','runtime/exploration.js','runtime/server-providers.js','runtime/provider-journal.js','runtime/cache.js','runtime/clock.js','runtime/contracts.js','runtime/next-gaze.js','runtime/scheduler.js']) files.set(`/src/${file}`, [`src/${file}`, 'text/javascript; charset=utf-8']);
+for (const file of ['app.js','core.js','gaze/index.js','gaze/webcam.js','gaze/remote-webcam.js','gaze/webeyetrack-worker.js','gaze/webeyetrack-bootstrap.js','gaze/overlay.js','gaze/frozen-demo.js','gaze/uncalibrated.js','gaze/persistence.js','spatial/world.js','spatial/geometry.js','spatial/tracker.js','spatial/scene-diagnostic.js','memory/index.js','memory/session.js','memory/provisional-tracking.js','evaluation/ledger.js','runtime/facade.js','runtime/perception.js','runtime/exploration.js','runtime/server-providers.js','runtime/provider-journal.js','runtime/cache.js','runtime/clock.js','runtime/contracts.js','runtime/next-gaze.js','runtime/scheduler.js']) files.set(`/src/${file}`, [`src/${file}`, 'text/javascript; charset=utf-8']);
 // Optional user-provided local assets. Never proxy arbitrary URLs or expose paths.
 for (const [name,type] of [['vision_bundle.mjs','text/javascript; charset=utf-8'],['vision_wasm_internal.js','text/javascript; charset=utf-8'],['vision_wasm_internal.wasm','application/wasm'],['vision_wasm_nosimd_internal.js','text/javascript; charset=utf-8'],['vision_wasm_nosimd_internal.wasm','application/wasm'],['face_landmarker.task','application/octet-stream']]) files.set(`/vendor/${name}`,[`vendor/${name}`,type]);
 files.set('/vendor/webeyetrack.js',['node_modules/webeyetrack/dist/index.js','text/javascript; charset=utf-8']);
@@ -26,6 +27,7 @@ for(const name of ['background-attention.js','background-browser.js','live-track
 files.set('/web/model.json',['vendor/webeyetrack-model/model.json','application/json; charset=utf-8']);
 files.set('/web/group1-shard1of1.bin',['vendor/webeyetrack-model/group1-shard1of1.bin','application/octet-stream']);
 const maxBody = 8 * 1024 * 1024;
+const maxGazeFrameBody = 512 * 1024;
 const loopback = address => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address);
 function json(res, status, body) {
   if (!res.destroyed && !res.writableEnded) { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}); res.end(JSON.stringify(body)); }
@@ -51,14 +53,69 @@ function validInput(value) {
   const bytes = Buffer.from(match[2], 'base64');
   return match[1] === 'png' ? bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) : bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
 }
-export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),calibrationStageLog=createCalibrationStageLog({root:path.join(root,'data','diagnostics')}),depthProvider=createConfiguredDepthProvider()} = {}) {
+export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),calibrationStageLog=createCalibrationStageLog({root:path.join(root,'data','diagnostics')}),depthProvider=createConfiguredDepthProvider(),computeProfile=process.env.PROMETHEUS_COMPUTE_PROFILE??'cloud',gazeProvider:configuredGazeProvider,gazeRemoteUrl=process.env.PROMETHEUS_GAZE_REMOTE_URL} = {}) {
+  if (!['cloud','local'].includes(computeProfile)) throw new TypeError('PROMETHEUS_COMPUTE_PROFILE must be cloud or local');
+  const gazeProvider=configuredGazeProvider??(computeProfile==='cloud'?createRemoteGazeProvider({baseUrl:gazeRemoteUrl}):null);
+  const configuredDepthProvider=depthProvider;
+  if(computeProfile==='cloud'&&depthProvider.kind==='local_depth_provider')depthProvider={kind:'cloud_depth_unavailable',async infer(){throw Object.assign(new Error('remote depth worker required by cloud profile'),{code:'DEPTH_CLOUD_GPU_REQUIRED'});},async close(){}};
   let inFlight = 0;
   const handler = async (req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
+    if(pathname==='/api/runtime/config'){
+      if(req.method!=='GET'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
+      req.resume();
+      json(res,200,{computeProfile,gazeBackend:computeProfile==='cloud'?'remote_gpu':'browser_local'});
+      return;
+    }
+    if(pathname==='/api/gaze/health'){
+      if(req.method!=='GET'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
+      req.resume();
+      if(computeProfile==='local'){json(res,200,{ready:true,backend:'browser_local'});return;}
+      const health=await gazeProvider.health();
+      json(res,200,{ready:health.ready===true,backend:'remote_gpu',...(health.model?{model:health.model}:{})});
+      return;
+    }
+    if(pathname==='/api/gaze/sessions'){
+      if(req.method!=='POST'||!localRequest(req)||computeProfile!=='cloud'){req.resume();json(res,403,{error:'forbidden'});return;}
+      if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']??'')){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+      try{
+        let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>70*1024){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
+        const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>!['screenPxDimensions','adapter'].includes(key))||(input.screenPxDimensions!==undefined&&(!Array.isArray(input.screenPxDimensions)||input.screenPxDimensions.length!==2||!input.screenPxDimensions.every(value=>Number.isInteger(value)&&value>0&&value<=10000)))){json(res,400,{error:'invalid_request'});return;}
+        json(res,201,await gazeProvider.createSession(input));
+      }catch(error){const code=typeof error?.code==='string'&&/^GAZE_[A-Z_]+$/.test(error.code)?error.code:'GAZE_INVALID_REQUEST';const status=code==='GAZE_SESSION_UNAVAILABLE'?404:code==='GAZE_REMOTE_TIMEOUT'?504:code==='GAZE_INVALID_REQUEST'?400:code==='GAZE_ADAPTER_INCOMPATIBLE'?409:503;json(res,status,{error:'gaze_unavailable',code});}
+      return;
+    }
+    const gazeSession=/^\/api\/gaze\/sessions\/([A-Za-z0-9_-]{1,128})(?:\/(candidate\/start|candidate\/accept|candidate\/discard|calibration\/sample|frame))?$/.exec(pathname);
+    if(gazeSession){
+      const [,sessionId,operation]=gazeSession;
+      if(!localRequest(req)||computeProfile!=='cloud'){req.resume();json(res,403,{error:'forbidden'});return;}
+      const respondError=error=>{const code=typeof error?.code==='string'&&/^GAZE_[A-Z_]+$/.test(error.code)?error.code:'GAZE_REMOTE_UNAVAILABLE';const status=code==='GAZE_PROVIDER_BUSY'?429:code==='GAZE_REMOTE_TIMEOUT'?504:code==='GAZE_SESSION_UNAVAILABLE'?404:code==='GAZE_INVALID_REQUEST'?400:503;json(res,status,{error:'gaze_unavailable',code});};
+      if(!operation&&req.method==='DELETE'){
+        req.resume();try{await gazeProvider.deleteSession(sessionId);json(res,200,{deleted:true});}catch(error){respondError(error);}return;
+      }
+      if(operation==='frame'&&req.method==='POST'){
+        if(req.headers['content-type']!=='image/jpeg'){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+        const frameIdText=req.headers['x-frame-id'],captureText=req.headers['x-capture-timestamp-ms'],frameId=Number(frameIdText),captureTimestampMs=Number(captureText);
+        if(typeof frameIdText!=='string'||!/^[1-9]\d*$/.test(frameIdText)||!Number.isSafeInteger(frameId)||typeof captureText!=='string'||!captureText.trim()||!Number.isFinite(captureTimestampMs)||captureTimestampMs<0){req.resume();json(res,400,{error:'invalid_request'});return;}
+        const abort=new AbortController();res.on('close',()=>{if(!res.writableEnded)abort.abort();});
+        try{let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxGazeFrameBody){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}const result=await gazeProvider.frame({sessionId,frameId,captureTimestampMs,bytes:Buffer.concat(chunks),signal:abort.signal});json(res,200,result);}
+        catch(error){respondError(error);}return;
+      }
+      if(['candidate/start','candidate/accept','candidate/discard'].includes(operation)&&req.method==='POST'){
+        req.resume();try{if(operation==='candidate/start'){await gazeProvider.startCandidate(sessionId);json(res,200,{status:'ready'});}else if(operation==='candidate/accept'){json(res,200,await gazeProvider.acceptCandidate(sessionId));}else{await gazeProvider.discardCandidate(sessionId);json(res,200,{status:'ready'});}}catch(error){respondError(error);}return;
+      }
+      if(operation==='calibration/sample'&&req.method==='POST'){
+        if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']??'')){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+        try{let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>2048){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).sort().join(',')!=='frameId,pointIndex,target'){json(res,400,{error:'invalid_request'});return;}json(res,200,await gazeProvider.addCalibrationSample({...input,sessionId}));}
+        catch(error){respondError(error);}return;
+      }
+      req.resume();json(res,404,{error:'not_found'});return;
+    }
     if(pathname==='/api/depth/status'){
       if(req.method!=='GET'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
       req.resume();
-      const backend=depthProvider.kind==='remote_depth_provider'?'colab_gpu':depthProvider.kind==='local_depth_provider'?'local_cpu':'unknown';
+      const backend=depthProvider.kind==='remote_depth_provider'?'colab_gpu':depthProvider.kind==='local_depth_provider'?'local_cpu':'unavailable';
       json(res,200,{backend});
       return;
     }
@@ -205,7 +262,7 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
     catch (error) { res.writeHead(error.code === 'ENOENT' ? 404 : 500); res.end('Unavailable'); }
   };
   const server=httpsOptions ? https.createServer(httpsOptions, handler) : http.createServer(handler);
-  server.on('close',()=>{void depthProvider.close?.();});
+  server.on('close',()=>{void depthProvider.close?.();if(configuredDepthProvider!==depthProvider)void configuredDepthProvider.close?.();void gazeProvider?.close?.();});
   return server;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
