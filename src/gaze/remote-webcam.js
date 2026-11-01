@@ -23,6 +23,10 @@ async function readJson(response) {
   return body;
 }
 
+function validFailure(value) {
+  return value && typeof value === 'object' && ['landmarks', 'eye_patch'].includes(value.stage) ? {stage:value.stage, message:typeof value.message === 'string' && value.message.length <= 160 ? value.message : null} : null;
+}
+
 function validEar(value) {
   const ok = x => finite(x) && x >= 0 && x <= 2;
   return value && typeof value === 'object' && ok(value.left) && ok(value.right) && ok(value.threshold) ? {left:value.left, right:value.right, threshold:value.threshold} : null;
@@ -31,7 +35,7 @@ function validEar(value) {
 // Plain-language reason the latest server response has no open-eye gaze point (shown while calibration waits).
 export function describeOpenEyeWait(sample) {
   if (!sample) return '아직 서버 응답이 없습니다';
-  if (sample.faceDetected !== true) return '서버 응답: 얼굴 미검출';
+  if (sample.faceDetected !== true) return sample.trackingFailure?.stage === 'eye_patch' ? `서버 응답: 얼굴은 찾았지만 눈 영역 추출 실패${sample.trackingFailure.message ? ` (${sample.trackingFailure.message})` : ''}` : '서버 응답: 얼굴 미검출';
   if (sample.gazeState === 'closed') {
     const ear = sample.eyeAspectRatio;
     return ear ? `서버 응답: 눈 감김 판정 (EAR 왼쪽 ${ear.left.toFixed(2)} · 오른쪽 ${ear.right.toFixed(2)}, 한쪽이라도 ${ear.threshold.toFixed(2)} 미만이면 감김)` : '서버 응답: 눈 감김 판정';
@@ -49,6 +53,7 @@ const BATCH_SPAN_MS = 500;
 export function describeCalibrationTarget(result) {
   if (!result) return '결과 없음';
   if (result.status !== 'insufficient') return `사용 가능한 프레임 ${result.usableFrames}/${result.totalFrames}`;
+  if (result.eyePatchFailures > 0 && result.faceFrames === 0) return `얼굴은 찾았지만 눈 영역 추출 실패 ${result.eyePatchFailures}/${result.totalFrames}장${result.failureMessage ? ` (${result.failureMessage})` : ''}`;
   if (result.faceFrames === 0) return `얼굴 미검출 (프레임 ${result.totalFrames}장)`;
   if (result.closedFrames > 0 && result.usableFrames < result.closedFrames) {
     const ear = result.eyeAspectRatio;
@@ -185,7 +190,7 @@ export function createRemoteWebcamGazeController({
       faceDetected, gazeState:result.gazeState,
       leftEye:{valid:faceDetected&&gazeOpen,reason:!faceDetected?'face_not_detected':gazeOpen?null:'eyes_closed',confidence:null,crop:null},
       rightEye:{valid:faceDetected&&gazeOpen,reason:!faceDetected?'face_not_detected':gazeOpen?null:'eyes_closed',confidence:null,crop:null},
-      features, landmarkFeatures:null, normPog:validPoint?[...norm]:null, rawScreenXY, eyeAspectRatio:validEar(result.eyeAspectRatio),
+      features, landmarkFeatures:null, normPog:validPoint?[...norm]:null, rawScreenXY, eyeAspectRatio:validEar(result.eyeAspectRatio), trackingFailure:validFailure(result.trackingFailure),
       valid:calibratedSample,
       invalidReason:!faceDetected?'face_not_detected':!gazeOpen?'eyes_closed':!validPoint?'gaze_unavailable':!calibrated?'calibration_required':null,
       width:request.width??result.width??null, height:request.height??result.height??null, modelDurations:result.durations

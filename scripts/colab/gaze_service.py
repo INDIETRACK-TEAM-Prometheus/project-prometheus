@@ -5,7 +5,10 @@ binds to loopback only; the local application reaches it through the SSH tunnel.
 Camera frames, eye patches, and calibration examples are kept in RAM only.
 """
 
+import contextlib
 import gc
+import io
+import re
 import base64
 import hashlib
 import json
@@ -306,6 +309,23 @@ def delete_session(session_id):
             pass
 
 
+EYE_PATCH_ERROR_MARKER = "Error in obtaining eye patch:"
+
+
+def _safe_failure_text(text):
+    """First line of an upstream error message reduced to a short, harmless token string."""
+    line = (text or "").strip().splitlines()[0] if (text or "").strip() else ""
+    cleaned = re.sub(r"[^A-Za-z0-9 _.,:()\[\]/=-]", "?", line)[:160].strip()
+    return cleaned or None
+
+
+def _tracking_failure(captured_output):
+    """Why upstream reported no face: no landmarks at all, or landmarks found but the eye patch could not be built."""
+    if EYE_PATCH_ERROR_MARKER in captured_output:
+        return {"stage": "eye_patch", "message": _safe_failure_text(captured_output.split(EYE_PATCH_ERROR_MARKER, 1)[1])}
+    return {"stage": "landmarks", "message": None}
+
+
 def _eye_aspect_ratios(state, result, width, height):
     """EAR per eye exactly as upstream computes it for the open/closed decision, or None when unavailable."""
     try:
@@ -330,8 +350,10 @@ def _frame_result(state, session, frame_id, capture_timestamp_ms, jpeg):
     if width < 64 or height < 64 or width * height > MAX_FRAME_PIXELS:
         raise ServiceError(413, "GAZE_FRAME_DIMENSIONS")
     started = time.perf_counter()
+    captured = io.StringIO()
     try:
-        with TF.device("/GPU:0"):
+        # Upstream reports an eye-patch failure only by printing it; capture that (inference holds COMPUTE_LOCK, so one thread).
+        with TF.device("/GPU:0"), contextlib.redirect_stdout(captured):
             status, result, _ = state.tracker.process_frame(frame)
     except Exception:
         raise ServiceError(503, "GAZE_INFERENCE_FAILED")
@@ -382,6 +404,7 @@ def _frame_result(state, session, frame_id, capture_timestamp_ms, jpeg):
         "gazeState": gaze_state,
         "normPog": norm,
         "eyeAspectRatio": _eye_aspect_ratios(state, result, width, height) if face_detected else None,
+        "trackingFailure": None if face_detected else _tracking_failure(captured.getvalue()),
         "durations": durations,
     }
 
@@ -538,6 +561,8 @@ def process_calibration_target(session, body):
         "closedFrames": len(closed),
         "usableFrames": len(usable),
         "frameErrors": len(frame_errors),
+        "eyePatchFailures": len([r for r in results if (r.get("trackingFailure") or {}).get("stage") == "eye_patch"]),
+        "failureMessage": next((r["trackingFailure"]["message"] for r in results if (r.get("trackingFailure") or {}).get("stage") == "eye_patch" and r["trackingFailure"]["message"]), None),
         "eyeAspectRatio": {"min": min(min(e["left"], e["right"]) for e in ears), "threshold": ears[0]["threshold"]} if ears else None,
     }
     needed = max(1, min(MIN_USABLE_FRAMES, len(frames)))

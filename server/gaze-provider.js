@@ -63,12 +63,21 @@ export function validateCalibrationTargetRequest({phase, pointIndex, target, fra
 function sanitizeTargetResult(info, request) {
   const ear = info?.eyeAspectRatio;
   const validEarSummary = ear === null || (ear && finite(ear.min) && ear.min >= 0 && ear.min <= 2 && finite(ear.threshold) && ear.threshold >= 0 && ear.threshold <= 2);
-  if (!TARGET_STATUSES.has(info?.status) || info.pointIndex !== request.pointIndex || info.phase !== request.phase || ![info.totalFrames, info.faceFrames, info.closedFrames, info.usableFrames, info.frameErrors].every(count) ||
+  if (!TARGET_STATUSES.has(info?.status) || info.pointIndex !== request.pointIndex || info.phase !== request.phase || ![info.totalFrames, info.faceFrames, info.closedFrames, info.usableFrames, info.frameErrors, info.eyePatchFailures ?? 0].every(count) ||
       info.totalFrames !== request.frames.length || info.usableFrames > info.faceFrames || info.faceFrames > info.totalFrames || !validEarSummary ||
       (info.status === 'measured') !== (request.phase === 'validate' && info.normPog !== undefined) || (info.status === 'measured' && !(Array.isArray(info.normPog) && info.normPog.length === 2 && info.normPog.every(x => finite(x) && x >= -.5 && x <= .5))) ||
       (info.status === 'measured' && request.phase !== 'validate') || (info.status === 'accepted' && request.phase !== 'train')) throw fail('GAZE_PROTOCOL_ERROR');
   return {status: info.status, phase: info.phase, pointIndex: info.pointIndex, totalFrames: info.totalFrames, faceFrames: info.faceFrames, closedFrames: info.closedFrames, usableFrames: info.usableFrames, frameErrors: info.frameErrors,
+    eyePatchFailures: info.eyePatchFailures ?? 0, failureMessage: typeof info.failureMessage === 'string' && FAILURE_MESSAGE.test(info.failureMessage) ? info.failureMessage : null,
     eyeAspectRatio: ear === null || ear === undefined ? null : {min: ear.min, threshold: ear.threshold}, ...(info.status === 'measured' ? {normPog: [...info.normPog]} : {}), ...(info.status === 'accepted' && count(info.collected) ? {collected: info.collected} : {})};
+}
+
+const FAILURE_MESSAGE = /^[A-Za-z0-9 _.,:()\[\]/=?-]{1,160}$/;
+function validTrackingFailure(value) {
+  if (value === null || value === undefined) return null;
+  if (!value || typeof value !== 'object' || !['landmarks', 'eye_patch'].includes(value.stage)) return null;
+  const message = typeof value.message === 'string' && FAILURE_MESSAGE.test(value.message) ? value.message : null;
+  return {stage: value.stage, message};
 }
 
 function validPog(value) {
@@ -147,7 +156,7 @@ export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs 
         method: 'POST', headers: {'content-type': 'image/jpeg', 'x-frame-id': String(frameId), 'x-capture-timestamp-ms': String(captureTimestampMs)}, body: bytes, signal
       });
       if (result?.status !== 'ok' || result.frameId !== frameId || result.captureTimestampMs !== captureTimestampMs || typeof result.faceDetected !== 'boolean' || !['open', 'closed', 'unknown'].includes(result.gazeState) || !validPog(result.normPog) || !result.durations || !Object.values(result.durations).every(x => finite(x) && x >= 0)) throw fail('GAZE_PROTOCOL_ERROR');
-      return {frameId, captureTimestampMs, faceDetected: result.faceDetected, gazeState: result.gazeState, normPog: result.normPog, eyeAspectRatio: validEar(result.eyeAspectRatio), durations: result.durations};
+      return {frameId, captureTimestampMs, faceDetected: result.faceDetected, gazeState: result.gazeState, normPog: result.normPog, eyeAspectRatio: validEar(result.eyeAspectRatio), trackingFailure: validTrackingFailure(result.trackingFailure), durations: result.durations};
     },
     async startCandidate(sessionId, signal) {
       const id = requireSession(sessionId);

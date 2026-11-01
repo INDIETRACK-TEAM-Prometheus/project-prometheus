@@ -191,3 +191,19 @@ test('open-eye wait descriptions distinguish no response, no face, closed eyes a
   assert.equal(describeOpenEyeWait({faceDetected:true,gazeState:'open',features:null}),'서버 응답: 시선 좌표 없음');
   assert.equal(describeOpenEyeWait({faceDetected:true,gazeState:'open',features:[.5,.5]}),'서버 응답: 열린 눈 확인');
 });
+
+test('a server that found no face names whether landmarks or the eye patch failed', async () => {
+  const eyePatch = harness({frameFields: {faceDetected: false, gazeState: 'unknown', normPog: null, trackingFailure: {stage: 'eye_patch', message: 'shape mismatch'}}});
+  await eyePatch.controller.start({userInitiated: true, cameraConsent: true});
+  eyePatch.video.emit(1010); await eyePatch.flush();
+  assert.deepEqual(eyePatch.samples[0].trackingFailure, {stage: 'eye_patch', message: 'shape mismatch'});
+  assert.equal(describeOpenEyeWait(eyePatch.samples[0]), '서버 응답: 얼굴은 찾았지만 눈 영역 추출 실패 (shape mismatch)');
+  const landmarks = harness({frameFields: {faceDetected: false, gazeState: 'unknown', normPog: null, trackingFailure: {stage: 'landmarks', message: null}}});
+  await landmarks.controller.start({userInitiated: true, cameraConsent: true});
+  landmarks.video.emit(1010); await landmarks.flush();
+  assert.equal(describeOpenEyeWait(landmarks.samples[0]), '서버 응답: 얼굴 미검출');
+  assert.equal(describeOpenEyeWait({faceDetected: false}), '서버 응답: 얼굴 미검출');
+  const base = {status: 'insufficient', totalFrames: 5, faceFrames: 0, closedFrames: 0, usableFrames: 0, frameErrors: 0, eyeAspectRatio: null};
+  assert.equal(describeCalibrationTarget({...base, eyePatchFailures: 5, failureMessage: 'shape mismatch'}), '얼굴은 찾았지만 눈 영역 추출 실패 5/5장 (shape mismatch)');
+  assert.equal(describeCalibrationTarget({...base, eyePatchFailures: 0}), '얼굴 미검출 (프레임 5장)');
+});

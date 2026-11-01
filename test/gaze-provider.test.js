@@ -34,7 +34,7 @@ test('remote gaze proxy adapter validates model hash, tensor shapes and finite l
   const created=await provider.createSession({screenPxDimensions:[800,600],adapter:sample});assert.deepEqual(created,{sessionId:'session-1',expiresInSeconds:600,calibrated:true});
   assert.deepEqual(await provider.startCandidate(created.sessionId),{status:'ready'});
   const jpeg=Buffer.from([255,216,255,217]);
-  assert.deepEqual(await provider.frame({sessionId:created.sessionId,frameId:4,captureTimestampMs:12.5,bytes:jpeg}),{frameId:4,captureTimestampMs:12.5,faceDetected:true,gazeState:'open',normPog:[-.2,.3],eyeAspectRatio:null,durations:{total:8}});
+  assert.deepEqual(await provider.frame({sessionId:created.sessionId,frameId:4,captureTimestampMs:12.5,bytes:jpeg}),{frameId:4,captureTimestampMs:12.5,faceDetected:true,gazeState:'open',normPog:[-.2,.3],eyeAspectRatio:null,trackingFailure:null,durations:{total:8}});
   assert.deepEqual(await provider.addCalibrationSample({sessionId:created.sessionId,frameId:4,pointIndex:0,target:[0,.25]}),{adapted:false,points:1});
   const accepted=await provider.acceptCandidate(created.sessionId);assert.equal(accepted.adapter.adapterId,sample.adapterId);
   await provider.discardCandidate(created.sessionId);await provider.deleteSession(created.sessionId);await provider.close();
@@ -92,7 +92,7 @@ test('calibration target burst is validated, forwarded once and its answer re-ch
     return json(targetResult(body.phase, body.pointIndex));
   });
   const trained = await provider.calibrationTarget({sessionId, phase: 'train', pointIndex: 4, target: [-.3, .2], frames: targetFrames([1, 2, 3])});
-  assert.deepEqual(trained, {status: 'accepted', phase: 'train', pointIndex: 4, totalFrames: 3, faceFrames: 3, closedFrames: 0, usableFrames: 3, frameErrors: 0, eyeAspectRatio: {min: .24, threshold: .2}, collected: 5});
+  assert.deepEqual(trained, {status: 'accepted', phase: 'train', pointIndex: 4, totalFrames: 3, faceFrames: 3, closedFrames: 0, usableFrames: 3, frameErrors: 0, eyePatchFailures: 0, failureMessage: null, eyeAspectRatio: {min: .24, threshold: .2}, collected: 5});
   const measured = await provider.calibrationTarget({sessionId, phase: 'validate', pointIndex: 0, target: [0, 0], frames: targetFrames([4, 5, 6])});
   assert.deepEqual(measured.normPog, [.1, -.2]);
   assert.equal(seen.length, 2);
@@ -136,4 +136,28 @@ test('finalizeCandidate requires the adapted answer and allows a long adaptation
   assert.equal(ok.seen[0][0], '/sessions/session-1/candidate/adapt');
   const bad = await targetProvider(async () => json({status: 'collecting', points: 26}));
   await assert.rejects(bad.provider.finalizeCandidate(bad.sessionId), {code: 'GAZE_PROTOCOL_ERROR'});
+});
+
+test('remote gaze provider forwards only a bounded tracking failure reason', async () => {
+  const reply = failure => async (url) => { const path = new URL(url).pathname; if (path === '/sessions') return json({status: 'ready', sessionId: 'session-1', expiresInSeconds: 600, calibrated: false}, 201);
+    return json({status: 'ok', frameId: 1, captureTimestampMs: 5, faceDetected: false, gazeState: 'unknown', normPog: null, trackingFailure: failure, durations: {total: 1}}); };
+  const run = async failure => { const provider = createRemoteGazeProvider({baseUrl: 'http://127.0.0.1:49191/', fetchImpl: reply(failure)}); const {sessionId} = await provider.createSession({}); return provider.frame({sessionId, frameId: 1, captureTimestampMs: 5, bytes: Buffer.from([255, 216, 255, 217])}); };
+  assert.deepEqual((await run({stage: 'eye_patch', message: 'shape mismatch (3,) into (2,)', extra: 1})).trackingFailure, {stage: 'eye_patch', message: 'shape mismatch (3,) into (2,)'});
+  assert.deepEqual((await run({stage: 'eye_patch', message: '<script>alert(1)</script>'})).trackingFailure, {stage: 'eye_patch', message: null});
+  assert.deepEqual((await run({stage: 'landmarks', message: null})).trackingFailure, {stage: 'landmarks', message: null});
+  assert.equal((await run({stage: 'other', message: 'x'})).trackingFailure, null);
+  assert.equal((await run(undefined)).trackingFailure, null);
+});
+
+test('calibration target summaries carry eye patch failure counts and a bounded message', async () => {
+  const frames = [1, 2, 3].map(frameId => ({frameId, captureTimestampMs: frameId, jpeg: Buffer.from([255, 216, 255, 217, 1, 2, 3, 4]).toString('base64')}));
+  const answer = extra => ({status: 'insufficient', phase: 'train', pointIndex: 0, totalFrames: 3, faceFrames: 0, closedFrames: 0, usableFrames: 0, frameErrors: 0, eyeAspectRatio: null, ...extra});
+  const run = async extra => { const fetchImpl = async (url) => new URL(url).pathname === '/sessions' ? json({status: 'ready', sessionId: 'session-1', expiresInSeconds: 600, calibrated: false}, 201) : json(answer(extra));
+    const provider = createRemoteGazeProvider({baseUrl: 'http://127.0.0.1:49191/', fetchImpl}); const {sessionId} = await provider.createSession({});
+    return provider.calibrationTarget({sessionId, phase: 'train', pointIndex: 0, target: [0, 0], frames}); };
+  const ok = await run({eyePatchFailures: 3, failureMessage: 'shape mismatch'});
+  assert.deepEqual([ok.eyePatchFailures, ok.failureMessage], [3, 'shape mismatch']);
+  assert.deepEqual([(await run({})).eyePatchFailures, (await run({})).failureMessage], [0, null]);
+  assert.equal((await run({eyePatchFailures: 1, failureMessage: '<b>x</b>'})).failureMessage, null);
+  await assert.rejects(run({eyePatchFailures: 99}), {code: 'GAZE_PROTOCOL_ERROR'});
 });

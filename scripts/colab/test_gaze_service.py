@@ -316,5 +316,89 @@ class BatchCalibrationTests(unittest.TestCase):
         self.assertEqual(len(tracker.adapt_calls), 1)
 
 
+class TrackingFailureTests(unittest.TestCase):
+    """Upstream reports a failed eye patch only by printing it; the service must turn that into a reason."""
+
+    def setUp(self):
+        namespace = service["_frame_result"].__globals__
+        self.namespace = namespace
+        previous = {name: namespace.get(name) for name in ("NP", "TF", "CV2")}
+        self.addCleanup(lambda: [namespace.__setitem__(name, value) for name, value in previous.items()])
+        namespace["NP"] = np
+        namespace["TF"] = FakeTF
+        namespace["CV2"] = type("FakeCV2", (), {"IMREAD_COLOR": 1, "imdecode": staticmethod(lambda data, flag: np.zeros((120, 160, 3), dtype=np.uint8))})
+        self.session = service["GazeSession"]("failure-session", (1920, 1080), (53.1, 29.8), FakeTracker())
+
+    def run_frame(self, process_frame):
+        tracker = FakeTracker()
+        tracker.process_frame = process_frame
+        state = service["TrackerState"](tracker)
+        return service["_frame_result"](state, self.session, 1, 5.0, b"\xff\xd8\xff\xd9")
+
+    def test_eye_patch_failure_is_named_with_a_sanitised_message(self):
+        def process(frame):
+            print("Error in obtaining eye patch: could not broadcast input array from shape (3,) into shape (2,)\nsecond line <script>")
+            return type("Status", (), {"value": 0})(), None, None
+        result = self.run_frame(process)
+        self.assertFalse(result["faceDetected"])
+        self.assertEqual(result["trackingFailure"], {"stage": "eye_patch", "message": "could not broadcast input array from shape (3,) into shape (2,)"})
+
+    def test_message_is_reduced_to_harmless_characters_and_length(self):
+        def process(frame):
+            print("Error in obtaining eye patch: <b>bad</b> \\ \"quote\" " + "x" * 400)
+            return type("Status", (), {"value": 0})(), None, None
+        message = self.run_frame(process)["trackingFailure"]["message"]
+        self.assertLessEqual(len(message), 160)
+        self.assertNotIn("<", message)
+        self.assertNotIn('"', message)
+
+    def test_no_landmarks_is_reported_as_landmarks_stage(self):
+        result = self.run_frame(lambda frame: (type("Status", (), {"value": 0})(), None, None))
+        self.assertEqual(result["trackingFailure"], {"stage": "landmarks", "message": None})
+
+    def test_detected_faces_carry_no_failure_and_stdout_is_restored(self):
+        import sys
+        before = sys.stdout
+
+        def process(frame):
+            print("noise that must not leak")
+            result = type("Result", (), {"gaze_state": "open", "norm_pog": np.array([0.1, 0.2]), "durations": {}, "eye_patch": np.zeros((2, 2)),
+                                         "head_vector": np.zeros(3), "face_origin_3d": np.zeros(3), "facial_landmarks": np.zeros((478, 3))})()
+            return type("Status", (), {"value": 1})(), result, None
+
+        result = self.run_frame(process)
+        self.assertTrue(result["faceDetected"])
+        self.assertIsNone(result["trackingFailure"])
+        self.assertIs(sys.stdout, before)
+
+    def test_inference_exceptions_still_surface_as_service_errors_with_stdout_restored(self):
+        import sys
+        before = sys.stdout
+
+        def process(frame):
+            raise RuntimeError("boom")
+
+        with self.assertRaises(service["ServiceError"]) as error:
+            self.run_frame(process)
+        self.assertEqual(error.exception.code, "GAZE_INFERENCE_FAILED")
+        self.assertIs(sys.stdout, before)
+
+    def test_burst_summary_counts_eye_patch_failures_and_keeps_the_first_message(self):
+        import base64
+        jpeg = base64.b64encode(b"\xff\xd8\xff\xd9").decode("ascii")
+        batch = BatchCalibrationTests("test_requests_are_validated_before_any_inference")
+        batch.setUp()
+        self.addCleanup(batch.doCleanups)
+        failure = {"stage": "eye_patch", "message": "shape mismatch"}
+
+        def fake_infer(session, frame_id, timestamp, data):
+            return {"frameId": frame_id, "faceDetected": False, "gazeState": "unknown", "normPog": None, "eyeAspectRatio": None, "trackingFailure": failure}
+
+        batch.namespace["infer_frame"] = fake_infer
+        body = {"phase": "train", "pointIndex": 0, "target": [0.0, 0.0], "frames": [{"frameId": i, "captureTimestampMs": float(i), "jpeg": jpeg} for i in range(1, 6)]}
+        response = service["process_calibration_target"](batch.session, body)
+        self.assertEqual((response["status"], response["faceFrames"], response["eyePatchFailures"], response["failureMessage"]), ("insufficient", 0, 5, "shape mismatch"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -801,7 +801,7 @@ async function boot() {
         if(screenPoint.x>=r.left&&screenPoint.x<r.left+r.width&&screenPoint.y>=r.top&&screenPoint.y<r.top+r.height)markerXY={x:(screenPoint.x-r.left)/r.width,y:(screenPoint.y-r.top)/r.height};
       }
       const timingLabel=sample.timestampKind==='callback_time_not_capture'?'콜백 시각(캡처 시각 아님)':'브라우저 캡처 추정 시각';
-      gazeStatus.textContent=markerXY?`WebEyeTrack 기본 모델 · 미교정 ${timingLabel} · 정확도와 시간 정렬 미검증`:sample.faceDetected===true?'미교정 추정점이 장면 밖입니다.':'얼굴/유효 시선 미검출 · 미교정 추정 보류';
+      gazeStatus.textContent=markerXY?`WebEyeTrack 기본 모델 · 미교정 ${timingLabel} · 정확도와 시간 정렬 미검증`:sample.faceDetected===true?'미교정 추정점이 장면 밖입니다.':`얼굴/유효 시선 미검출 · 미교정 추정 보류 · ${describeOpenEyeWait(sample)}`;
       $('#worldGazeState').textContent=markerXY?'WebEyeTrack 미교정 추정 · 데모 전용':sample.faceDetected===true?'장면 밖 · 미교정 추정':'얼굴/유효 시선 미검출';
     }else{
       gazeStatus.textContent=sample.valid?'시선 추정 · 시간 정렬 보류':`추적 보류 · ${sample.invalidReason}`;
