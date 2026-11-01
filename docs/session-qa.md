@@ -8,6 +8,8 @@ node scripts/evaluate-session-qa.mjs --pilot prometheus-pilot-summary.json --acc
 
 The `--accuracy` input is optional. The command creates a new output file and refuses to overwrite one. It does not call a provider, inspect or include individual gaze coordinates, or include participant labels and notes. The accuracy report's hash is checked before its aggregate metrics are included.
 
+Since 2026-11-01 the pilot export also carries `gazeTransport` (remote gaze: per-frame encode, round trip, remote model time, result age at the page, bytes, counts and effective Hz over the last 256 frames) and `backgroundAttention` (cycle latency, result age, SAM time, deadline counts over a bounded window). The QA report copies these percentiles when present; older exports report them as unavailable. All are browser-clock measurements; display presentation time is not measured.
+
 The pilot export provides pause-adjusted elapsed duration, valid gaze sample counts, calibration state, camera sample intervals, gaze inference mean/max, queue drops, and maximum age measurements from the optional frozen-scene demo. It does not provide the paused-time total, request-stage latency distributions, provider request failure counts, or provider spend. Those report as unavailable; camera sample interval and gaze inference timing are not presented as SAM or reasoner latency. Accuracy sample overflow is also unavailable in this aggregate-only report because its count is in the detailed gaze-samples export.
 
 ## Human run required for actual results

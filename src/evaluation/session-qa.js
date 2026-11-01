@@ -51,6 +51,19 @@ function requireAccuracy(report) {
 const unavailable = reason => ({value:null, status:'not_exported', reason});
 
 // Keeps the summary aggregate-only. Accuracy sample exports contain individual gaze coordinates and are not needed here.
+// Optional stage timings added to the pilot export on 2026-11-01; older exports report them as unavailable.
+const stageStats = value => value && ['n', 'p50', 'p95', 'max'].every(key => key === 'n' ? integerNonnegative(value[key]) : value[key] === null || Number.isFinite(value[key])) ? {n:value.n, p50:value.p50, p95:value.p95, max:value.max} : null;
+function gazeTransport(value) {
+  if (!value || value.kind !== 'remote_gaze_transport' || !value.counts) return null;
+  const stages = Object.fromEntries(['encodeMs', 'roundTripMs', 'remoteModelMs', 'ageAtSampleMs'].map(key => [key, stageStats(value[key])]));
+  return Object.values(stages).every(Boolean) ? {...stages, effectiveResultHz:Number.isFinite(value.effectiveResultHz) ? value.effectiveResultHz : null, counts:{...value.counts}, clock:value.clock ?? null} : null;
+}
+function backgroundCycles(value) {
+  if (!value || !value.counts || !value.generated) return null;
+  const pick = summary => summary && typeof summary === 'object' ? {...summary} : null;
+  return {deadlineMs:value.deadlineMs ?? null, effectiveHz:value.effectiveHz ?? null, counts:{...value.counts}, generated:{latencyMs:pick(value.generated.latencyMs), resultAgeMs:pick(value.generated.resultAgeMs), samMs:pick(value.generated.samMs)}, cached:value.cached ? {latencyMs:pick(value.cached.latencyMs), resultAgeMs:pick(value.cached.resultAgeMs)} : null};
+}
+
 export function createSessionQaReport({pilot, accuracyReport = null} = {}) {
   requirePilot(pilot);
   const frozen = pilot.frozenSceneDemo ?? {};
@@ -67,8 +80,10 @@ export function createSessionQaReport({pilot, accuracyReport = null} = {}) {
         invalidated:typeof pilot.calibration.invalidatedAtUtc === 'string', environmentChanged:pilot.calibration.environmentChanged === true}},
     latency:{captureIntervalMs:requireSummary(pilot.captureIntervalsMs, 'captureIntervalsMs'),
       gazeInferenceMs:requireSummary(pilot.inferenceMs, 'inferenceMs'),
-      samMs:unavailable('pilot export does not retain SAM request timings'),
-      reasonerMs:unavailable('pilot export does not retain reasoner request timings')},
+      gazeTransport:gazeTransport(pilot.gazeTransport) ?? unavailable('pilot export has no remote gaze transport telemetry (local model or older export)'),
+      backgroundCycles:backgroundCycles(pilot.backgroundAttention) ?? unavailable('pilot export has no background attention telemetry'),
+      samMs:unavailable('per-request SAM timings are not exported separately; see backgroundCycles.generated.samMs when present'),
+      reasonerMs:unavailable('reasoner request timings are not exported separately; see backgroundCycles.generated.latencyMs when present')},
     failures:{invalidGazeSamples:pilot.samples - pilot.validGazeSamples,
       calibrationInvalidated:typeof pilot.calibration.invalidatedAtUtc === 'string', syncGateStatus:pilot.syncGate?.status ?? 'not_exported',
       requestFailures:unavailable('pilot export does not include provider request outcomes')},
@@ -91,7 +106,7 @@ export function createSessionQaReport({pilot, accuracyReport = null} = {}) {
     } : {status:'not_supplied', evidenceKind:null, gateDecision:'not_assessed'},
     limitations:[
       'Pilot duration is the app exported pause-adjusted duration; the paused-time total is not exported.',
-      'Latency is available only as aggregate camera intervals and gaze inference mean/max; request stage percentiles are unavailable.',
+      'Latency percentiles come from bounded recent windows on the browser clock (gaze transport, background cycles) when exported; display presentation time is never measured.',
       'Request failures, provider spend, and per-call outcome records are not included in the pilot export.',
       'The real_user label in an accuracy export cannot prove a human ran it; retain consent and source evidence separately.',
       'This QA report is descriptive and never makes or records a synthetic Gate pass.'

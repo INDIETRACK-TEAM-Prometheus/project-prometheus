@@ -49,3 +49,15 @@ test('rejects unrecognized pilot fields instead of copying them into the aggrega
   data.timestampKinds.privateLabel = 'must not be exported';
   assert.throws(() => createSessionQaReport({pilot:data}),/timestamp counts/);
 });
+
+test('session QA includes exported gaze transport and background cycle percentiles when present', () => {
+  const stats = {n:3,p50:10,p95:20,max:25};
+  const withTelemetry = {...pilot(), gazeTransport:{kind:'remote_gaze_transport',clock:'browser_performance_now',counts:{sent:3,failed:0},effectiveResultHz:5,encodeMs:stats,roundTripMs:stats,remoteModelMs:stats,ageAtSampleMs:stats,bytes:stats},
+    backgroundAttention:{deadlineMs:200,effectiveHz:{all:1},counts:{published:2},generated:{latencyMs:{count:2},resultAgeMs:{count:2},samMs:{count:2}},cached:{latencyMs:{count:0},resultAgeMs:{count:0}}}};
+  const result = createSessionQaReport({pilot:withTelemetry});
+  assert.deepEqual(result.latency.gazeTransport.roundTripMs, stats);
+  assert.equal(result.latency.gazeTransport.effectiveResultHz, 5);
+  assert.equal(result.latency.backgroundCycles.deadlineMs, 200);
+  assert.equal(createSessionQaReport({pilot:pilot()}).latency.gazeTransport.status, 'not_exported');
+  assert.equal(createSessionQaReport({pilot:{...pilot(), gazeTransport:{kind:'remote_gaze_transport',counts:{},roundTripMs:{n:-1}}}}).latency.gazeTransport.status, 'not_exported');
+});

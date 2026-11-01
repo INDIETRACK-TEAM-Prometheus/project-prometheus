@@ -56,6 +56,10 @@ export function createRemoteWebcamGazeController({
   let sessionId = null, sessionAbort = null, pendingFrame = null, inFlight = null, captureCanvas = null, candidateDiscard = Promise.resolve();
   let lastSentAt = -Infinity, frameNumber = 0, latestSample = null, calibrated = false, candidate = false, calibrationPointIndex = 0;
   let timing = null, clockMonitor = null, lastTimestamp = -1, modelInfo = null;
+  // Bounded per-frame transport timings (A12/G4-D): browser clock only, not optical display time.
+  const TELEMETRY_SAMPLES = 256, telemetryRows = [];
+  const telemetryCounts = {captured:0, superseded:0, sent:0, received:0, published:0, staleDropped:0, busy:0, failed:0, oversized:0};
+  function recordTelemetry(row) { telemetryRows.push(row); if (telemetryRows.length > TELEMETRY_SAMPLES) telemetryRows.shift(); }
 
   function diagnose(code) { try { onDiagnostic(code); } catch {} }
   function validSessionId(value) { return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value); }
@@ -91,6 +95,7 @@ export function createRemoteWebcamGazeController({
     callbackId = null;
     if (!running || paused || token !== generation) return;
     const captureTime = finite(metadata.captureTime) && metadata.captureTime >= 0 ? metadata.captureTime : now;
+    telemetryCounts.captured++; if (pendingFrame) telemetryCounts.superseded++;
     pendingFrame = {captureTimestampMs:captureTime, callbackTimestampMs:now, timestampKind:finite(metadata.captureTime)?'browser_capture_estimate':'callback_time_not_capture'};
     if (!inFlight && now - lastSentAt >= 1000 / maxFrameHz) void sendLatest(token);
     schedule(token);
@@ -122,7 +127,7 @@ export function createRemoteWebcamGazeController({
       : null;
     const hasCaptureTime=request.timestampKind==='browser_capture_estimate';
     const alignment=hasCaptureTime&&clockMonitor?clockMonitor.observe(result.captureTimestampMs,receivedAt):null;
-    if(result.captureTimestampMs<=lastTimestamp&&alignment?.reason!=='clock_jump_detected')return;
+    if(result.captureTimestampMs<=lastTimestamp&&alignment?.reason!=='clock_jump_detected'){telemetryCounts.staleDropped++;return;}
     if(result.captureTimestampMs>lastTimestamp)lastTimestamp=result.captureTimestampMs;
     const calibratedSample=calibrated&&!!features&&!!rawScreenXY;
     const sample = {
@@ -146,6 +151,7 @@ export function createRemoteWebcamGazeController({
     sample.syncStatus=alignment?.status==='ok'?'measured_active':alignment?.reason??'unmeasured';
     latestSample = sample;
     try { onEyePreview({frameId:sample.frameId,faceDetected,eyeCrops:{},bitmaps:{}}); } catch {}
+    telemetryCounts.published++;
     try { onSample(sample); } catch { const error=startupError('sample_handler_failed'); diagnose(error.code); onError(error); }
   }
 
@@ -161,24 +167,30 @@ export function createRemoteWebcamGazeController({
     const abort = new AbortController();
     sessionAbort = abort;
     const job = (async () => {
+      const encodeStartedAt = clockNow();
       const blob = await encodeLatest(frame);
-      if (blob.size > 512 * 1024) throw startupError('gaze_frame_too_large');
+      if (blob.size > 512 * 1024) { telemetryCounts.oversized++; throw startupError('gaze_frame_too_large'); }
       const bytes = await blob.arrayBuffer();
       const sentAt = clockNow();
+      telemetryCounts.sent++;
       request.width=captureCanvas.width;request.height=captureCanvas.height;
       const response = await fetchImpl(`/api/gaze/sessions/${encodeURIComponent(sessionId)}/frame`, {
         method:'POST', headers:{'content-type':'image/jpeg','x-frame-id':String(frameId),'x-capture-timestamp-ms':String(frame.captureTimestampMs)}, body:bytes, signal:abort.signal, cache:'no-store'
       });
       const result = await readJson(response);
       if (result.frameId !== frameId || result.captureTimestampMs !== frame.captureTimestampMs || typeof result.faceDetected !== 'boolean' || !['open','closed','unknown'].includes(result.gazeState) || (result.normPog !== null && !validNorm(result.normPog))) throw startupError('gaze_protocol_error');
-      if (running && !paused && token === generation) sampleFrom(result, request, clockNow(), sentAt);
+      const receivedAt = clockNow();
+      telemetryCounts.received++;
+      const remoteMs = result.durations && typeof result.durations === 'object' ? Object.values(result.durations).filter(finite).reduce((sum, value) => sum + value, 0) : null;
+      recordTelemetry({sentAt, encodeMs:sentAt - encodeStartedAt, roundTripMs:receivedAt - sentAt, remoteModelMs:remoteMs, ageAtSampleMs:receivedAt - frame.callbackTimestampMs, bytes:bytes.byteLength});
+      if (running && !paused && token === generation) sampleFrom(result, request, receivedAt, sentAt);
     })();
     inFlight = job;
     try { await job; }
     catch (error) {
       if (running && !paused && token === generation && error?.code !== 'GAZE_CANCELLED') {
-        if (error?.code === 'gaze_provider_busy') diagnose('gaze_provider_busy');
-        else { const safe=startupError(error?.code==='gaze_frame_too_large'?'gaze_frame_too_large':'gaze_remote_inference_failed');diagnose(safe.code);running=false;generation++;stopCamera();onError(safe); }
+        if (error?.code === 'gaze_provider_busy') { telemetryCounts.busy++; diagnose('gaze_provider_busy'); }
+        else { telemetryCounts.failed++; const safe=startupError(error?.code==='gaze_frame_too_large'?'gaze_frame_too_large':'gaze_remote_inference_failed');diagnose(safe.code);running=false;generation++;stopCamera();onError(safe); }
       }
     } finally {
       if (sessionAbort === abort) sessionAbort = null;
@@ -273,6 +285,15 @@ export function createRemoteWebcamGazeController({
       sessionAbort?.abort();diagnose('remote_gaze_paused');
     },
     resume() { if(!running||!paused)return;paused=false;pendingFrame=null;schedule(generation);diagnose('remote_gaze_resumed'); },
+    telemetry() {
+      const pick = key => telemetryRows.map(row => row[key]).filter(finite).sort((a, b) => a - b);
+      const stats = key => { const v = pick(key); return v.length ? {n:v.length, p50:v[Math.ceil(.5 * v.length) - 1], p95:v[Math.ceil(.95 * v.length) - 1], max:v[v.length - 1]} : {n:0, p50:null, p95:null, max:null}; };
+      const span = telemetryRows.length > 1 ? telemetryRows.at(-1).sentAt - telemetryRows[0].sentAt : 0;
+      return {kind:'remote_gaze_transport', clock:'browser_performance_now', windowSamples:telemetryRows.length, maxWindowSamples:TELEMETRY_SAMPLES, counts:{...telemetryCounts},
+        effectiveResultHz:span > 0 ? (telemetryRows.length - 1) / (span / 1000) : null,
+        encodeMs:stats('encodeMs'), roundTripMs:stats('roundTripMs'), remoteModelMs:stats('remoteModelMs'), ageAtSampleMs:stats('ageAtSampleMs'), bytes:stats('bytes'),
+        note:'ageAtSampleMs runs from the video frame callback to the result arriving in the page; display presentation time is not measured'};
+    },
     async stop() {
       generation++;starting=false;running=false;paused=false;pendingFrame=null;
       if(callbackId!==null){try{video.cancelVideoFrameCallback(callbackId);}catch{}callbackId=null;}
@@ -313,6 +334,7 @@ export function createProfiledWebcamGazeController(options) {
     get calibrated(){return Boolean(controller?.calibrated);},
     async start(options){const token=++generation;const selected=await selectController();if(token!==generation)throw startupError('camera_request_aborted');return selected.start(options);},
     stop(){generation++;return controller?.stop();},
+    telemetry(){return typeof controller?.telemetry==='function'?controller.telemetry():null;},
     pause(){return controller?.pause?.();},
     resume(){return controller?.resume?.();},
     beginCalibration(...args){return selectController().then(c=>c.beginCalibration(...args));},

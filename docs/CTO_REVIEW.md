@@ -40,6 +40,16 @@ The gaze worker was booted in a separate, temporary T4 session using only the of
 
 ## Gate 판정
 
+### 2026-11-01 핸드오프 인수 후 검증·깊이 라이브 연결·지연 계측
+
+`docs/HANDOFF_20261101.md`(인수 기준 `d110357`)를 인수했다. 핸드오프가 최신 HEAD에서 전체 시험을 다시 실행하지 않았다고 기록했으므로 재실행했다: `npm test` 532개 중 531 통과·1 skip·실패 0, Gate 기록 검증기 오류 0, Colab CLI 경로·터널 검사 통과, Colab Python 서비스 시험 10개 통과.
+
+핸드오프 5번(깊이·후보·LLM 실제 경로): 라이브 백그라운드 작업이 같은 프레임의 Depth Anything 결과를 SAM과 병렬로 받아, 연결된(linked) 지속 객체의 foreground mask 통계(median/IQR), IQR이 겹치지 않을 때만 near/far, 시선 픽셀 깊이를 구조화해 Spark에 `depth` 근거로 넘긴다. 깊이 artifact를 브라우저에서 만들 수 있게 `node:crypto` 대신 순수 JS SHA-256을 쓴다. 서버는 후보 외 객체·요청보다 늦은 가용 시각·비미터 단위·형식 오류를 400으로 거부한다. 늦거나 실패한 깊이는 사유와 함께 보류하고 추론은 계속한다. 시선 픽셀 값만 표시하던 이전 경로는 제거했다.
+
+핸드오프 4번(계측): 원격 시선 컨트롤러가 최근 256프레임의 인코딩·왕복·원격 모델·결과 나이·바이트·실패/바쁨/대체/폐기 수와 유효 Hz를 기록하고, 측정 요약 export에 `gazeTransport`와 백그라운드 루프 `backgroundAttention` telemetry를 넣는다. 세션 QA 보고서가 이를 p50/p95로 옮긴다. 모두 브라우저 시계 측정이며 화면 표시 시각은 측정하지 않는다.
+
+시험: 새 시험 6개(백그라운드 깊이 포함/보류 2, 경로 깊이 수용/거부 2, 원격 telemetry 1, QA 1; 기존 시험 수정 없음). 전체 회귀 538개 중 537 통과, 1 skip, 실패 0. 브라우저에서 수정 모듈 로드와 콘솔 오류 없음을 확인했다. 실제 카메라·Colab GPU·Spark 실호출은 이번에 실행하지 않았고 Gate 판정은 변경하지 않는다. 핸드오프 1~3번(통합 실행 재확인, 실제 카메라 교정, 9×3 시험·30분)은 사용자 실행이 필요하다.
+
 ### 2026-11-01 시선 정확도 시험 앱 연결 (G1-F)
 
 `src/gaze/accuracy-session.js`가 고정 plan을 검증한 뒤 표적을 고정 간격(settle 700 + dwell 1200 + 간격 300ms)으로 보여주고, 표적이 그려진 시각(`requestAnimationFrame` 이후)을 trial log에 남긴다. 표적이 보이는 동안의 모든 tracker 샘플(무효 포함)을 raw(WebEyeTrack 적응 출력)·calibrated(affine/잔차 보정 후)·filtered(별도 One-Euro 인스턴스) 세 단계로 기록한다. 시험 중 클릭·적응·피팅은 없고, 백그라운드 SAM/Spark 루프는 멈춘다. Esc, 정지, 화면/환경 변경은 시험을 취소한다. 데이터 패널에 조건 입력(안경·조명·거리, 비우면 사유와 함께 null)과 보고서·표본 export를 넣었다.

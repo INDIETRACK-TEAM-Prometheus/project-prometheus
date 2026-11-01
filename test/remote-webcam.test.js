@@ -82,3 +82,17 @@ test('cloud calibration uses 27 fresh frame IDs, accepts model-only weights, and
   saved.video.emit(6000);await saved.flush();assert.equal(saved.samples[0].valid,true);
   await saved.controller.stop();await h.controller.stop();
 });
+
+test('remote uploader records bounded per-frame transport telemetry on the browser clock',async()=>{
+  const h=harness();
+  await h.controller.start({userInitiated:true,cameraConsent:true});
+  for(const at of [1010,1200,1400]){h.video.emit(at);await h.flush();}
+  const t=h.controller.telemetry();
+  assert.equal(t.kind,'remote_gaze_transport');
+  assert.equal(t.counts.sent,3);assert.equal(t.counts.received,3);assert.equal(t.counts.published,3);assert.equal(t.counts.failed,0);
+  assert.equal(t.windowSamples,3);assert.equal(t.bytes.p50,4);assert.equal(t.remoteModelMs.p50,7);
+  assert.ok(t.ageAtSampleMs.n===3&&t.ageAtSampleMs.max>=0);
+  assert.ok(t.effectiveResultHz>0);
+  assert.match(t.note,/display presentation time is not measured/);
+  await h.controller.stop();
+});
