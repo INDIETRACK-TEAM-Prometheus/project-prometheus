@@ -31,6 +31,28 @@ function normalizedError(code) {
   return fail(providerCodes.has(code) ? code : 'DEPTH_RUNTIME_UNAVAILABLE');
 }
 
+async function responseText(response) {
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    const text = await response.text();
+    if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) throw fail('DEPTH_PROVIDER_PROTOCOL_ERROR');
+    return text;
+  }
+  const chunks = [];
+  let length = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value.byteLength > MAX_RESPONSE_BYTES - length) {
+      await reader.cancel().catch(() => {});
+      throw fail('DEPTH_PROVIDER_PROTOCOL_ERROR');
+    }
+    chunks.push(Buffer.from(value));
+    length += value.byteLength;
+  }
+  return Buffer.concat(chunks, length).toString('utf8');
+}
+
 function parseImage(imageDataUrl, frame) {
   if (typeof imageDataUrl !== 'string' || imageDataUrl.length > Math.ceil(MAX_IMAGE_BYTES * 4 / 3) + 32) throw fail('DEPTH_INVALID_IMAGE');
   const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/]*={0,2})$/.exec(imageDataUrl);
@@ -283,11 +305,11 @@ function roundMs(value) { return Math.round(value * 1000) / 1000; }
 
 // Remote GPU worker reached through a loopback SSH tunnel (scripts/colab/start-depth.ps1). Only
 // virtual scene frames are sent; the response is validated exactly like the local worker's.
-export function createRemoteDepthProvider({ baseUrl, fetchImpl = fetch, startupTimeoutMs = 30_000, requestTimeoutMs = 30_000 } = {}) {
+export function createRemoteDepthProvider({ baseUrl, fetchImpl = fetch, startupTimeoutMs = 30_000, requestTimeoutMs = 30_000, transport = 'optimized' } = {}) {
   let url;
   try { url = new URL(baseUrl); } catch { throw new TypeError('remote depth URL required'); }
   if (url.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname) || url.pathname !== '/' || url.search || url.hash || url.username || url.password) throw new TypeError('remote depth URL must be a loopback tunnel origin');
-  if (typeof fetchImpl !== 'function' || !Number.isFinite(startupTimeoutMs) || startupTimeoutMs <= 0 || !Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) throw new TypeError('invalid remote depth provider configuration');
+  if (typeof fetchImpl !== 'function' || !Number.isFinite(startupTimeoutMs) || startupTimeoutMs <= 0 || !Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0 || !['optimized', 'legacy'].includes(transport)) throw new TypeError('invalid remote depth provider configuration');
   let ready = null, readyPromise = null, pending = null, closed = false;
 
   async function call(path, init, timeoutMs, signal) {
@@ -296,9 +318,9 @@ export function createRemoteDepthProvider({ baseUrl, fetchImpl = fetch, startupT
     const abort = () => controller.abort(new Error('cancelled'));
     signal?.addEventListener('abort', abort, { once: true });
     try {
-      const response = await fetchImpl(new URL(path, url), { ...init, signal: controller.signal });
-      const text = await response.text();
-      if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) throw fail('DEPTH_PROVIDER_PROTOCOL_ERROR');
+      const headers = { Accept: 'application/json', ...init?.headers, ...(transport === 'legacy' ? { 'Accept-Encoding': 'identity', Connection: 'close' } : {}) };
+      const response = await fetchImpl(new URL(path, url), { ...init, headers, signal: controller.signal });
+      const text = await responseText(response);
       let body;
       try { body = JSON.parse(text); } catch { throw fail('DEPTH_PROVIDER_PROTOCOL_ERROR'); }
       if (response.status === 429) throw fail('DEPTH_PROVIDER_BUSY');

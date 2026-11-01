@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { createRemoteDepthProvider, createConfiguredDepthProvider } from '../server/depth-provider.js';
 
 const frame = {frameId:'scene-9', observedAt:50, width:2, height:2};
@@ -11,7 +13,7 @@ const ok = id => ({id, status:'ok', frame:{frameId:frame.frameId, observedAt:fra
 const reply = (status, body) => ({status, text:async () => JSON.stringify(body)});
 function tunnel(handler) {
   const calls = [];
-  return {calls, fetchImpl:async (target, init) => { calls.push([String(target), init.method]); return handler(new URL(target).pathname, init); }};
+  return {calls, fetchImpl:async (target, init) => { calls.push([String(target), init.method, init.headers]); return handler(new URL(target).pathname, init); }};
 }
 
 test('remote provider validates the GPU worker and returns the exact frame depth', async () => {
@@ -67,4 +69,68 @@ test('configured Colab provider defaults to a Fetch-compatible loopback port', a
     await provider.infer({frame, imageDataUrl});
     assert.ok(t.calls.every(([target]) => new URL(target).port === '49190'));
   } finally { await provider.close(); }
+});
+
+test('legacy transport opts out of gzip and connection reuse for paired comparisons', async () => {
+  const t = tunnel((path, init) => path === '/health' ? reply(200, ready) : reply(200, ok(JSON.parse(init.body).id)));
+  const provider = createRemoteDepthProvider({baseUrl:'http://127.0.0.1:49190/', fetchImpl:t.fetchImpl, transport:'legacy'});
+  await provider.infer({frame, imageDataUrl});
+  assert.deepEqual(t.calls.map(([, , headers]) => headers), [
+    {Accept:'application/json', 'Accept-Encoding':'identity', Connection:'close'},
+    {Accept:'application/json', 'Content-Type':'application/json', 'Accept-Encoding':'identity', Connection:'close'},
+  ]);
+  assert.throws(() => createRemoteDepthProvider({baseUrl:'http://127.0.0.1:49190/', transport:'unknown'}), /configuration/);
+});
+
+test('optimized Fetch transport leaves gzip negotiation and keep-alive enabled with exact map fidelity', async () => {
+  const t = tunnel((path, init) => path === '/health' ? reply(200, ready) : reply(200, ok(JSON.parse(init.body).id)));
+  const provider = createRemoteDepthProvider({baseUrl:'http://127.0.0.1:49190/', fetchImpl:t.fetchImpl});
+  const result = await provider.infer({frame, imageDataUrl});
+  assert.deepEqual(result.depth.values, [3,3,3,3]);
+  assert.deepEqual(result.depth.validMask, [1,1,1,1]);
+  assert.deepEqual(t.calls.map(([, , headers]) => headers), [
+    {Accept:'application/json'},
+    {Accept:'application/json', 'Content-Type':'application/json'},
+  ]);
+});
+
+test('remote provider cancels response streams that exceed the post-decompression size limit', async () => {
+  let cancelled = false;
+  const oversized = new Uint8Array(16 * 1024 * 1024 + 1);
+  const t = tunnel(() => ({
+    status:200,
+    body:new ReadableStream({start(controller) { controller.enqueue(oversized); }, cancel() { cancelled = true; }}),
+    text:async () => { throw new Error('stream should be read with its byte limit'); },
+  }));
+  const provider = createRemoteDepthProvider({baseUrl:'http://127.0.0.1:49190/', fetchImpl:t.fetchImpl});
+  await assert.rejects(provider.infer({frame, imageDataUrl}), {code:'DEPTH_PROVIDER_PROTOCOL_ERROR'});
+  assert.equal(cancelled, true);
+});
+
+test('Node Fetch decompresses gzip and reuses the optimized HTTP/1.1 connection', async () => {
+  const clientPorts = new Set();
+  const encodings = [];
+  const server = createServer(async (request, response) => {
+    clientPorts.add(request.socket.remotePort);
+    encodings.push(request.headers['accept-encoding']);
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const value = request.url === '/health' ? ready : ok(JSON.parse(Buffer.concat(chunks).toString()).id);
+    const body = gzipSync(JSON.stringify(value), {level:1});
+    response.writeHead(200, {'Content-Type':'application/json', 'Content-Encoding':'gzip', 'Content-Length':body.length});
+    response.end(body);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const provider = createRemoteDepthProvider({baseUrl:`http://127.0.0.1:${server.address().port}/`});
+  try {
+    const first = await provider.infer({frame, imageDataUrl});
+    const second = await provider.infer({frame, imageDataUrl});
+    assert.deepEqual(first.depth.values, [3,3,3,3]);
+    assert.deepEqual(second.depth.validMask, [1,1,1,1]);
+    assert.ok(encodings.every(value => value?.includes('gzip')));
+    assert.equal(clientPorts.size, 1);
+  } finally {
+    await provider.close();
+    await new Promise(resolve => server.close(resolve));
+  }
 });

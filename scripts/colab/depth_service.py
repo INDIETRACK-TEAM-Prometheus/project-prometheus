@@ -6,6 +6,7 @@ listens on 127.0.0.1:8765 inside the VM and is reached only through the SSH tunn
 scripts/colab/start-depth.ps1. It reuses the local worker's request validation and output format.
 """
 
+import gzip
 import io
 import json
 import shutil
@@ -23,6 +24,19 @@ PORT = 8765
 SOURCE_COMMIT = "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf"
 SOURCE_ZIP = f"https://github.com/DepthAnything/Depth-Anything-V2/archive/{SOURCE_COMMIT}.zip"
 CHECKPOINT_URL = "https://huggingface.co/depth-anything/Depth-Anything-V2-Metric-Hypersim-Small/resolve/main/depth_anything_v2_metric_hypersim_vits.pth"
+
+
+def encode_reply(value, accept_encoding):
+    body = json.dumps(value, separators=(",", ":"), allow_nan=False).encode("ascii")
+    encodings = {}
+    for item in accept_encoding.split(","):
+        parts = [part.strip() for part in item.split(";")]
+        try:
+            encodings[parts[0].lower()] = float(parts[1][2:]) if len(parts) > 1 and parts[1].lower().startswith("q=") else 1.0
+        except ValueError:
+            encodings[parts[0].lower()] = 0.0
+    gzip_enabled = encodings.get("gzip", encodings.get("*", 0.0)) > 0
+    return (gzip.compress(body, compresslevel=1, mtime=0) if gzip_enabled else body), gzip_enabled
 
 
 def fetch(url, timeout=300):
@@ -87,26 +101,55 @@ def serve(model, checkpoint_hash, ready, worker, depth_model):
     lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
         def reply(self, status, value):
-            body = json.dumps(value, separators=(",", ":"), allow_nan=False).encode("ascii")
+            body, gzip_enabled = encode_reply(value, self.headers.get("Accept-Encoding", ""))
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Vary", "Accept-Encoding")
+            if gzip_enabled:
+                self.send_header("Content-Encoding", "gzip")
+            if self.close_connection:
+                self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
 
         def do_GET(self):
+            content_lengths = self.headers.get_all("Content-Length", [])
+            if self.headers.get("Transfer-Encoding") or len(content_lengths) > 1 or any(value.strip() != "0" for value in content_lengths):
+                self.close_connection = True
+                self.reply(400, {"status": "error", "error": "DEPTH_INVALID_REQUEST"})
+                return
             if self.path == "/health":
                 self.reply(200, ready)
             else:
+                self.close_connection = True
                 self.reply(404, {"status": "error", "error": "not_found"})
 
         def do_POST(self):
             if self.path != "/infer":
+                self.close_connection = True
                 self.reply(404, {"status": "error", "error": "not_found"})
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            if length <= 0 or length > depth_model.MAX_REQUEST_BYTES:
+            if self.headers.get("Transfer-Encoding"):
+                self.close_connection = True
+                self.reply(400, {"id": None, "status": "error", "error": "DEPTH_INVALID_REQUEST"})
+                return
+            content_lengths = self.headers.get_all("Content-Length", [])
+            length_text = content_lengths[0].strip() if len(content_lengths) == 1 else ""
+            if not length_text or not length_text.isascii() or not length_text.isdigit():
+                self.close_connection = True
+                self.reply(400, {"id": None, "status": "error", "error": "DEPTH_INVALID_REQUEST"})
+                return
+            length = int(length_text)
+            if length <= 0:
+                self.close_connection = True
+                self.reply(400, {"id": None, "status": "error", "error": "DEPTH_INVALID_REQUEST"})
+                return
+            if length > depth_model.MAX_REQUEST_BYTES:
+                self.close_connection = True
                 self.reply(413, {"id": None, "status": "error", "error": "DEPTH_REQUEST_TOO_LARGE"})
                 return
             raw = self.rfile.read(length)
