@@ -31,6 +31,7 @@ ARCHIVE = HOME / "upstream.zip"
 PORT = 8766
 SOURCE_COMMIT = "75fbd2f5f784f2eb3a39675a8dcbf1b01c697f1c"
 SOURCE_ZIP = f"https://github.com/RedForestAI/WebEyeTrack/archive/{SOURCE_COMMIT}.zip"
+MEDIAPIPE_VERSION = "0.10.32"
 MAX_SESSIONS = 2
 SESSION_TTL_SECONDS = 600
 FRAME_CACHE_SIZE = 32
@@ -690,6 +691,7 @@ def _prepare_source():
     weights = SOURCE / "python" / "webeyetrack" / "model_weights" / "blazegaze_mpiifacegaze.keras"
     landmarker = SOURCE / "python" / "webeyetrack" / "model_weights" / "face_landmarker_v2_with_blendshapes.task"
     if marker.is_file() and marker.read_text("ascii").strip() == SOURCE_COMMIT and package.is_file() and weights.is_file() and landmarker.is_file():
+        _patch_upstream_mediapipe_compatibility(SOURCE)
         return weights, landmarker
     if SOURCE.exists():
         shutil.rmtree(SOURCE)
@@ -719,9 +721,53 @@ def _prepare_source():
     ARCHIVE.unlink(missing_ok=True)
     if not (staging / "python" / "webeyetrack" / "model_weights" / weights.name).is_file():
         raise RuntimeError("pinned WebEyeTrack archive is missing the official BlazeGaze checkpoint")
+    _patch_upstream_mediapipe_compatibility(staging)
     (staging / ".prometheus-source-commit").write_text(SOURCE_COMMIT, encoding="ascii")
     staging.rename(SOURCE)
     return weights, landmarker
+
+
+def _patch_upstream_mediapipe_compatibility(source_root):
+    """Apply narrow compatibility edits for MediaPipe 0.10.32 / Python 3.13.
+
+    The pinned WebEyeTrack dataclass module imports ``mediapipe.python as mp``
+    but never references ``mp``. Its actual face-landmarker path uses the
+    supported MediaPipe Tasks API. Python 3.13 also rejects its mutable NumPy
+    dataclass default. Fail closed if either pinned-source assumption changes.
+    """
+    protocol = source_root / "python" / "webeyetrack" / "data_protocols.py"
+    source = protocol.read_text("utf-8")
+    legacy = "import mediapipe.python as mp"
+    if legacy in source:
+        if source.count(legacy) != 1 or "mp." in source.replace(legacy, ""):
+            raise RuntimeError("pinned WebEyeTrack MediaPipe compatibility assumption changed")
+        source = source.replace(legacy, "# Compatibility: unused legacy import removed in MediaPipe 0.10.30+")
+    elif "Compatibility: unused legacy import removed in MediaPipe 0.10.30+" not in source:
+        raise RuntimeError("pinned WebEyeTrack MediaPipe compatibility assumption changed")
+    mutable_default = "norm_pog: np.ndarray = np.array([0.5, 0.5])"
+    safe_default = "norm_pog: np.ndarray = field(default_factory=lambda: np.array([0.5, 0.5]))"
+    if mutable_default in source:
+        source = source.replace(mutable_default, safe_default)
+    elif safe_default not in source:
+        raise RuntimeError("pinned WebEyeTrack Python 3.13 dataclass assumption changed")
+    protocol.write_text(source, encoding="utf-8")
+
+    tracker = source_root / "python" / "webeyetrack" / "webeyetrack.py"
+    tracker_source = tracker.read_text("utf-8")
+    imports = "from dataclasses import dataclass"
+    imports_with_field = "from dataclasses import dataclass, field"
+    if imports in tracker_source:
+        tracker_source = tracker_source.replace(imports, imports_with_field, 1)
+    elif imports_with_field not in tracker_source:
+        raise RuntimeError("pinned WebEyeTrack Python 3.13 dataclass import assumption changed")
+    for field_name, class_name in (("kalman_config", "KalmanFilterConfig"), ("calib_config", "CalibConfig")):
+        mutable = f"{field_name}: {class_name} = {class_name}()"
+        safe = f"{field_name}: {class_name} = field(default_factory={class_name})"
+        if mutable in tracker_source:
+            tracker_source = tracker_source.replace(mutable, safe, 1)
+        elif safe not in tracker_source:
+            raise RuntimeError("pinned WebEyeTrack Python 3.13 dataclass defaults assumption changed")
+    tracker.write_text(tracker_source, encoding="utf-8")
 
 
 def _sha256(path):
@@ -742,6 +788,20 @@ def bootstrap():
     weights, landmarker = _prepare_source()
     sys.path.insert(0, str(SOURCE / "python"))
     import cv2
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        try:
+            mediapipe_version = version("mediapipe")
+        except PackageNotFoundError:
+            mediapipe_version = None
+        if mediapipe_version != MEDIAPIPE_VERSION:
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", f"mediapipe=={MEDIAPIPE_VERSION}"],
+                check=True,
+                timeout=300,
+            )
+    except Exception as error:
+        raise SystemExit(f"could not install pinned MediaPipe {MEDIAPIPE_VERSION} ({type(error).__name__})")
     import mediapipe
     import numpy as np
     import tensorflow as tf
@@ -761,7 +821,7 @@ def bootstrap():
     def tracker_factory(screen_px, screen_cm):
         config = WebEyeTrackConfig(
             blazegaze_mlp_fp=weights,
-            mediapipe_flm_model_fp=landmarker,
+            mediapipe_flm_model_fp=str(landmarker),
             screen_px_dimensions=screen_px,
             screen_cm_dimensions=screen_cm,
             verbose=False,

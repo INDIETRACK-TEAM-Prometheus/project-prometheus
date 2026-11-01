@@ -1,0 +1,56 @@
+{
+  "date": "2026-11-01",
+  "scope": "targeted cloud gaze service synthetic smoke; not a combined system run",
+  "input": {
+    "humanFramesUsed": false,
+    "description": "27 deterministic synthetic eye-patch tensors for adaptation and one generated zero-valued 640x360 frame encoded as JPEG",
+    "rawFrameOrPatchPersisted": false
+  },
+  "runtime": {
+    "provider": "Google Colab",
+    "gpu": "Tesla T4",
+    "device": "cuda",
+    "python": "3.13.16",
+    "tensorflow": "2.21.0",
+    "mediapipe": "0.10.32"
+  },
+  "model": {
+    "id": "webeyetrack-blazegaze-mpiifacegaze",
+    "source": "https://github.com/RedForestAI/WebEyeTrack",
+    "sourceCommit": "75fbd2f5f784f2eb3a39675a8dcbf1b01c697f1c",
+    "license": "MIT",
+    "weights": "blazegaze_mpiifacegaze.keras",
+    "weightsSha256": "5B011CFE82466896E27B1AC3E18130117CAFBC02DBC964A1AD7315F62005CC05"
+  },
+  "checks": {
+    "serviceHealth": {
+      "status": "ready",
+      "backend": "colab_remote",
+      "device": "cuda"
+    },
+    "syntheticAdaptation": {
+      "status": "passed",
+      "calibrationPoints": 27,
+      "adapterExportRestore": "passed",
+      "predictionMaxAbsoluteDelta": 0.0,
+      "blankFrameFaceDetected": false
+    },
+    "httpFramePath": {
+      "status": "ok",
+      "frameId": 1,
+      "width": 640,
+      "height": 360,
+      "faceDetected": false
+    },
+    "sessionDelete": "disposed"
+  },
+  "cleanup": {
+    "colabGpuSession": "stopped",
+    "activeColabSessionsAfterStop": 0
+  },
+  "limits": [
+    "Synthetic adaptation and blank-frame behavior only; no gaze accuracy claim.",
+    "No browser parity, optical timing, or real-camera performance was evaluated.",
+    "The combined depth-plus-gaze launcher was not run."
+  ]
+}
