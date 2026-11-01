@@ -1,0 +1,85 @@
+{
+  "kind": "depth_backend_parity",
+  "synthetic": true,
+  "gateStatus": "not_asserted",
+  "finishedAtUtc": "2026-11-01T02:58:39.427Z",
+  "input": {
+    "path": "fixtures\\sam-synthetic.png",
+    "sha256": "bc7e5b80e3b31c0708a2b1562a4d68369706934028ae55f119974c92837b74c5",
+    "width": 256,
+    "height": 256,
+    "runsPerBackend": 5
+  },
+  "local": {
+    "model": {
+      "id": "depth-anything/Depth-Anything-V2-Metric-Hypersim-Small",
+      "sha256": "b782898d8a3e8be1f639de33837ed85e9b4b73e40f8f5e5cd99067588d722545",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/DepthAnything/Depth-Anything-V2",
+      "sourceCommit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+      "encoder": "vits",
+      "dataset": "hypersim",
+      "maxDepthM": 20,
+      "units": "m",
+      "convention": "axial_z",
+      "device": "cpu",
+      "pythonVersion": "3.12.10",
+      "torchVersion": "2.6.0+cpu"
+    },
+    "roundTripMs": {
+      "first": 19328.542,
+      "warmP50": 1344.185,
+      "warmMax": 1625.707
+    },
+    "inferenceMs": {
+      "first": 1424.88,
+      "warmP50": 1327.199
+    }
+  },
+  "colab": {
+    "model": {
+      "id": "depth-anything/Depth-Anything-V2-Metric-Hypersim-Small",
+      "sha256": "b782898d8a3e8be1f639de33837ed85e9b4b73e40f8f5e5cd99067588d722545",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/DepthAnything/Depth-Anything-V2",
+      "sourceCommit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+      "encoder": "vits",
+      "dataset": "hypersim",
+      "maxDepthM": 20,
+      "units": "m",
+      "convention": "axial_z",
+      "device": "cuda",
+      "pythonVersion": "3.13.16",
+      "torchVersion": "2.11.0+cu130",
+      "gpu": "Tesla T4",
+      "backend": "colab_remote"
+    },
+    "roundTripMs": {
+      "first": 2883.753,
+      "warmP50": 478.246,
+      "warmMax": 495.579
+    },
+    "inferenceMs": {
+      "first": 1688.442,
+      "warmP50": 93.354
+    }
+  },
+  "agreement": {
+    "comparedPixels": 65536,
+    "validMaskDisagreements": 0,
+    "meanAbsDiffM": 1.4526704035233706E-06,
+    "maxAbsDiffM": 4.0531158447265625E-06,
+    "meanRelDiff": 7.378858420417E-07
+  },
+  "limitations": [
+    "One synthetic scene image; agreement shows backend parity, not depth accuracy.",
+    "Colab runs a different torch/CUDA build than the local CPU worker; small numeric differences are expected.",
+    "Round trip includes the SSH tunnel over the public internet and varies with network conditions."
+  ],
+  "cleanup": {
+    "colabSessionStopped": true,
+    "tunnelProcessStopped": true,
+    "localPortListenerStopped": true,
+    "verifiedAtUtc": "2026-11-01T02:59:05.2108927Z"
+  }
+}

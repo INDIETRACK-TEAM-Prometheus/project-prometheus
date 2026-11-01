@@ -49,10 +49,10 @@ function validateFrame(frame) {
   return { frameId: frame.frameId, observedAt: frame.observedAt, width: frame.width, height: frame.height };
 }
 
-function validateReady(value) {
+function validateReady(value, devices = ['cpu']) {
   const model = value?.model;
-  if (value?.type !== 'ready' || value.status !== 'ready' || !model || model.id !== MODEL_ID || model.sha256 !== MODEL_SHA256 || model.license !== 'Apache-2.0' || model.sourceCommit !== SOURCE_COMMIT || model.units !== 'm' || model.convention !== 'axial_z' || model.device !== 'cpu' || !Number.isFinite(value.modelLoadMs) || value.modelLoadMs < 0) throw normalizedError(value?.error);
-  return { ...model, modelLoadMs: value.modelLoadMs, pythonVersion: value.pythonVersion, torchVersion: value.torchVersion };
+  if (value?.type !== 'ready' || value.status !== 'ready' || !model || model.id !== MODEL_ID || model.sha256 !== MODEL_SHA256 || model.license !== 'Apache-2.0' || model.sourceCommit !== SOURCE_COMMIT || model.units !== 'm' || model.convention !== 'axial_z' || !devices.includes(model.device) || !Number.isFinite(value.modelLoadMs) || value.modelLoadMs < 0) throw normalizedError(value?.error);
+  return { ...model, modelLoadMs: value.modelLoadMs, pythonVersion: value.pythonVersion, torchVersion: value.torchVersion, ...(typeof value.gpu === 'string' ? { gpu: value.gpu.slice(0, 80) } : {}), ...(value.backend === 'colab_remote' ? { backend: 'colab_remote' } : {}) };
 }
 
 function decodeMap(message, frame, model) {
@@ -280,4 +280,84 @@ export function createDepthProvider({
 }
 
 function roundMs(value) { return Math.round(value * 1000) / 1000; }
+
+// Remote GPU worker reached through a loopback SSH tunnel (scripts/colab/start-depth.ps1). Only
+// virtual scene frames are sent; the response is validated exactly like the local worker's.
+export function createRemoteDepthProvider({ baseUrl, fetchImpl = fetch, startupTimeoutMs = 30_000, requestTimeoutMs = 30_000 } = {}) {
+  let url;
+  try { url = new URL(baseUrl); } catch { throw new TypeError('remote depth URL required'); }
+  if (url.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname) || url.pathname !== '/' || url.search || url.hash || url.username || url.password) throw new TypeError('remote depth URL must be a loopback tunnel origin');
+  if (typeof fetchImpl !== 'function' || !Number.isFinite(startupTimeoutMs) || startupTimeoutMs <= 0 || !Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) throw new TypeError('invalid remote depth provider configuration');
+  let ready = null, readyPromise = null, pending = null, closed = false;
+
+  async function call(path, init, timeoutMs, signal) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('timeout')), timeoutMs);
+    const abort = () => controller.abort(new Error('cancelled'));
+    signal?.addEventListener('abort', abort, { once: true });
+    try {
+      const response = await fetchImpl(new URL(path, url), { ...init, signal: controller.signal });
+      const text = await response.text();
+      if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) throw fail('DEPTH_PROVIDER_PROTOCOL_ERROR');
+      let body;
+      try { body = JSON.parse(text); } catch { throw fail('DEPTH_PROVIDER_PROTOCOL_ERROR'); }
+      if (response.status === 429) throw fail('DEPTH_PROVIDER_BUSY');
+      return body;
+    } catch (error) {
+      if (error?.code) throw error;
+      if (signal?.aborted) throw fail('DEPTH_CANCELLED');
+      throw fail(controller.signal.aborted ? 'DEPTH_PROVIDER_TIMEOUT' : 'DEPTH_RUNTIME_UNAVAILABLE');
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    }
+  }
+
+  function ensureReady() {
+    if (ready) return Promise.resolve(ready);
+    readyPromise ??= call('/health', { method: 'GET' }, startupTimeoutMs).then(value => {
+      ready = validateReady(value, ['cuda']);
+      return ready;
+    }).finally(() => { readyPromise = null; });
+    return readyPromise;
+  }
+
+  async function infer({ frame, imageDataUrl, signal } = {}) {
+    if (closed) throw fail('DEPTH_PROVIDER_CLOSED');
+    if (pending) throw fail('DEPTH_PROVIDER_BUSY');
+    if (signal?.aborted) throw fail('DEPTH_CANCELLED');
+    const alignedFrame = validateFrame(frame);
+    const image = parseImage(imageDataUrl, alignedFrame);
+    const id = randomUUID(), started = performance.now();
+    pending = id;
+    try {
+      const model = await ensureReady();
+      const body = JSON.stringify({ id, frame: alignedFrame, imageDataUrl: image });
+      if (Buffer.byteLength(body) > 8 * 1024 * 1024) throw fail('DEPTH_REQUEST_TOO_LARGE');
+      const message = await call('/infer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }, requestTimeoutMs, signal);
+      if (message?.id !== id) throw fail('DEPTH_PROVIDER_PROTOCOL_ERROR');
+      if (message.status === 'error') throw normalizedError(message.error);
+      let result;
+      try { result = decodeMap(message, alignedFrame, model); } catch { throw fail('DEPTH_PROVIDER_PROTOCOL_ERROR'); }
+      result.timing.requestRoundTripMs = roundMs(performance.now() - started);
+      return result;
+    } catch (error) {
+      if (['DEPTH_RUNTIME_UNAVAILABLE', 'DEPTH_PROVIDER_TIMEOUT'].includes(error?.code)) ready = null;
+      throw error?.code ? normalizedError(error.code) : fail('DEPTH_RUNTIME_UNAVAILABLE');
+    } finally {
+      pending = null;
+    }
+  }
+
+  async function close() { closed = true; ready = null; }
+  function status() { return { available: !!ready, inFlight: !!pending, closed, backend: 'colab_remote', model: ready ? { id: ready.id, sha256: ready.sha256, device: ready.device, gpu: ready.gpu ?? null } : null }; }
+  return { kind: 'remote_depth_provider', infer, close, status };
+}
+
+// PROMETHEUS_DEPTH_BACKEND=colab with PROMETHEUS_DEPTH_REMOTE_URL selects the tunnelled GPU worker;
+// anything else keeps the local CPU worker.
+export function createConfiguredDepthProvider(env = process.env, options = {}) {
+  if (env.PROMETHEUS_DEPTH_BACKEND === 'colab') return createRemoteDepthProvider({ baseUrl: env.PROMETHEUS_DEPTH_REMOTE_URL ?? 'http://127.0.0.1:49190/', ...options });
+  return createDepthProvider(options);
+}
 

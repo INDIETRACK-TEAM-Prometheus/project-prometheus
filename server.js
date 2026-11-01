@@ -8,7 +8,7 @@ import { reasonScenarios } from './server/reasoner-adapter.js';
 import { project } from './src/runtime/facade.js';
 import { validateNextGaze } from './src/runtime/next-gaze.js';
 import { createRecordingStore } from './server/recording-store.js';
-import { createDepthProvider } from './server/depth-provider.js';
+import { createConfiguredDepthProvider } from './server/depth-provider.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const files = new Map([['/', ['index.html', 'text/html; charset=utf-8']], ['/style.css', ['style.css', 'text/css; charset=utf-8']]]);
@@ -50,10 +50,17 @@ function validInput(value) {
   const bytes = Buffer.from(match[2], 'base64');
   return match[1] === 'png' ? bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) : bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
 }
-export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),depthProvider=createDepthProvider()} = {}) {
+export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),depthProvider=createConfiguredDepthProvider()} = {}) {
   let inFlight = 0;
   const handler = async (req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
+    if(pathname==='/api/depth/status'){
+      if(req.method!=='GET'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
+      req.resume();
+      const backend=depthProvider.kind==='remote_depth_provider'?'colab_gpu':depthProvider.kind==='local_depth_provider'?'local_cpu':'unknown';
+      json(res,200,{backend});
+      return;
+    }
     if(pathname==='/api/depth/estimate'){
       if(req.method!=='POST'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
       if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']??'')){req.resume();json(res,415,{error:'unsupported_media_type'});return;}

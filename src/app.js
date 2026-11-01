@@ -663,9 +663,10 @@ async function boot() {
   const recordingStatus=document.createElement('span');recordingStatus.id='recordingState';recordingStatus.setAttribute('role','status');canvas.parentElement.append(recordingStatus);
   const recordingSummary=$('#localRecordingSummary'),mib=bytes=>`${(bytes/1048576).toFixed(1)} MiB`;
   async function refreshRecordingSummary(){try{const {recordings,totalBytes}=await listLocalRecordings();const active=recordings.filter(r=>r.active).length;recordingSummary.textContent=recordings.length?`로컬 영상 기록 ${recordings.length}개 · ${mib(totalBytes)}${active?` · 녹화 중 ${active}개`:''}`:'로컬 영상 기록 없음';}catch{recordingSummary.textContent='로컬 영상 기록 확인 실패';}}
+  async function refreshDepthBackend(){const status=$('#depthBackendStatus');try{const response=await fetch('/api/depth/status');if(!response.ok)throw Error();const value=await response.json();status.textContent=value.backend==='colab_gpu'?'Colab GPU 선택됨 · 가상 장면 프레임을 Google Colab으로 전송':value.backend==='local_cpu'?'이 기기 로컬 CPU 선택됨':'깊이 서버 선택을 확인할 수 없음';}catch{status.textContent='깊이 서버 선택을 확인할 수 없음';}}
   const localRecorder=createLocalRecorder({onStatus:result=>{recordingStatus.textContent=({recording:'로컬 기록 중',saved:'로컬 기록 저장됨',failed:'로컬 기록 저장 실패',unavailable:'로컬 영상 기록 지원 안 됨'})[result.status]??'';if(['recording','saved'].includes(result.status))void refreshRecordingSummary();}});
   $('#refreshRecordings').addEventListener('click',()=>void refreshRecordingSummary());
-  function setDataPanel(open){$('#sessionPanel').classList.toggle('open',open);$('#dataPanel').setAttribute('aria-expanded',String(open));if(open){$('#dataSettings').open=true;void refreshRecordingSummary();}}
+  function setDataPanel(open){$('#sessionPanel').classList.toggle('open',open);$('#dataPanel').setAttribute('aria-expanded',String(open));if(open){$('#dataSettings').open=true;void refreshRecordingSummary();void refreshDepthBackend();}}
   $('#dataPanel').addEventListener('click',()=>setDataPanel(!$('#sessionPanel').classList.contains('open')));
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&accuracySession){accuracySession.cancel('user_cancelled');return;}if(event.key==='Escape'&&$('#sessionPanel').classList.contains('open')){setDataPanel(false);$('#dataPanel').focus();}});
   // Deletion is permanent and the server never removes an open recording, so stopping comes first.

@@ -61,13 +61,13 @@ def parse_request(value):
     return request_id, {"frameId": frame_id, "observedAt": float(observed_at), "width": width, "height": height}, image_bytes
 
 
-def infer_request(model, checkpoint_hash, request):
+def infer_request(model, checkpoint_hash, request, device="cpu"):
     request_id, frame, image_bytes = parse_request(request)
     total_started = time.perf_counter()
     decode_started = time.perf_counter()
     bgr = decode_image(image_bytes, frame["width"], frame["height"])
     decode_ms = round((time.perf_counter() - decode_started) * 1000, 3)
-    depth, valid, inference_ms = infer_bgr(model, bgr)
+    depth, valid, inference_ms = infer_bgr(model, bgr, device=device)
     return {
         "id": request_id,
         "status": "ok",
@@ -79,7 +79,7 @@ def infer_request(model, checkpoint_hash, request):
         "units": "m",
         "convention": "axial_z",
         "depthSource": "monocular_estimated_depth",
-        "model": model_metadata(checkpoint_hash),
+        "model": model_metadata(checkpoint_hash, device),
         "timing": {
             "decodeMs": decode_ms,
             "inferenceMs": inference_ms,

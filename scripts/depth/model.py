@@ -54,7 +54,7 @@ def verify_checkpoint(home: Path) -> str:
     return actual
 
 
-def load_model(home: Path):
+def load_model(home: Path, device: str = "cpu"):
     started = time.perf_counter()
     source = home / "source" / "metric_depth"
     if not (source / "depth_anything_v2" / "dpt.py").is_file():
@@ -70,6 +70,8 @@ def load_model(home: Path):
         raise DepthFailure("DEPTH_RUNTIME_UNAVAILABLE") from exc
 
     checkpoint_hash = verify_checkpoint(home)
+    if device not in ("cpu", "cuda") or (device == "cuda" and not torch.cuda.is_available()):
+        raise DepthFailure("DEPTH_RUNTIME_UNAVAILABLE")
     torch.set_num_threads(max(1, min(8, os.cpu_count() or 1)))
     try:
         with contextlib.redirect_stdout(sys.stderr):
@@ -78,7 +80,7 @@ def load_model(home: Path):
             model.load_state_dict(state, strict=True)
     except Exception as exc:
         raise DepthFailure("DEPTH_MODEL_INVALID") from exc
-    model.eval().to("cpu")
+    model.eval().to(device)
     return model, checkpoint_hash, round((time.perf_counter() - started) * 1000, 3)
 
 
@@ -103,14 +105,14 @@ def decode_image(image_bytes: bytes, width: int, height: int):
     return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
 
-def infer_bgr(model, bgr: np.ndarray, input_size: int = INPUT_SIZE):
-    """Run the upstream infer_image preprocessing/head on CPU and return metric axial Z."""
+def infer_bgr(model, bgr: np.ndarray, input_size: int = INPUT_SIZE, device: str = "cpu"):
+    """Run the upstream infer_image preprocessing/head on the given device and return metric axial Z."""
     started = time.perf_counter()
     try:
         image, (height, width) = model.image2tensor(bgr, input_size)
-        # DepthAnythingV2.image2tensor selects CUDA/MPS when installed. Keep this
-        # provider CPU-first and make the selected device explicit in provenance.
-        image = image.to("cpu")
+        # DepthAnythingV2.image2tensor selects CUDA/MPS when installed. Use the
+        # explicitly requested device so provenance always names where it ran.
+        image = image.to(device)
         with torch.inference_mode():
             depth = model.forward(image)
             depth = F.interpolate(depth[:, None], (height, width), mode="bilinear", align_corners=True)[0, 0]

@@ -1,5 +1,13 @@
 # CTO 검증 기록 — Prometheus SRS v1.1
 
+### 2026-11-01 선택형 Colab T4 Depth Anything backend
+
+기본 Depth Anything 경로는 로컬 CPU이며, 서버 설정 `PROMETHEUS_DEPTH_BACKEND=colab`으로만 선택형 Colab GPU backend를 켠다. Remote worker는 loopback SSH tunnel 뒤에서만 열고, 앱의 데이터 관리 패널은 현재 선택된 backend를 표시한다. Colab으로 보내는 입력은 가상 장면 RGB 프레임이다. 웹캠 원본, 얼굴·눈 영상, 랜드마크, 시선 좌표와 교정 프로필은 depth 요청에 포함하지 않는다. Node Fetch가 reserved port 4190을 `bad port`로 거부하는 원인을 재현해 기본 forward를 49190으로 옮겼다.
+
+`docs/evidence/depth-colab-parity-20261101.json`: Colab이 **Tesla T4 / CUDA**임을 health response로 확인하고, `fixtures/sam-synthetic.png` 한 장을 CPU와 GPU에서 각각 5회 처리했다. 65,536개 픽셀 비교에서 validity mask 차이는 0, 평균 절대 깊이 차이는 **0.00000145 m**, 최대 차이는 **0.00000405 m**였다. warm worker inference median은 CPU **1,327 ms**, T4 **93 ms**였으며 round-trip median은 각각 **1,344 ms**와 **478 ms**다. (Round-trip은 local CPU worker와 Colab SSH tunnel을 포함한다.) report에는 입력 SHA-256, model/checkpoint 식별자, latency와 완료 후 VM·tunnel 종료 확인이 기록되어 있다.
+
+이는 같은 pinned model의 합성 이미지 backend parity 및 성능 표본 하나다. Depth accuracy, 실제 카메라 성능 또는 Gate 수용 시험이 아니며 G2-B 및 모든 기존 Gate 판정은 그대로 둔다. 실행 절차와 과금 중인 VM 정리 방법은 [Colab backend guide](depth-anything-v2-colab.md)에 있다. 실행 후 전체 `npm test`: **511/511 통과**; Python depth-worker unit tests: **5/5 통과**.
+
 기록일: 2026-10-27 KST. 구현 agent: GPT-6.1-Terra, effort medium. 본 기록은 실제 실행 및 코드 검토에 근거하며 제품 완료 승인서가 아니다.
 
 2026-10-28 사용자 지시에 따라 이후 구현 배정은 GPT-6.1-Terra **effort low**로 전환했다. 초기 medium 구현의 이력은 보존한다.
