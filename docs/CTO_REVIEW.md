@@ -40,6 +40,18 @@ The gaze worker was booted in a separate, temporary T4 session using only the of
 
 ## Gate 판정
 
+### 2026-11-02 실제 얼굴이 "얼굴 없음"으로 처리된 원인 확정과 수정
+
+사용자 실행의 교정 첫 표적에서 진단 문구가 `얼굴은 찾았지만 눈 영역 추출 실패 5/5장 (OpenCV(4.14.0) :-1: error: (-5:Bad argument) in function 'findHomography')`를 보였다. 눈·자세 문제가 아니라 서버 환경 문제였다.
+
+원인: MediaPipe 0.10.32가 얼굴 랜드마크의 `visibility`/`presence`를 `None`으로 돌려주는데, 업스트림 `detect_facial_landmarks`(`webeyetrack.py:289`)가 `[x, y, z, visibility, presence]`를 한 배열로 쌓아 `dtype=object` 배열이 된다. `prepare_input`이 이를 `obtain_eyepatch`로 넘기고 `cv2.findHomography`가 `srcPoints data type = object is not supported`로 거부해, 서비스가 모든 실제 얼굴을 `faceDetected:false`로 응답했다. 합성(빈) 이미지만 검증했기 때문에 지금까지 드러나지 않았다.
+
+재현(임시 가상환경, OpenCV 4.14.0·NumPy 2.5.4, 합성 좌표, 사용자 영상 미사용): 값이 실수면 정상, `None`이면 사용자 화면과 같은 오류, 수정안(`None`→NaN, `float64`)은 둘 다 정상. 앞서 세웠던 "float64/float32 혼용" 가설은 재현에서 틀린 것으로 확인했다(철회). 이 두 열은 업스트림 다른 곳에서 읽히지 않는다(고정 커밋 grep).
+
+수정: 서비스의 업스트림 호환 패치에 해당 한 줄 교체를 추가했다(가정이 바뀌면 중단하는 기존 방식). 시험은 `None`이면 object 배열이 된다는 버그 자체, 패치된 행의 float64·NaN 동작, 재적용 안전성, 가정 변경 시 중단을 확인한다. 이 시험이 기존 패치의 결함도 드러냈다: 이미 패치된 소스에 다시 적용하면 `dataclass, field, field`가 중복됐다(문법 오류는 아님). 이미 패치된 형태를 먼저 확인하도록 바로잡았다.
+
+시험: Colab Python 26개 통과(신규 3), Node 559개 중 558 통과·1 skip. 실제 Colab·실제 얼굴 프레임에서는 아직 실행하지 않았다. 패치 후 실제 얼굴이 눈 열림(EAR)·시선 추정 단계까지 가는지는 다음 실행에서 확인한다.
+
 ### 2026-11-02 "얼굴 미검출"의 원인 가시화 (사용자 사진으로 로컬 검증)
 
 사용자 화면에 "얼굴/유효 시선 미검출"이 나왔고, 긴 머리가 귀를 가려서인지 질문과 함께 본인 사진이 제공됐다. 같은 계열의 얼굴 모델(로컬 vendor `face_landmarker.task`, 브라우저 CPU)로 그 사진을 검사했다: 원본과 클라우드 전송 형식(640px, JPEG q0.72) 모두 얼굴 1개를 올바른 위치에서 검출했고, numFaces를 5로 늘려도 1개뿐이어서 배경 담뱃갑의 얼굴 그림이 영향을 주지 않았다. 업스트림 `compute_ear`와 같은 계산으로 EAR 0.31/0.29(기준 0.2)였고 eyeBlink 점수는 0.06 안팎이었다. 귀는 얼굴 검출에 쓰이지 않는다. 따라서 머리카락·안경·배경은 원인이 아니다.

@@ -907,6 +907,13 @@ def _prepare_source():
     return weights, landmarker
 
 
+UPSTREAM_LANDMARK_ROW = "np.array([[lm.x, lm.y, lm.z, lm.visibility, lm.presence] for lm in face_landmarks_proto])"
+FLOAT_LANDMARK_ROW = (
+    "np.array([[lm.x, lm.y, lm.z, np.nan if lm.visibility is None else lm.visibility, "
+    "np.nan if lm.presence is None else lm.presence] for lm in face_landmarks_proto], dtype=np.float64)"
+)
+
+
 def _patch_upstream_mediapipe_compatibility(source_root):
     """Apply narrow compatibility edits for MediaPipe 0.10.32 / Python 3.13.
 
@@ -936,9 +943,11 @@ def _patch_upstream_mediapipe_compatibility(source_root):
     tracker_source = tracker.read_text("utf-8")
     imports = "from dataclasses import dataclass"
     imports_with_field = "from dataclasses import dataclass, field"
-    if imports in tracker_source:
+    if imports_with_field in tracker_source:
+        pass  # already patched (the cached source is patched again on every service start)
+    elif imports in tracker_source:
         tracker_source = tracker_source.replace(imports, imports_with_field, 1)
-    elif imports_with_field not in tracker_source:
+    else:
         raise RuntimeError("pinned WebEyeTrack Python 3.13 dataclass import assumption changed")
     for field_name, class_name in (("kalman_config", "KalmanFilterConfig"), ("calib_config", "CalibConfig")):
         mutable = f"{field_name}: {class_name} = {class_name}()"
@@ -947,6 +956,13 @@ def _patch_upstream_mediapipe_compatibility(source_root):
             tracker_source = tracker_source.replace(mutable, safe, 1)
         elif safe not in tracker_source:
             raise RuntimeError("pinned WebEyeTrack Python 3.13 dataclass defaults assumption changed")
+    # MediaPipe 0.10.32 returns None for face-landmark visibility/presence. Upstream stacks them into one array, which
+    # becomes dtype=object, and OpenCV then rejects it in findHomography ("srcPoints data type = object is not
+    # supported"), so every real face was reported as "no face". Nothing reads those two columns; keep them as NaN.
+    if UPSTREAM_LANDMARK_ROW in tracker_source:
+        tracker_source = tracker_source.replace(UPSTREAM_LANDMARK_ROW, FLOAT_LANDMARK_ROW, 1)
+    elif FLOAT_LANDMARK_ROW not in tracker_source:
+        raise RuntimeError("pinned WebEyeTrack landmark array assumption changed")
     tracker.write_text(tracker_source, encoding="utf-8")
 
 

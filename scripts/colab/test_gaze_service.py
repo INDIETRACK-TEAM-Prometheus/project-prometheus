@@ -400,5 +400,55 @@ class TrackingFailureTests(unittest.TestCase):
         self.assertEqual((response["status"], response["faceFrames"], response["eyePatchFailures"], response["failureMessage"]), ("insufficient", 0, 5, "shape mismatch"))
 
 
+class UpstreamLandmarkCompatibilityTests(unittest.TestCase):
+    """MediaPipe 0.10.32 returns None visibility/presence; upstream turned that into an object array OpenCV rejects."""
+
+    class Landmark:
+        def __init__(self, x, y, z, visibility, presence):
+            self.x, self.y, self.z, self.visibility, self.presence = x, y, z, visibility, presence
+
+    def build(self, expression, visibility, presence):
+        proto = [self.Landmark(0.1 * i, 0.2, 0.0, visibility, presence) for i in range(4)]
+        return eval(expression, {"np": np, "face_landmarks_proto": proto})
+
+    def test_the_unpatched_row_becomes_an_object_array_when_visibility_is_none(self):
+        self.assertEqual(self.build(service["UPSTREAM_LANDMARK_ROW"], None, None).dtype, np.dtype("O"))
+        self.assertEqual(self.build(service["UPSTREAM_LANDMARK_ROW"], 0.9, 0.9).dtype, np.dtype("float64"))
+
+    def test_the_patched_row_is_float64_with_nan_for_missing_confidence(self):
+        missing = self.build(service["FLOAT_LANDMARK_ROW"], None, None)
+        self.assertEqual((missing.dtype, missing.shape), (np.dtype("float64"), (4, 5)))
+        self.assertTrue(np.isnan(missing[:, 3:]).all())
+        np.testing.assert_allclose(missing[:, :3], [[0.0, 0.2, 0.0], [0.1, 0.2, 0.0], [0.2, 0.2, 0.0], [0.30000000000000004, 0.2, 0.0]])
+        present = self.build(service["FLOAT_LANDMARK_ROW"], 0.9, 0.8)
+        np.testing.assert_allclose(present[:, 3:], [[0.9, 0.8]] * 4)
+
+    def write_tree(self, root, row):
+        package = root / "python" / "webeyetrack"
+        package.mkdir(parents=True)
+        (package / "data_protocols.py").write_text("import mediapipe.python as mp\nnorm_pog: np.ndarray = np.array([0.5, 0.5])\n", "utf-8")
+        (package / "webeyetrack.py").write_text(
+            "from dataclasses import dataclass\nkalman_config: KalmanFilterConfig = KalmanFilterConfig()\ncalib_config: CalibConfig = CalibConfig()\n"
+            f"face_landmarks = {row}\n", "utf-8")
+        return package / "webeyetrack.py"
+
+    def test_patch_replaces_the_row_is_idempotent_and_fails_closed(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            tracker = self.write_tree(Path(directory), service["UPSTREAM_LANDMARK_ROW"])
+            service["_patch_upstream_mediapipe_compatibility"](Path(directory))
+            patched = tracker.read_text("utf-8")
+            self.assertIn(service["FLOAT_LANDMARK_ROW"], patched)
+            self.assertNotIn(service["UPSTREAM_LANDMARK_ROW"], patched)
+            service["_patch_upstream_mediapipe_compatibility"](Path(directory))
+            self.assertEqual(tracker.read_text("utf-8"), patched)
+        with tempfile.TemporaryDirectory() as directory:
+            self.write_tree(Path(directory), "np.array([[lm.x, lm.y] for lm in face_landmarks_proto])")
+            with self.assertRaises(RuntimeError) as error:
+                service["_patch_upstream_mediapipe_compatibility"](Path(directory))
+            self.assertIn("landmark array assumption changed", str(error.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
