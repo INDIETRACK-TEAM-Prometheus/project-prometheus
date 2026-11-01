@@ -2,6 +2,8 @@
 
 This scorer evaluates precomputed, held-out predictions offline. It makes no provider requests, reads no API key, and does not turn the existing four-profile replay into a claim of predictive performance. The repository contains no study labels or benchmark report; the unit-test records are synthetic validation fixtures only.
 
+**2026-11-01 acceptance audit:** [Gate/protocol audit](GATE_PROTOCOL_AUDIT_20261101.md) defines the additional experiment contracts required by G5-D. The nine-condition schema below is implemented v1; it does not yet implement those extensions. In particular, spatial-memory ablation (SRS T08), matched bbox-versus-mask inputs, horizon-specific look/action labels, deadline-aware anticipation over all eligible decisions, and artifact-verified prediction generation remain required. Do not interpret successful v1 validation as satisfying these requirements.
+
 ## Conditions and controls
 
 Every decision must contain all nine conditions. They share one scene frame, one `observedUntilMs` cutoff, one model configuration, and one per-request cost cap:
