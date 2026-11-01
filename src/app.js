@@ -8,7 +8,7 @@ import {stableCalibrationWindow,calibrationSampleFreshnessMs,calibrationSampleSt
 import {BackgroundAttentionCoordinator} from './runtime/background-attention.js';
 import {createBackgroundBrowserWork} from './runtime/background-browser.js';
 import {LiveTracking} from './runtime/live-tracking.js';
-import {createProfiledWebcamGazeController} from './gaze/remote-webcam.js';
+import {createProfiledWebcamGazeController,describeOpenEyeWait} from './gaze/remote-webcam.js';
 import {gazeViewportPoint,gazeMarkerPosition} from './gaze/overlay.js';
 import {withinCalibrationBounds,predictCalibration,calibrationMetrics,fitLandmarkResidualCalibration,landmarkResidualMetrics,landmarkResidualPassesSelection,LANDMARK_RESIDUAL_FIT_ATTEMPTS,predictLandmarkResidual} from './gaze/index.js';
 import {MemoryService,EphemeralStorage} from './memory/index.js';
@@ -967,7 +967,7 @@ async function boot() {
       const stabilityStatus=calibrationWindowStatus(calibrationWindow,{targetShownAt:calibrationTargetShownAt,now});
       if(calibrationStage==='validation'&&!stableCalibrationWindow(calibrationWindow,{targetShownAt:calibrationTargetShownAt,now})){const waitText={settling:'표적 표시 후 0.5초 이상 응시하세요',no_post_dwell_samples:'응시 대기 후 검증 표본을 기다리는 중',insufficient_recent_samples:'최근 검증 표본을 모으는 중',gaze_unstable:'시선 표본 흔들림이 큽니다. 표적을 계속 바라보세요'}[stabilityStatus]??'검증 표본을 기다리는 중';$('#calibrationInfo').textContent=waitText;return;}
       if(calibrationStage==='training'){
-        if(!fresh){const waitText={no_open_eye_sample:'열린 눈 표본이 없습니다. 얼굴과 눈 검출을 기다리는 중',missing_sample_timestamp:'WebEyeTrack 표본 시각을 기다리는 중',no_post_dwell_sample:'표적을 0.5초 이상 바라본 뒤의 표본을 기다리는 중',stale_sample:'최근 열린 눈 표본을 기다리는 중',future_sample:'WebEyeTrack 표본 시각 확인 중'}[sampleStatus]??'열린 눈 표본을 기다리는 중';$('#calibrationInfo').textContent=waitText;return;}
+        if(!fresh){const waitText={no_open_eye_sample:`열린 눈 표본이 없습니다 · ${describeOpenEyeWait(latest)}`,missing_sample_timestamp:'WebEyeTrack 표본 시각을 기다리는 중',no_post_dwell_sample:'표적을 0.5초 이상 바라본 뒤의 표본을 기다리는 중',stale_sample:'최근 열린 눈 표본을 기다리는 중',future_sample:'WebEyeTrack 표본 시각 확인 중'}[sampleStatus]??'열린 눈 표본을 기다리는 중';$('#calibrationInfo').textContent=waitText;return;}
         const finalTrainingTarget=sequence===26;
         if(finalTrainingTarget){calibrationAdaptStartedAt=performance.now();calibrationAdaptStarted=false;calibrationAdaptFinished=false;calibrationSerializeStartedAt=null;calibrationSerializeFinished=false;$('#calibrationInfo').textContent='27/27 표본 수집 완료 · WebEyeTrack 적응을 기다리는 중';}
         try{const response=await controller.calibrate(target,calibrationTargetShownAt+500,sampleAgeLimitMs);if(runToken!==calibrationRunToken||calibrationStage!=='training')return;if(response.adaptationSamples)capturedAdaptation=response.adaptationSamples;}catch(error){
@@ -977,7 +977,7 @@ async function boot() {
         }
         training.push({id:`train-${sequence}`,target});
       } else {
-        if(!fresh){const waitText={no_open_eye_sample:'열린 눈 표본이 없습니다. 얼굴과 눈 검출을 기다리는 중',missing_sample_timestamp:'WebEyeTrack 표본 시각을 기다리는 중',no_post_dwell_sample:'응시 대기 후 검증 표본을 기다리는 중',stale_sample:'최근 열린 눈 검증 표본을 기다리는 중',future_sample:'WebEyeTrack 표본 시각 확인 중'}[sampleStatus]??'열린 눈 검증 표본을 기다리는 중';$('#calibrationInfo').textContent=waitText;return;}
+        if(!fresh){const waitText={no_open_eye_sample:`열린 눈 표본이 없습니다 · ${describeOpenEyeWait(latest)}`,missing_sample_timestamp:'WebEyeTrack 표본 시각을 기다리는 중',no_post_dwell_sample:'응시 대기 후 검증 표본을 기다리는 중',stale_sample:'최근 열린 눈 검증 표본을 기다리는 중',future_sample:'WebEyeTrack 표본 시각 확인 중'}[sampleStatus]??'열린 눈 검증 표본을 기다리는 중';$('#calibrationInfo').textContent=waitText;return;}
         validation.push({id:`validate-${sequence}`,features:latest.features,landmarkFeatures:latest.landmarkFeatures,target});
       }
       if(pilot?.calibration)pilot.calibration.attempts.push({phase:calibrationStage,index:sequence,target:{...target},sampleAvailable:true,atUtc:new Date().toISOString()});

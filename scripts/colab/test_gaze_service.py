@@ -61,6 +61,43 @@ class GazeServiceTests(unittest.TestCase):
         self.session = service["GazeSession"]("test-session", (1920, 1080), (53.1, 29.8), FakeTracker())
         self.session.candidate = service["TrackerState"](FakeTracker())
 
+    def _with_fake_upstream_ear(self, compute_ear):
+        import sys
+        import types
+        package = types.ModuleType("webeyetrack")
+        module = types.ModuleType("webeyetrack.model_based")
+        module.compute_ear = compute_ear
+        package.model_based = module
+        previous = {name: sys.modules.get(name) for name in ("webeyetrack", "webeyetrack.model_based")}
+        sys.modules["webeyetrack"], sys.modules["webeyetrack.model_based"] = package, module
+        self.addCleanup(lambda: [sys.modules.__setitem__(n, m) if m is not None else sys.modules.pop(n, None) for n, m in previous.items()])
+        namespace = service["_eye_aspect_ratios"].__globals__
+        namespace["NP"] = np
+
+    def test_eye_aspect_ratios_use_upstream_scaling_and_threshold(self):
+        seen = []
+
+        def compute_ear(facial_landmarks, side):
+            seen.append((side, float(facial_landmarks[0][0]), float(facial_landmarks[0][1])))
+            return 0.1823456 if side == "left" else 0.25
+
+        self._with_fake_upstream_ear(compute_ear)
+        tracker = FakeTracker()
+        tracker.config = type("Config", (), {"ear_threshold": 0.2})()
+        state = service["TrackerState"](tracker)
+        result = type("Result", (), {"facial_landmarks": np.array([[0.5, 0.25, 0.0]])})()
+        ear = service["_eye_aspect_ratios"](state, result, 640, 360)
+        self.assertEqual(ear, {"left": 0.1823, "right": 0.25, "threshold": 0.2})
+        self.assertEqual(seen, [("left", 320.0, 90.0), ("right", 320.0, 90.0)])
+
+    def test_eye_aspect_ratios_are_null_when_upstream_helper_or_values_fail(self):
+        self._with_fake_upstream_ear(lambda facial_landmarks, side: float("nan"))
+        state = service["TrackerState"](FakeTracker())
+        result = type("Result", (), {"facial_landmarks": np.array([[0.5, 0.25, 0.0]])})()
+        self.assertIsNone(service["_eye_aspect_ratios"](state, result, 640, 360))
+        self._with_fake_upstream_ear(lambda facial_landmarks, side: (_ for _ in ()).throw(RuntimeError("boom")))
+        self.assertIsNone(service["_eye_aspect_ratios"](state, result, 640, 360))
+
     def test_defaults_and_null_screen_dimensions_match_upstream(self):
         self.assertEqual(service["screen_dimensions"]({}), ((1920, 1080), (53.1, 29.8)))
         self.assertEqual(service["screen_dimensions"]({"screenPxDimensions": None, "screenCmDimensions": None}), ((1920, 1080), (53.1, 29.8)))

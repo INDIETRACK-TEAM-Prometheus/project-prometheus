@@ -299,6 +299,21 @@ def delete_session(session_id):
             pass
 
 
+def _eye_aspect_ratios(state, result, width, height):
+    """EAR per eye exactly as upstream computes it for the open/closed decision, or None when unavailable."""
+    try:
+        from webeyetrack.model_based import compute_ear
+        landmarks = NP.asarray(result.facial_landmarks, dtype=NP.float64)[:, :2] * NP.array([width, height], dtype=NP.float64)
+        left = float(compute_ear(facial_landmarks=landmarks, side="left"))
+        right = float(compute_ear(facial_landmarks=landmarks, side="right"))
+        threshold = float(getattr(getattr(state.tracker, "config", None), "ear_threshold", 0.2))
+        if all(math.isfinite(value) for value in (left, right, threshold)):
+            return {"left": round(left, 4), "right": round(right, 4), "threshold": round(threshold, 4)}
+    except Exception:
+        pass
+    return None
+
+
 def _frame_result(state, session, frame_id, capture_timestamp_ms, jpeg):
     encoded = NP.frombuffer(jpeg, dtype=NP.uint8)
     frame = CV2.imdecode(encoded, CV2.IMREAD_COLOR)
@@ -359,6 +374,7 @@ def _frame_result(state, session, frame_id, capture_timestamp_ms, jpeg):
         "faceDetected": bool(face_detected),
         "gazeState": gaze_state,
         "normPog": norm,
+        "eyeAspectRatio": _eye_aspect_ratios(state, result, width, height) if face_detected else None,
         "durations": durations,
     }
 

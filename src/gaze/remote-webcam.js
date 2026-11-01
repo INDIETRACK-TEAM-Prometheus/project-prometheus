@@ -23,6 +23,23 @@ async function readJson(response) {
   return body;
 }
 
+function validEar(value) {
+  const ok = x => finite(x) && x >= 0 && x <= 2;
+  return value && typeof value === 'object' && ok(value.left) && ok(value.right) && ok(value.threshold) ? {left:value.left, right:value.right, threshold:value.threshold} : null;
+}
+
+// Plain-language reason the latest server response has no open-eye gaze point (shown while calibration waits).
+export function describeOpenEyeWait(sample) {
+  if (!sample) return '아직 서버 응답이 없습니다';
+  if (sample.faceDetected !== true) return '서버 응답: 얼굴 미검출';
+  if (sample.gazeState === 'closed') {
+    const ear = sample.eyeAspectRatio;
+    return ear ? `서버 응답: 눈 감김 판정 (EAR 왼쪽 ${ear.left.toFixed(2)} · 오른쪽 ${ear.right.toFixed(2)}, 한쪽이라도 ${ear.threshold.toFixed(2)} 미만이면 감김)` : '서버 응답: 눈 감김 판정';
+  }
+  if (!sample.features) return '서버 응답: 시선 좌표 없음';
+  return '서버 응답: 열린 눈 확인';
+}
+
 function validNorm(value) {
   return Array.isArray(value) && value.length === 2 && value.every(x => finite(x) && x >= -.5 && x <= .5);
 }
@@ -144,7 +161,7 @@ export function createRemoteWebcamGazeController({
       faceDetected, gazeState:result.gazeState,
       leftEye:{valid:faceDetected&&gazeOpen,reason:!faceDetected?'face_not_detected':gazeOpen?null:'eyes_closed',confidence:null,crop:null},
       rightEye:{valid:faceDetected&&gazeOpen,reason:!faceDetected?'face_not_detected':gazeOpen?null:'eyes_closed',confidence:null,crop:null},
-      features, landmarkFeatures:null, normPog:validPoint?[...norm]:null, rawScreenXY,
+      features, landmarkFeatures:null, normPog:validPoint?[...norm]:null, rawScreenXY, eyeAspectRatio:validEar(result.eyeAspectRatio),
       valid:calibratedSample,
       invalidReason:!faceDetected?'face_not_detected':!gazeOpen?'eyes_closed':!validPoint?'gaze_unavailable':!calibrated?'calibration_required':null,
       width:request.width??result.width??null, height:request.height??result.height??null, modelDurations:result.durations

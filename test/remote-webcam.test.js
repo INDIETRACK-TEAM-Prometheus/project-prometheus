@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createProfiledWebcamGazeController,createRemoteWebcamGazeController,validateRemoteGazeAdapter} from '../src/gaze/remote-webcam.js';
+import {createProfiledWebcamGazeController,createRemoteWebcamGazeController,describeOpenEyeWait,validateRemoteGazeAdapter} from '../src/gaze/remote-webcam.js';
 
 const model={id:'webeyetrack-blazegaze-mpiifacegaze',sourceCommit:'75fbd2f5f784f2eb3a39675a8dcbf1b01c697f1c',sha256:'a'.repeat(64)};
 const shapes=[[518,16],[16],[16,16],[16],[16,2],[2]];
 function adapter(){return {schemaVersion:1,adapterId:'webeyetrack-gaze-mlp-f32-v1',modelId:model.id,sourceCommit:model.sourceCommit,modelSha256:model.sha256,weights:shapes.map(shape=>{const count=shape.reduce((n,x)=>n*x,1),bytes=Buffer.alloc(count*4);for(let i=0;i<count;i++)bytes.writeFloatLE(.125,i*4);return {shape,dtype:'float32-le',data:bytes.toString('base64')};})};}
 function response(body,status=200){return new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});}
 
-function harness({ready=true,restoreAdapter=null,holdFirstFrame=false,frameHz=8,frameFailure=null}={}){
+function harness({ready=true,restoreAdapter=null,holdFirstFrame=false,frameHz=8,frameFailure=null,frameFields=null}={}){
   let now=1000,callback=null,callbackId=0,mediaOpens=0,trackStops=0,frameCalls=0,resolveFirst=null,active=false;
   const errors=[],samples=[],calls=[],video={videoWidth:1280,videoHeight:720,srcObject:null,async play(){},pause(){},requestVideoFrameCallback(fn){callback=fn;return ++callbackId;},cancelVideoFrameCallback(){callback=null;},emit(captureTime=now){now=captureTime;const fn=callback;callback=null;assert.ok(fn,'video frame callback scheduled');fn(now,{captureTime});}};
   const track={stop(){trackStops++;},getSettings(){return {width:1280,height:720,frameRate:30};}};
@@ -24,7 +24,7 @@ function harness({ready=true,restoreAdapter=null,holdFirstFrame=false,frameHz=8,
     if(url.endsWith('/frame')){
       frameCalls++;if(frameFailure)return response({error:'gaze_unavailable',code:frameFailure},503);const headers=options.headers,frameId=Number(headers['x-frame-id']),captureTimestampMs=Number(headers['x-capture-timestamp-ms']);
       if(holdFirstFrame&&frameCalls===1)await new Promise(resolve=>{resolveFirst=resolve;options.signal.addEventListener('abort',()=>resolveFirst?.(),{once:true});});
-      return response({status:'ok',frameId,captureTimestampMs,faceDetected:true,gazeState:'open',normPog:[0,.1],durations:{total:7}});
+      return response({status:'ok',frameId,captureTimestampMs,faceDetected:true,gazeState:'open',normPog:[0,.1],durations:{total:7},...(frameFields??{})});
     }
     throw new Error(`unexpected request ${url}`);
   };
@@ -114,4 +114,26 @@ test('a failed remote frame stops tracking with the underlying reason attached',
   odd.video.emit(1010);await odd.flush();
   assert.equal(odd.errors[0].code,'gaze_remote_inference_failed');
   assert.equal(odd.errors[0].detail,'gaze_remote_unavailable');
+});
+
+test('closed-eye responses carry their eye aspect ratios and the wait message names the real reason',async()=>{
+  const h=harness({frameFields:{gazeState:'closed',normPog:[0,0],eyeAspectRatio:{left:.18,right:.26,threshold:.2}}});
+  await h.controller.start({userInitiated:true,cameraConsent:true});
+  h.video.emit(1010);await h.flush();
+  const sample=h.samples[0];
+  assert.equal(sample.features,null);
+  assert.deepEqual(sample.eyeAspectRatio,{left:.18,right:.26,threshold:.2});
+  assert.match(describeOpenEyeWait(sample),/눈 감김 판정 \(EAR 왼쪽 0\.18 · 오른쪽 0\.26, 한쪽이라도 0\.20 미만이면 감김\)/);
+  const bad=harness({frameFields:{gazeState:'closed',normPog:[0,0],eyeAspectRatio:{left:'x',right:.26,threshold:.2}}});
+  await bad.controller.start({userInitiated:true,cameraConsent:true});
+  bad.video.emit(1010);await bad.flush();
+  assert.equal(bad.samples[0].eyeAspectRatio,null);
+  assert.equal(describeOpenEyeWait(bad.samples[0]),'서버 응답: 눈 감김 판정');
+});
+
+test('open-eye wait descriptions distinguish no response, no face, closed eyes and missing gaze points',()=>{
+  assert.equal(describeOpenEyeWait(null),'아직 서버 응답이 없습니다');
+  assert.equal(describeOpenEyeWait({faceDetected:false}),'서버 응답: 얼굴 미검출');
+  assert.equal(describeOpenEyeWait({faceDetected:true,gazeState:'open',features:null}),'서버 응답: 시선 좌표 없음');
+  assert.equal(describeOpenEyeWait({faceDetected:true,gazeState:'open',features:[.5,.5]}),'서버 응답: 열린 눈 확인');
 });

@@ -35,6 +35,12 @@ export function validateRemoteGazeAdapter(adapter, model = {}) {
   });
 }
 
+function validEar(value) {
+  if (value === null || value === undefined) return null;
+  const ok = x => finite(x) && x >= 0 && x <= 2;
+  return value && typeof value === 'object' && ok(value.left) && ok(value.right) && ok(value.threshold) ? {left: value.left, right: value.right, threshold: value.threshold} : null;
+}
+
 function validPog(value) {
   return value === null || (Array.isArray(value) && value.length === 2 && value.every(x => finite(x) && x >= -.5 && x <= .5));
 }
@@ -109,7 +115,7 @@ export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs 
         method: 'POST', headers: {'content-type': 'image/jpeg', 'x-frame-id': String(frameId), 'x-capture-timestamp-ms': String(captureTimestampMs)}, body: bytes, signal
       });
       if (result?.status !== 'ok' || result.frameId !== frameId || result.captureTimestampMs !== captureTimestampMs || typeof result.faceDetected !== 'boolean' || !['open', 'closed', 'unknown'].includes(result.gazeState) || !validPog(result.normPog) || !result.durations || !Object.values(result.durations).every(x => finite(x) && x >= 0)) throw fail('GAZE_PROTOCOL_ERROR');
-      return {frameId, captureTimestampMs, faceDetected: result.faceDetected, gazeState: result.gazeState, normPog: result.normPog, durations: result.durations};
+      return {frameId, captureTimestampMs, faceDetected: result.faceDetected, gazeState: result.gazeState, normPog: result.normPog, eyeAspectRatio: validEar(result.eyeAspectRatio), durations: result.durations};
     },
     async startCandidate(sessionId, signal) {
       const id = requireSession(sessionId);
