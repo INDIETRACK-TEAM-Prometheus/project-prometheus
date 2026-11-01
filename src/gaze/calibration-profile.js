@@ -42,7 +42,7 @@ function sanitizeRuntime(runtime) {
 function base64Encode(bytes) {
   if (typeof globalThis.btoa !== 'function') throw new Error('base64 encoding is unavailable');
   let binary = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i,i + 0x8000));
+  for (let i = 0; i < bytes.length; i += 0x4000) binary += String.fromCharCode(...bytes.subarray(i,i + 0x4000));
   return globalThis.btoa(binary);
 }
 
@@ -96,6 +96,18 @@ function validSerializedSample(sample) {
 export function serializeWebEyeTrackAdaptationSamples(samples) {
   if (!Array.isArray(samples) || samples.length < 4 || samples.length > maxAdaptationSamples) throw new Error('calibration adaptation samples required');
   return samples.map(serializeWebEyeTrackAdaptationSample);
+}
+
+export async function serializeWebEyeTrackAdaptationSamplesAsync(samples,{batchSize=3,yieldControl=()=>new Promise(resolve=>setTimeout(resolve,0)),onProgress=()=>{}}={}) {
+  if (!Array.isArray(samples) || samples.length < 4 || samples.length > maxAdaptationSamples) throw new Error('calibration adaptation samples required');
+  if (!Number.isInteger(batchSize) || batchSize < 1 || typeof yieldControl !== 'function' || typeof onProgress !== 'function') throw new TypeError('valid calibration serialization options required');
+  const serialized=[];
+  for(let index=0;index<samples.length;index++){
+    serialized.push(serializeWebEyeTrackAdaptationSample(samples[index]));
+    if((index+1)%batchSize===0&&index+1<samples.length){onProgress(index+1);await yieldControl();}
+  }
+  onProgress(samples.length);
+  return serialized;
 }
 
 // Restores the exact byte data to the ImageData type expected by tracker.adapt().
@@ -156,7 +168,7 @@ function validProfile(profile) {
     (profile.affine === null || (validAffineModel(profile.affine?.model) && validMetrics(profile.affine?.selection?.baseline) && validMetrics(profile.affine?.selection?.candidate) && typeof profile.affine?.selection?.selected === 'boolean'));
 }
 
-export function createGazeCalibrationProfile({adaptationSamples,calibration,environment,runtime,affine=null,landmarkResidual=null,createdAtUtc=new Date().toISOString()} = {}) {
+function createGazeCalibrationProfileFromSerialized({adaptationSamples,calibration,environment,runtime,affine=null,landmarkResidual=null,createdAtUtc=new Date().toISOString()} = {},serializedSamples) {
   if (calibration?.passed !== true || !validEnvironment(environment) || !validRuntime(runtime) || typeof createdAtUtc !== 'string' || Number.isNaN(Date.parse(createdAtUtc))) throw new Error('completed calibration and valid runtime environment required');
   if (landmarkResidual !== undefined && landmarkResidual !== null && !validLandmarkResidualModel(landmarkResidual)) throw new Error('invalid landmark residual calibration');
   const profile = {
@@ -165,7 +177,7 @@ export function createGazeCalibrationProfile({adaptationSamples,calibration,envi
     runtime:sanitizeRuntime(runtime),
     environment:sanitizeEnvironment(environment),
     calibration:sanitizeCalibration(calibration),
-    adaptation:{method:'webeyetrack_replay',samples:serializeWebEyeTrackAdaptationSamples(adaptationSamples)},
+    adaptation:{method:'webeyetrack_replay',samples:serializedSamples??serializeWebEyeTrackAdaptationSamples(adaptationSamples)},
     landmarkResidual:landmarkResidual ? sanitizeLandmarkResidualModel(landmarkResidual) : null
   };
   if (affine) {
@@ -174,6 +186,15 @@ export function createGazeCalibrationProfile({adaptationSamples,calibration,envi
   } else profile.affine = null;
   if (!validProfile(profile)) throw new Error('invalid calibration profile');
   return profile;
+}
+
+export function createGazeCalibrationProfile(options={}) {
+  return createGazeCalibrationProfileFromSerialized(options);
+}
+
+export async function createGazeCalibrationProfileAsync(options={},serializationOptions={}) {
+  const samples=await serializeWebEyeTrackAdaptationSamplesAsync(options.adaptationSamples,serializationOptions);
+  return createGazeCalibrationProfileFromSerialized(options,samples);
 }
 
 export function validateGazeCalibrationProfile(profile, {environment,runtime} = {}) {
@@ -196,9 +217,10 @@ export function restoreLandmarkResidualCalibration(profile) {
 export async function saveGazeCalibrationProfile(storage, profile) {
   if (!storage || typeof storage.setItem !== 'function' || !validProfile(profile)) return false;
   try {
-    const serialized = JSON.stringify(profile);
-    if (serialized.length > maxProfileCharacters) return false;
-    await storage.setItem(GAZE_CALIBRATION_PROFILE_KEY,serialized);
+    const metadata={...profile,adaptation:{...profile.adaptation,samples:profile.adaptation.samples.map(sample=>({...sample,eyePatch:{...sample.eyePatch,data:''}}))}};
+    const size=JSON.stringify(metadata).length+profile.adaptation.samples.reduce((total,sample)=>total+sample.eyePatch.data.length,0);
+    if (size > maxProfileCharacters) return false;
+    await storage.setItem(GAZE_CALIBRATION_PROFILE_KEY,profile);
     return true;
   } catch { return false; }
 }
@@ -208,8 +230,8 @@ export async function loadGazeCalibrationProfile(storage, context = {}) {
   try {
     const raw = await storage.getItem(GAZE_CALIBRATION_PROFILE_KEY);
     if (raw == null) return {status:'missing',compatible:false,profile:null};
-    if (typeof raw !== 'string' || raw.length > maxProfileCharacters) return {status:'invalid_profile',compatible:false,profile:null};
-    const profile = JSON.parse(raw);
+    if (typeof raw === 'string' && raw.length > maxProfileCharacters) return {status:'invalid_profile',compatible:false,profile:null};
+    const profile = typeof raw === 'string' ? JSON.parse(raw) : raw;
     return validateGazeCalibrationProfile(profile,context);
   } catch { return {status:'invalid_profile',compatible:false,profile:null}; }
 }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWebcamGazeController} from '../src/gaze/webcam.js';
 
-function harness({normPog=[-.25,.25],landmarkFeatures=null,previewBitmaps={left:null,right:null},getUserMedia:acquireCamera=null,autoReady=true,workerReadyTimeoutMs=10000,createCanvas:makeCanvas=null,restoreFails=false}={}) {
+function harness({normPog=[-.25,.25],landmarkFeatures=null,previewBitmaps={left:null,right:null},getUserMedia:acquireCamera=null,autoReady=true,workerReadyTimeoutMs=10000,createCanvas:makeCanvas=null,restoreFails=false,holdAdapt=false}={}) {
   let callback=null, currentTime=0, nowMs=100, cameraOpens=0, trackStops=0, frameCounter=0;
   const workers=[],diagnostics=[],errors=[];
   const track={stop(){trackStops++;},getSettings(){return {width:2,height:2,frameRate:30,deviceId:'private-device-id'};}};
@@ -26,7 +26,7 @@ function harness({normPog=[-.25,.25],landmarkFeatures=null,previewBitmaps={left:
           captureTimestampMs:message.captureTimestampMs,callbackTimestampMs:message.callbackTimestampMs,
           timestampKind:message.timestampKind,sentAtMs:message.sentAtMs
         }}));
-        if(message.type==='adapt')queueMicrotask(()=>this.onmessage?.({data:{type:'adapted',requestId:message.requestId,points:1}}));
+        if(message.type==='adapt'&&!holdAdapt)queueMicrotask(()=>this.onmessage?.({data:{type:'adapted',requestId:message.requestId,points:1}}));
         if(message.type==='restoreCalibration')queueMicrotask(()=>this.onmessage?.({data:restoreFails?{type:'calibrationRestoreError',requestId:message.requestId,code:'private_worker_detail'}:{type:'calibrationRestored',requestId:message.requestId,points:message.samples.length}}));
       },terminate(){this.terminated=true;}
     };
@@ -39,13 +39,13 @@ function harness({normPog=[-.25,.25],landmarkFeatures=null,previewBitmaps={left:
     };}};
     return canvas;
   });
-  const samples=[],previews=[];
+  const samples=[],previews=[],calibrationProgress=[];
   const controller=createWebcamGazeController({
     video,mediaDevices,workerFactory,createCanvas,workerReadyTimeoutMs,
     clockNow:()=>nowMs++,getViewport:()=>({width:800,height:600}),
-    onSample:sample=>samples.push(sample),onEyePreview:preview=>previews.push(preview),onError:error=>errors.push(error),onDiagnostic:code=>diagnostics.push(code)
+    onSample:sample=>samples.push(sample),onEyePreview:preview=>previews.push(preview),onError:error=>errors.push(error),onDiagnostic:code=>diagnostics.push(code),onCalibrationProgress:progress=>calibrationProgress.push(progress)
   });
-  return {controller,video,workers,samples,previews,diagnostics,errors,counters:()=>({cameraOpens,trackStops}),advanceClock(ms){nowMs+=ms;},async flush(){await new Promise(resolve=>setImmediate(resolve));}};
+  return {controller,video,workers,samples,previews,diagnostics,errors,calibrationProgress,counters:()=>({cameraOpens,trackStops}),advanceClock(ms){nowMs+=ms;},async flush(){await new Promise(resolve=>setImmediate(resolve));}};
 }
 
 test('camera opens only after explicit consent and sends a local worker sample',async()=>{
@@ -179,6 +179,31 @@ test('official adapt targets use normalized screen coordinates and commit valida
   assert.equal(h.counters().cameraOpens,1,'candidate worker reuses the page-owned stream');
   h.controller.stop();
   assert.ok(h.workers.every(worker=>worker.terminated));
+});
+
+test('adaptation progress stops candidate frame copies while keeping the webcam stream active',async()=>{
+  const h=harness();await h.controller.start({userInitiated:true,cameraConsent:true});await h.controller.beginCalibration();
+  h.video.emit();await h.flush();const sample=h.samples.at(-1),candidate=h.workers[1];
+  const pending=h.controller.calibrate({x:400,y:300},sample.callbackTimestampMs);
+  candidate.onmessage({data:{type:'calibrationProgress',requestId:'adapt-1',stage:'adaptation_started'}});
+  h.video.emit();
+  assert.equal(candidate.messages.filter(entry=>entry.message.type==='frame').length,1);
+  assert.deepEqual(h.calibrationProgress,[{stage:'adaptation_started'}]);
+  await pending;await h.flush();h.video.emit();await h.flush();
+  assert.equal(candidate.messages.filter(entry=>entry.message.type==='frame').length,2);
+  assert.deepEqual(h.counters(),{cameraOpens:1,trackStops:0});
+  h.controller.stop();
+});
+
+test('cancelling a pending adaptation preserves the accepted worker and does not stop the camera',async()=>{
+  const h=harness({holdAdapt:true});await h.controller.start({userInitiated:true,cameraConsent:true});
+  const accepted=h.workers[0];await h.controller.beginCalibration();h.video.emit();await h.flush();
+  const sample=h.samples.at(-1),pending=h.controller.calibrate({x:400,y:300},sample.callbackTimestampMs);
+  h.controller.cancelCalibration();await assert.rejects(pending,/calibration cancelled/);
+  assert.equal(accepted.terminated,false);h.video.emit();await h.flush();
+  assert.equal(accepted.messages.filter(entry=>entry.message.type==='frame').length,1);
+  assert.deepEqual(h.counters(),{cameraOpens:1,trackStops:0});
+  h.controller.stop();
 });
 
 test('calibration rejects samples older than the callback-time freshness window',async()=>{

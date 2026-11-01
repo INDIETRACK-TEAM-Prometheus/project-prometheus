@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import {
   GAZE_CALIBRATION_PROFILE_KEY,
   createGazeCalibrationProfile,
+  createGazeCalibrationProfileAsync,
   fitAffineCalibration,
   identityAffineCalibration,
   loadGazeCalibrationProfile,
   restoreWebEyeTrackAdaptationSamples,
+  serializeWebEyeTrackAdaptationSamples,
+  serializeWebEyeTrackAdaptationSamplesAsync,
   restoreLandmarkResidualCalibration,
   validateGazeCalibrationProfile,
   saveGazeCalibrationProfile,
@@ -43,8 +46,9 @@ test('profile replays ImageData bytes as typed arrays and stores only calibratio
   const loaded = await loadGazeCalibrationProfile(store,{environment,runtime});
   assert.equal(loaded.status,'compatible');
   assert.deepEqual(loaded.profile,profile);
-  assert.equal(store.values.get(GAZE_CALIBRATION_PROFILE_KEY).includes('"eyePatch"'),true);
-  assert.equal(store.values.get(GAZE_CALIBRATION_PROFILE_KEY).includes('faceOrigin3D'),true);
+  assert.equal(typeof store.values.get(GAZE_CALIBRATION_PROFILE_KEY),'object');
+  assert.equal(store.values.get(GAZE_CALIBRATION_PROFILE_KEY).adaptation.samples[0].eyePatch.format,'ImageData');
+  assert.equal(store.values.get(GAZE_CALIBRATION_PROFILE_KEY).adaptation.samples[0].faceOrigin3D instanceof Array,true);
 });
 
 test('profile load reports runtime or environment changes without mutating or recalibrating it',async()=>{
@@ -57,7 +61,7 @@ test('profile load reports runtime or environment changes without mutating or re
   assert.deepEqual(changedEnvironment.profile,profile);
   const changedRuntime = await loadGazeCalibrationProfile(store,{environment,runtime:{...runtime,trackerVersion:'0.0.3'}});
   assert.equal(changedRuntime.status,'runtime_changed');
-  assert.deepEqual(store.values.get(GAZE_CALIBRATION_PROFILE_KEY),JSON.stringify(profile));
+  assert.deepEqual(store.values.get(GAZE_CALIBRATION_PROFILE_KEY),profile);
 });
 
 test('missing, corrupt, failed, and incomplete profiles stay unavailable',async()=>{
@@ -69,6 +73,19 @@ test('missing, corrupt, failed, and incomplete profiles stay unavailable',async(
   assert.equal(await saveGazeCalibrationProfile({setItem(){throw new Error('quota exceeded');}},incomplete),false);
   assert.throws(()=>createGazeCalibrationProfile({adaptationSamples:replaySamples,calibration:{...calibration,passed:false},environment,runtime}));
   assert.throws(()=>restoreWebEyeTrackAdaptationSamples([{...incomplete.adaptation.samples[0],eyePatch:{...incomplete.adaptation.samples[0].eyePatch,width:3}}]));
+});
+
+test('profile persistence reads legacy JSON strings and async serialization yields between bounded batches',async()=>{
+  const args={adaptationSamples:replaySamples,calibration,environment,runtime,createdAtUtc:'2026-10-30T00:00:00.000Z'};
+  const expected=createGazeCalibrationProfile(args),store=memoryStore();
+  store.values.set(GAZE_CALIBRATION_PROFILE_KEY,JSON.stringify(expected));
+  assert.equal((await loadGazeCalibrationProfile(store,{environment,runtime})).status,'compatible');
+  let yields=0;const progress=[];
+  const serialized=await serializeWebEyeTrackAdaptationSamplesAsync(replaySamples,{batchSize:2,yieldControl:async()=>{yields++;},onProgress:count=>progress.push(count)});
+  assert.deepEqual(serialized,serializeWebEyeTrackAdaptationSamples(replaySamples));
+  assert.equal(yields,1);assert.deepEqual(progress,[2,4]);
+  const asyncProfile=await createGazeCalibrationProfileAsync(args,{batchSize:2,yieldControl:async()=>{}});
+  assert.deepEqual(asyncProfile,expected);
 });
 
 function affineSamples(prefix, points, outlierId=null) {

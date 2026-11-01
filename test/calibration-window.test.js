@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {stableCalibrationWindow,calibrationWindowStatus,calibrationSampleStatus,calibrationSampleFreshnessMs,calibrationTargetTimedOut,calibrationTargetTimeoutMs,CALIBRATION_TARGET_TIMEOUT_MS,MAX_CALIBRATION_TARGET_TIMEOUT_MS} from '../src/gaze/calibration-window.js';
+import {stableCalibrationWindow,calibrationWindowStatus,calibrationSampleStatus,calibrationSampleFreshnessMs,calibrationTargetTimedOut,calibrationTargetTimeoutMs,CALIBRATION_TARGET_TIMEOUT_MS,MAX_CALIBRATION_TARGET_TIMEOUT_MS,CALIBRATION_ADAPT_TIMEOUT_MS} from '../src/gaze/calibration-window.js';
 
 test('validation requires recent stable post-dwell samples and rejects motion, old and future samples',()=>{
  const samples=[500,550,600].map(at=>({at,features:[.5,.5]})),options={targetShownAt:0,now:650};
@@ -45,4 +45,8 @@ test('freshness falls back for irregular/nonpositive timestamps and remains capp
  assert.equal(calibrationSampleFreshnessMs([{at:10},{at:10},{at:6010}]),250);
  assert.equal(calibrationSampleFreshnessMs([{at:0},{at:2000}]),2500);
  assert.throws(()=>calibrationSampleFreshnessMs([],{maxMs:3000}),/invalid calibration freshness/);
+});
+
+test('final WebEyeTrack adaptation has a bounded timeout',()=>{
+ assert.equal(CALIBRATION_ADAPT_TIMEOUT_MS,60000);
 });

@@ -7,9 +7,10 @@ let handleAdaptation;
 let retainCalibrationResult;
 let takeCalibrationResult;
 let calibrationPoints;
-let serializeAdaptationSamples;
+let serializeAdaptationSamplesAsync;
 let restoreAdaptationSamples;
 let calibrationReplaySamples = [];
+let adaptationBusy = false;
 const calibrationResults = new Map();
 const eyePreviewSize = {width:320,height:260};
 const eyeLandmarkIndices = {
@@ -40,7 +41,7 @@ async function initialize() {
   handleAdaptation = adaptation.handleWebEyeTrackAdaptation;
   retainCalibrationResult = adaptation.retainWebEyeTrackCalibrationResult;
   takeCalibrationResult = adaptation.takeWebEyeTrackCalibrationResult;
-  serializeAdaptationSamples = profile.serializeWebEyeTrackAdaptationSamples;
+  serializeAdaptationSamplesAsync = profile.serializeWebEyeTrackAdaptationSamplesAsync;
   restoreAdaptationSamples = profile.restoreWebEyeTrackAdaptationSamples;
   tracker = await initializeWebEyeTrack({
     WebEyeTrack:self.WebEyeTrack,
@@ -135,6 +136,7 @@ function postFrameResult(result,previewBitmaps) {
 }
 
 async function processFrame(message) {
+  if(adaptationBusy){self.postMessage({type:'frameSkipped',frameId:message.frameId});return;}
   const workerStartedAt=performance.now();
   const frame = new ImageData(new Uint8ClampedArray(message.pixels),message.width,message.height);
   // Current WebEyeTrack still needs full-face MediaPipe landmarks, head pose and face origin.
@@ -181,23 +183,43 @@ async function processFrame(message) {
 }
 
 async function processAdaptation(message) {
-  const result = takeCalibrationResult(calibrationResults,message.frameId);
-  const response = await handleAdaptation(result,addCalibrationSample,message.target,message.requestId);
-  if (response.type !== 'adapted' || !result) {
-    calibrationReplaySamples.length = 0;
+  const finalPoint=calibrationReplaySamples.length===calibrationPoints-1;
+  if(finalPoint){
+    adaptationBusy=true;
+    self.postMessage({type:'calibrationProgress',requestId:message.requestId,stage:'adaptation_started'});
+    await new Promise(resolve=>setTimeout(resolve,0));
+  }
+  try {
+    const result = takeCalibrationResult(calibrationResults,message.frameId);
+    const response = await handleAdaptation(result,addCalibrationSample,message.target,message.requestId);
+    if (response.type !== 'adapted' || !result) {
+      calibrationReplaySamples.length = 0;
+      if(finalPoint)self.postMessage({type:'calibrationProgress',requestId:message.requestId,stage:'adaptation_error'});
+      self.postMessage(response);
+      return;
+    }
+    calibrationReplaySamples.push({eyePatch:result.eyePatch,headVector:result.headVector,faceOrigin3D:result.faceOrigin3D,target:[message.target.x,message.target.y]});
+    if (response.points === calibrationPoints) {
+      self.postMessage({type:'calibrationProgress',requestId:message.requestId,stage:'adaptation_complete'});
+      self.postMessage({type:'calibrationProgress',requestId:message.requestId,stage:'serialization_started',count:calibrationReplaySamples.length});
+      try {
+        response.adaptationSamples = await serializeAdaptationSamplesAsync(calibrationReplaySamples,{batchSize:3,onProgress:count=>self.postMessage({type:'calibrationProgress',requestId:message.requestId,stage:'serialization_progress',count})});
+        self.postMessage({type:'calibrationProgress',requestId:message.requestId,stage:'serialization_complete',count:calibrationReplaySamples.length});
+      } catch {
+        response.replayStatus = 'unavailable';
+        self.postMessage({type:'calibrationProgress',requestId:message.requestId,stage:'serialization_error',count:calibrationReplaySamples.length});
+      }
+      calibrationReplaySamples.length = 0;
+    }
     self.postMessage(response);
-    return;
+  } finally {
+    if(finalPoint)adaptationBusy=false;
   }
-  calibrationReplaySamples.push({eyePatch:result.eyePatch,headVector:result.headVector,faceOrigin3D:result.faceOrigin3D,target:[message.target.x,message.target.y]});
-  if (response.points === calibrationPoints) {
-    try { response.adaptationSamples = serializeAdaptationSamples(calibrationReplaySamples); }
-    catch { response.replayStatus = 'unavailable'; }
-    calibrationReplaySamples.length = 0;
-  }
-  self.postMessage(response);
 }
 
 async function restoreCalibration(message) {
+  adaptationBusy=true;
+  self.postMessage({type:'calibrationProgress',requestId:message.requestId,stage:'restore_started'});
   try {
     const samples = restoreAdaptationSamples(message.samples);
     await tracker.adapt(
@@ -209,6 +231,8 @@ async function restoreCalibration(message) {
     self.postMessage({type:'calibrationRestored',requestId:message.requestId,points:samples.length});
   } catch {
     self.postMessage({type:'calibrationRestoreError',requestId:message.requestId,code:'worker_calibration_restore_failed'});
+  } finally {
+    adaptationBusy=false;
   }
 }
 

@@ -22,6 +22,7 @@ export function createWebcamGazeController({
   onEyePreview = () => {},
   onError = () => {},
   onDiagnostic = () => {},
+  onCalibrationProgress = () => {},
   workerFactory = (url, options) => new Worker(url, options),
   workerReadyTimeoutMs = 10000,
   createCanvas = () => document.createElement('canvas'),
@@ -51,7 +52,7 @@ export function createWebcamGazeController({
     let worker;
     try { worker = workerFactory('/src/gaze/webeyetrack-worker.js', {name:'prometheus-webeyetrack'}); }
     catch { diagnose('worker_load_failed'); throw startupError('worker_load_failed'); }
-    const record = {worker, calibrated, ready:false, busy:false, pending:new Map(), latestSample:null, fatal:false};
+    const record = {worker, calibrated, ready:false, busy:false, adapting:false, pending:new Map(), latestSample:null, fatal:false};
     diagnose('worker_created');
     let readyTimeout;
     const ready = new Promise((resolve, reject) => {
@@ -138,9 +139,21 @@ export function createWebcamGazeController({
         }
         return;
       }
+      if (message?.type === 'frameSkipped') {
+        record.busy = false;
+        return;
+      }
+      if (message?.type === 'calibrationProgress') {
+        const stages=['adaptation_started','adaptation_complete','adaptation_error','serialization_started','serialization_progress','serialization_complete','serialization_error','restore_started'];
+        if(!record.pending.has(message.requestId)||!stages.includes(message.stage))return;
+        if(message.stage==='adaptation_started'||message.stage==='restore_started')record.adapting=true;
+        try{onCalibrationProgress({stage:message.stage,...(Number.isSafeInteger(message.count)&&message.count>=0&&message.count<=27?{count:message.count}:{})});}catch{}
+        return;
+      }
       if (message?.type === 'adapted' || message?.type === 'adaptError' || message?.type === 'calibrationRestored' || message?.type === 'calibrationRestoreError') {
         const pending = record.pending.get(message.requestId);
         if (!pending) return;
+        record.adapting = false;
         record.pending.delete(message.requestId);
         if (message.type === 'adapted') pending.resolve({adapted:true,points:message.points,...(Array.isArray(message.adaptationSamples)?{adaptationSamples:message.adaptationSamples}:{}),...(message.replayStatus?{replayStatus:message.replayStatus}:{})});
         else if (message.type === 'calibrationRestored') pending.resolve({restored:true,points:message.points});
@@ -193,7 +206,7 @@ export function createWebcamGazeController({
   };
 
   function sendFrame(record, imageData, metadata, now, sentAtMs) {
-    if (!record?.ready || record.busy || record.fatal) return;
+    if (!record?.ready || record.busy || record.adapting || record.fatal) return;
     record.busy = true;
     const pixels = imageData.data.slice();
     record.worker.postMessage({

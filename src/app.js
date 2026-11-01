@@ -1,10 +1,10 @@
 import {createWorld} from './spatial/world.js';
 import {createLocalRecorder,listLocalRecordings,deleteLocalRecordings} from './gaze/local-recorder.js';
-import {GAZE_CALIBRATION_PROFILE_KEY,restoreLandmarkResidualCalibration,openGazeCalibrationProfileStore,loadGazeCalibrationProfile,createGazeCalibrationProfile,saveGazeCalibrationProfile,fitAffineCalibration,identityAffineCalibration,selectAffineCalibrationCandidate} from './gaze/calibration-profile.js';
+import {GAZE_CALIBRATION_PROFILE_KEY,restoreLandmarkResidualCalibration,openGazeCalibrationProfileStore,loadGazeCalibrationProfile,createGazeCalibrationProfileAsync,saveGazeCalibrationProfile,fitAffineCalibration,identityAffineCalibration,selectAffineCalibrationCandidate} from './gaze/calibration-profile.js';
 import {createCausalDisplayFilter} from './gaze/display-filter.js';
 import {createAccuracyPlan} from './gaze/accuracy-protocol.js';
 import {createAccuracySession} from './gaze/accuracy-session.js';
-import {stableCalibrationWindow,calibrationSampleFreshnessMs,calibrationSampleStatus,calibrationWindowStatus,calibrationTargetTimedOut,CALIBRATION_RUN_TIMEOUT_MS} from './gaze/calibration-window.js';
+import {stableCalibrationWindow,calibrationSampleFreshnessMs,calibrationSampleStatus,calibrationWindowStatus,calibrationTargetTimedOut,CALIBRATION_RUN_TIMEOUT_MS,CALIBRATION_ADAPT_TIMEOUT_MS} from './gaze/calibration-window.js';
 import {BackgroundAttentionCoordinator} from './runtime/background-attention.js';
 import {createBackgroundBrowserWork} from './runtime/background-browser.js';
 import {LiveTracking} from './runtime/live-tracking.js';
@@ -291,16 +291,50 @@ async function boot() {
   const gazeMarker=$('#gazeMarker');
   const clearGazeMarker=()=>{gazeMarker.hidden=true;};
   const showGazeMarker=(point,state)=>{const position=gazeMarkerPosition(point,state);if(!position){clearGazeMarker();return;}gazeMarker.style.left=position.left;gazeMarker.style.top=position.top;gazeMarker.hidden=false;};
-  let world=null, latest=null, latestProvisionalGaze=null, candidate=null, coordinator=null, controller=null, calibrationStage=null, sequence=0, training=[], validation=[], screenSize=null, calibrationTargetShownAt=-Infinity, lastCopy=0, lastHistoryFrameId=null, maintenance=Promise.resolve(), timer=null,timingCalibration=null,pendingAligned=null,cameraSessionId=null,sceneFrozen=false,frozenScene=null,frozenGazeExpiry=null,frozenGazeResolve=null,frozenGazeGeneration=0,frozenGazeRequest=false,initialScenePending=false,initialSceneGeneration=0,diagnosticPurpose='scene',diagnosticGazePoint=null,diagnosticGazeTiming=null,diagnosticRequestNumber=0,provisionalSparkController=null,provisionalSparkGeneration=0,provisionalSparkRequestNumber=0,lastProvisionalSparkAt=-Infinity,cameraStartPending=false;
+  let world=null, latest=null, latestProvisionalGaze=null, candidate=null, coordinator=null, controller=null, calibrationStage=null, calibrationRunToken=0, sequence=0, training=[], validation=[], screenSize=null, calibrationTargetShownAt=-Infinity, lastCopy=0, lastHistoryFrameId=null, maintenance=Promise.resolve(), timer=null,timingCalibration=null,pendingAligned=null,cameraSessionId=null,sceneFrozen=false,frozenScene=null,frozenGazeExpiry=null,frozenGazeResolve=null,frozenGazeGeneration=0,frozenGazeRequest=false,initialScenePending=false,initialSceneGeneration=0,diagnosticPurpose='scene',diagnosticGazePoint=null,diagnosticGazeTiming=null,diagnosticRequestNumber=0,provisionalSparkController=null,provisionalSparkGeneration=0,provisionalSparkRequestNumber=0,lastProvisionalSparkAt=-Infinity,cameraStartPending=false;
   const clockSessionId=crypto.randomUUID();
   // WebEyeTrack exposes adaptation in memory but no official model persistence API.
   // Keep the legacy hand-built calibration key untouched; it is incompatible.
-  let activeCalibration=null,activeAffine=null,capturedAdaptation=null,calibrationRunStart=null;const calibrationWindow=[];
+  let activeCalibration=null,activeAffine=null,capturedAdaptation=null,calibrationRunStart=null,calibrationAdaptStartedAt=null,calibrationAdaptStarted=false,calibrationAdaptFinished=false,calibrationSerializeStartedAt=null,calibrationSerializeFinished=false;const calibrationWindow=[];
   const profileRuntime={webeyetrack:'0.0.2',protocol:'replay-v1'},profileStorage=openGazeCalibrationProfileStore().catch(()=>null),displayFilter=createCausalDisplayFilter();
   let activeLandmarkResidual=null;
   const calibrationStatus=$('#calibrationStatus');
   calibrationStatus.id='gazeCalibrationStatus';calibrationStatus.className='row';calibrationStatus.setAttribute('aria-live','polite');gazeStatus.parentElement.after(calibrationStatus);
   const showCalibrationStatus=text=>{calibrationStatus.textContent=text;};
+  function logCalibrationStage(event,{startedAt,count=27}={}){
+    if(!cameraSessionId)return;
+    const body={event,sessionId:cameraSessionId,...(Number.isFinite(startedAt)?{durationMs:Math.min(600000,Math.max(0,Math.round(performance.now()-startedAt)))}:{}),count};
+    try{void fetch('/api/diagnostics/calibration-stage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),keepalive:true}).catch(()=>{});}catch{}
+  }
+  function onCalibrationProgress({stage,count}={}){
+    const now=performance.now(),info=$('#calibrationInfo');
+    if(stage==='adaptation_started'){
+      calibrationAdaptStartedAt??=now;
+      if(!calibrationAdaptStarted){logCalibrationStage('calibration_adapt_start');calibrationAdaptStarted=true;}
+      if(calibrationStage==='training')info.textContent='27개 WebEyeTrack 표본 수집 완료 · 로컬 모델 적응 중';
+    }else if(stage==='adaptation_complete'){
+      if(!calibrationAdaptStarted){calibrationAdaptStartedAt??=now;logCalibrationStage('calibration_adapt_start');calibrationAdaptStarted=true;}
+      if(!calibrationAdaptFinished)logCalibrationStage('calibration_adapt_complete',{startedAt:calibrationAdaptStartedAt});
+      calibrationAdaptFinished=true;
+      if(calibrationStage==='training')info.textContent='모델 적응 완료 · 로컬 교정 재생 자료 준비 중';
+    }else if(stage==='adaptation_error'){
+      if(!calibrationAdaptStarted){calibrationAdaptStartedAt??=now;logCalibrationStage('calibration_adapt_start');calibrationAdaptStarted=true;}
+      if(!calibrationAdaptFinished)logCalibrationStage('calibration_adapt_error',{startedAt:calibrationAdaptStartedAt});
+      calibrationAdaptFinished=true;
+    }else if(stage==='serialization_started'){
+      calibrationSerializeStartedAt=now;calibrationSerializeFinished=false;
+      logCalibrationStage('adaptation_serialize_start');
+      if(calibrationStage==='training')info.textContent=`모델 적응 완료 · 로컬 교정 재생 자료 인코딩 0/${count??27}`;
+    }else if(stage==='serialization_progress'){
+      if(calibrationStage==='training')info.textContent=`모델 적응 완료 · 로컬 교정 재생 자료 인코딩 ${count??0}/27`;
+    }else if(stage==='serialization_complete'){
+      if(!calibrationSerializeFinished)logCalibrationStage('adaptation_serialize_complete',{startedAt:calibrationSerializeStartedAt});
+      calibrationSerializeFinished=true;
+    }else if(stage==='serialization_error'){
+      if(!calibrationSerializeFinished)logCalibrationStage('adaptation_serialize_error',{startedAt:calibrationSerializeStartedAt});
+      calibrationSerializeFinished=true;
+    }
+  }
   showCalibrationStatus('WebEyeTrack 교정 없음 · 시작 시 이 기기에 저장된 교정 복원을 시도');
   let provisionalTrackingStore=null, provisionalTrackingOpening=null, provisionalSparkRecordId=null;
   const provisionalTrackingStatus=$('#provisionalTrackingStatus'), provisionalTrackingList=$('#provisionalTrackingList');
@@ -787,7 +821,7 @@ async function boot() {
   }
   function setState(s) {state.textContent=({starting:'시작 중',active:'카메라 활성',stopping:'정리 중',stopped:'정지',error:'시작 실패'})[s];start.disabled=s==='starting'||s==='active'||s==='stopping';stop.disabled=!(s==='starting'||s==='active');calibrate.disabled=s!=='active';calibrate.style.display=s==='active'?'inline-flex':'none';$('#pause').disabled=s!=='active';if(s!=='active'){clearGazeMarker();$('#pause').textContent='⏸';$('#pause').setAttribute('aria-label','일시정지');$('#pause').title='일시정지';}if(s==='stopped'&&!$('#localConsent').checked)$('#worldSceneState').textContent='동의 대기';updateFrozenGazeControls();}
   try {
-    controller=createWebcamGazeController({video,mediaDevices:navigator.mediaDevices,onSample,onEyePreview,onDiagnostic:logStartupDiagnostic,onError:error=>{stopBackgroundAttention();void localRecorder.stop();const diagnostic=startupFailureDiagnostic(error),text=`WebEyeTrack 추적 중단 · 코드 ${diagnostic.code} · 단계 ${diagnostic.step}`;logStartupDiagnostic(diagnostic.code);clearFrozenGazeDemo('카메라 오류 · 잠정 시선 시험 취소',true);stopRemote();cancelDiagnostic();activeCalibration=null;activeAffine=null;displayFilter.reset();activeLandmarkResidual=null;training=[];validation=[];if(pilot?.calibration?.passed)pilot.calibration={...pilot.calibration,passed:false,status:'camera_error',invalidatedAtUtc:new Date().toISOString()};timingCalibration=null;cameraSessionId=null;pendingAligned=null;$('#timingStatus').textContent='카메라 오류 · 시간 측정 다시 적용 필요';$('#runGazeSam').disabled=true;coordinator?.stop();message.textContent=text;gazeStatus.textContent=text;}});
+    controller=createWebcamGazeController({video,mediaDevices:navigator.mediaDevices,onSample,onEyePreview,onDiagnostic:logStartupDiagnostic,onCalibrationProgress,onError:error=>{stopBackgroundAttention();void localRecorder.stop();const diagnostic=startupFailureDiagnostic(error),text=`WebEyeTrack 추적 중단 · 코드 ${diagnostic.code} · 단계 ${diagnostic.step}`;logStartupDiagnostic(diagnostic.code);clearFrozenGazeDemo('카메라 오류 · 잠정 시선 시험 취소',true);stopRemote();cancelDiagnostic();activeCalibration=null;activeAffine=null;displayFilter.reset();activeLandmarkResidual=null;training=[];validation=[];if(pilot?.calibration?.passed)pilot.calibration={...pilot.calibration,passed:false,status:'camera_error',invalidatedAtUtc:new Date().toISOString()};timingCalibration=null;cameraSessionId=null;pendingAligned=null;$('#timingStatus').textContent='카메라 오류 · 시간 측정 다시 적용 필요';$('#runGazeSam').disabled=true;coordinator?.stop();message.textContent=text;gazeStatus.textContent=text;}});
     coordinator=createCoordinator({controller,memory,runtime,onState:setState,onAligned:submitAligned,onDiagnostic:logStartupDiagnostic,namespace:epoch});
   } catch {start.disabled=true;message.textContent='이 브라우저에서 카메라 API를 사용할 수 없습니다.';}
   async function selectDurable(mode){
@@ -834,7 +868,7 @@ async function boot() {
     else if(result.reason==='start_failed') {const diagnostic=startupFailureDiagnostic(result.error),text=`시작 실패 · 코드 ${diagnostic.code} · 단계 ${diagnostic.step}`;logStartupDiagnostic(diagnostic.code);message.textContent=text;gazeStatus.textContent=text;$('#provisionalSparkStatus').textContent=text;}
   }
   start.addEventListener('click',()=>{for(const id of ['localConsent','provisionalSparkConsent','exploreConsent','reasonConsent','gazeSamConsent','traceConsent','retentionConsent'])$('#'+id).checked=true;void startSession();});
-  function stopSession(){accuracySession?.cancel('session_stopped');capturedAdaptation=null;calibrationWindow.length=0;stopBackgroundAttention();clearGazeMarker();initialSceneGeneration++;initialScenePending=false;clearFrozenGazeDemo('카메라 정지 · 잠정 시선점 폐기',true);stopRemote();cancelDiagnostic();if(pilot && pilot.stoppedAt===null)pilot.stoppedAt=performance.now();clearInterval(pilotTimer);pilotTimer=null;updatePilot();clearInterval(timer);timer=null;const drained=coordinator?.stop();controller?.cancelCalibration();activeCalibration=null;activeAffine=null;displayFilter.reset();activeLandmarkResidual=null;training=[];validation=[];history.clear();latest=null;latestProvisionalGaze=null;candidate=null;pendingAligned=null;cameraSessionId=null;timingCalibration=null;controller?.setTimingCalibration(null);$('#timingStatus').textContent='카메라 세션 종료 · 광학 측정 다시 적용 필요';$('#runGazeSam').disabled=true;$('#gazeSamStatus').textContent='정지됨 · 카메라 시작 후 시선 정렬 필요';$('#worldSceneState').textContent=$('#localConsent').checked?'정지':'동의 대기';$('#worldGazeState').textContent='미교정 추정 대기';calibrationStage=null;$('#calibration').hidden=true;for(const id of ['leftEye','rightEye'])drawEye(id,null,false,null);gazeStatus.textContent='미교정 추정 대기';showCalibrationStatus('카메라 세션 종료 · 저장된 교정은 다음 시작 때 복원');return Promise.all([drained,maintenance,localRecorder.stop()]);}
+  function stopSession(){calibrationRunToken++;accuracySession?.cancel('session_stopped');capturedAdaptation=null;calibrationWindow.length=0;stopBackgroundAttention();clearGazeMarker();initialSceneGeneration++;initialScenePending=false;clearFrozenGazeDemo('카메라 정지 · 잠정 시선점 폐기',true);stopRemote();cancelDiagnostic();if(pilot && pilot.stoppedAt===null)pilot.stoppedAt=performance.now();clearInterval(pilotTimer);pilotTimer=null;updatePilot();clearInterval(timer);timer=null;const drained=coordinator?.stop();controller?.cancelCalibration();activeCalibration=null;activeAffine=null;displayFilter.reset();activeLandmarkResidual=null;training=[];validation=[];history.clear();latest=null;latestProvisionalGaze=null;candidate=null;pendingAligned=null;cameraSessionId=null;timingCalibration=null;controller?.setTimingCalibration(null);$('#timingStatus').textContent='카메라 세션 종료 · 광학 측정 다시 적용 필요';$('#runGazeSam').disabled=true;$('#gazeSamStatus').textContent='정지됨 · 카메라 시작 후 시선 정렬 필요';$('#worldSceneState').textContent=$('#localConsent').checked?'정지':'동의 대기';$('#worldGazeState').textContent='미교정 추정 대기';calibrationStage=null;$('#calibration').hidden=true;for(const id of ['leftEye','rightEye'])drawEye(id,null,false,null);gazeStatus.textContent='미교정 추정 대기';showCalibrationStatus('카메라 세션 종료 · 저장된 교정은 다음 시작 때 복원');return Promise.all([drained,maintenance,localRecorder.stop()]);}
   $('#pause').addEventListener('click',()=>{if(!coordinator?.status().active)return;if(coordinator.status().paused){coordinator.resume();backgroundAttention?.resume();localRecorder.resume();if(pilot?.pauseStartedAt!=null){pilot.pausedMs+=performance.now()-pilot.pauseStartedAt;pilot.pauseStartedAt=null;}$('#pause').textContent='⏸';$('#pause').setAttribute('aria-label','일시정지');$('#pause').title='일시정지';startRemote();startBackgroundAttention();}else{clearGazeMarker();clearFrozenGazeDemo('카메라 일시정지 · 잠정 시선점 폐기',true);coordinator.pause();depthRequest?.abort();depthRequest=null;backgroundAttention?.pause();localRecorder.pause();if(pilot)pilot.pauseStartedAt=performance.now();stopRemote();cancelDiagnostic();$('#pause').textContent='▶';$('#pause').setAttribute('aria-label','재개');$('#pause').title='재개';}updatePilot();updateFrozenGazeControls();});
   $('#localConsent').addEventListener('change',()=>{if($('#localConsent').checked)startSession();else {void stopSession();message.textContent='통합 동의 철회 · 카메라와 진행 중인 SAM 요청을 중단했습니다.';}});
   stop.addEventListener('click',stopSession);
@@ -849,7 +883,7 @@ async function boot() {
     if(activeCalibration){activeCalibration.environmentChanged=true;if(pilot?.calibration?.passed)pilot.calibration.environmentChanged=true;}
     if(controller)controller.setTimingCalibration(null);
     timingCalibration=null;pendingAligned=null;stopRemote();startRemote();$('#timingStatus').textContent='환경 변경 · 광학 시간 측정 다시 적용 필요';$('#runGazeSam').disabled=true;
-    if(calibrationStage){calibrationStage=null;candidate=null;training=[];validation=[];restorePreviousCalibration();message.textContent='환경 변경으로 진행 중 WebEyeTrack 적응을 취소했습니다. 현재 세션의 이전 적응은 유지합니다.';}
+    if(calibrationStage){calibrationRunToken++;calibrationStage=null;candidate=null;training=[];validation=[];restorePreviousCalibration();message.textContent='환경 변경으로 진행 중 WebEyeTrack 적응을 취소했습니다. 현재 세션의 이전 적응은 유지합니다.';}
     else message.textContent=`${reason} 감지 · 현재 세션의 WebEyeTrack 교정을 유지합니다. 정확도는 보장되지 않으며 재교정은 버튼으로 시작하세요.`;
     latest=null;latestProvisionalGaze=null;$('#calibration').hidden=true;history.clear();
     if(activeCalibration){showCalibrationStatus('환경 변경 감지 · 현재 세션 WebEyeTrack 적응 사용 중 · 정확도 보장 안 됨 · 버튼을 눌러 명시 재교정');gazeStatus.textContent='환경 변경 · 현재 세션 적응 유지 · 정확도 보장 안 됨';$('#worldGazeState').textContent='환경 변경 · 정확도 미보장';}
@@ -865,16 +899,32 @@ async function boot() {
   const metricModel=()=>({dimension:2,x:[0,innerWidth,0],y:[0,0,innerHeight],trainingIds:[]});
   async function beginCalibration(){
     if(!coordinator?.status().active||calibrationStage)return;
-    capturedAdaptation=null;calibrationWindow.length=0;calibrationRunStart=null;stopBackgroundAttention();clearGazeMarker();clearFrozenGazeDemo('교정 시작 · 시선 SAM 대기 중단',true);stopRemote();cancelDiagnostic();controller.cancelCalibration();candidate=null;training=[];validation=[];sequence=0;screenSize={width:innerWidth,height:innerHeight};calibrationStage='loading';if(pilot)pilot.calibration={passed:false,status:'in_progress',attempts:[],startedAtUtc:new Date().toISOString(),method:'WebEyeTrack.adapt',persistence:'local_adaptation_replay'};showCalibrationStatus('WebEyeTrack worker/model 준비 중 · 현재 카메라 스트림 재사용');gazeStatus.textContent='교정 준비 중 · 시선 분석 보류';$('#worldGazeState').textContent='WebEyeTrack 준비 중';$('#calibration').hidden=false;$('#calibrationInfo').textContent='로컬 WebEyeTrack 모델을 준비하고 있습니다.';$('#gazeSamDemoStatus').textContent='WebEyeTrack 교정 준비 중 · 영상은 로컬 worker에서만 처리됩니다.';updateFrozenGazeControls();
-    try{await controller.beginCalibration();}catch(error){if(calibrationStage!=='loading')return;calibrationStage=null;restorePreviousCalibration();$('#calibration').hidden=true;message.textContent=`WebEyeTrack 준비 실패: ${error.message}`;showCalibrationStatus('교정 준비 실패 · 로컬 자산과 worker 오류 확인');return;}
-    if(calibrationStage!=='loading'||screenSize.width!==innerWidth||screenSize.height!==innerHeight){controller.cancelCalibration();return;}
+    const runToken=++calibrationRunToken;
+    capturedAdaptation=null;calibrationWindow.length=0;calibrationRunStart=null;calibrationAdaptStartedAt=null;calibrationAdaptStarted=false;calibrationAdaptFinished=false;calibrationSerializeStartedAt=null;calibrationSerializeFinished=false;stopBackgroundAttention();clearGazeMarker();clearFrozenGazeDemo('교정 시작 · 시선 SAM 대기 중단',true);stopRemote();cancelDiagnostic();controller.cancelCalibration();candidate=null;training=[];validation=[];sequence=0;screenSize={width:innerWidth,height:innerHeight};calibrationStage='loading';if(pilot)pilot.calibration={passed:false,status:'in_progress',attempts:[],startedAtUtc:new Date().toISOString(),method:'WebEyeTrack.adapt',persistence:'local_adaptation_replay'};showCalibrationStatus('WebEyeTrack worker/model 준비 중 · 현재 카메라 스트림 재사용');gazeStatus.textContent='교정 준비 중 · 시선 분석 보류';$('#worldGazeState').textContent='WebEyeTrack 준비 중';$('#calibration').hidden=false;$('#calibrationInfo').textContent='로컬 WebEyeTrack 모델을 준비하고 있습니다.';$('#gazeSamDemoStatus').textContent='WebEyeTrack 교정 준비 중 · 영상은 로컬 worker에서만 처리됩니다.';updateFrozenGazeControls();
+    try{await controller.beginCalibration();}catch(error){if(runToken!==calibrationRunToken||calibrationStage!=='loading')return;calibrationStage=null;restorePreviousCalibration();$('#calibration').hidden=true;message.textContent=`WebEyeTrack 준비 실패: ${error.message}`;showCalibrationStatus('교정 준비 실패 · 로컬 자산과 worker 오류 확인');return;}
+    if(runToken!==calibrationRunToken||calibrationStage!=='loading'||screenSize.width!==innerWidth||screenSize.height!==innerHeight){controller.cancelCalibration();return;}
     calibrationStage='training';calibrationRunStart=performance.now();showCalibrationStatus('WebEyeTrack 공식 adapt() 적응 중 · 이후 별도 27점 표본 수집');gazeStatus.textContent='WebEyeTrack 적응 중 · 시선 분석 보류';$('#worldGazeState').textContent='교정 필요';showTarget();$('#target').focus({preventScroll:true});updateFrozenGazeControls();startBackgroundAttention();
   }
   calibrate.addEventListener('click',()=>{void beginCalibration();});
   setInterval(()=>{
     const now=performance.now();
-    if(calibrationRunStart!==null&&now-calibrationRunStart>CALIBRATION_RUN_TIMEOUT_MS&&['training','validation'].includes(calibrationStage)){
+    const adaptationTimedOut=calibrationAdaptStartedAt!==null&&!calibrationAdaptFinished&&now-calibrationAdaptStartedAt>CALIBRATION_ADAPT_TIMEOUT_MS;
+    const replayTimedOut=calibrationSerializeStartedAt!==null&&!calibrationSerializeFinished&&now-calibrationSerializeStartedAt>CALIBRATION_ADAPT_TIMEOUT_MS;
+    if((adaptationTimedOut||replayTimedOut)&&['training','validation'].includes(calibrationStage)){calibrationRunToken++;
+      const hadCalibration=!!activeCalibration,phase=replayTimedOut?'교정 재생 자료 인코딩':'WebEyeTrack 적응',reason=replayTimedOut?'calibration_replay_timeout':'calibration_adapt_timeout';
+      if(adaptationTimedOut){if(!calibrationAdaptStarted){logCalibrationStage('calibration_adapt_start');calibrationAdaptStarted=true;}logCalibrationStage('calibration_adapt_error',{startedAt:calibrationAdaptStartedAt});calibrationAdaptFinished=true;}
+      if(replayTimedOut){logCalibrationStage('adaptation_serialize_error',{startedAt:calibrationSerializeStartedAt});calibrationSerializeFinished=true;}
+      calibrationStage=null;calibrationRunStart=null;capturedAdaptation=null;calibrationWindow.length=0;candidate=null;training=[];validation=[];restorePreviousCalibration();delete $('#target').dataset.pending;
+      if(hadCalibration&&pilot?.calibration)pilot.calibration.lastRecalibrationFailureReason=reason;else if(pilot)pilot.calibration={...pilot.calibration,passed:false,status:'failed',failureReason:reason};
+      $('#calibration').hidden=false;$('#calibrationInfo').textContent=`${phase} 시간 초과 · 후보 worker를 취소했습니다. 카메라와 이전 교정은 계속 유지됩니다.`;
+      showCalibrationStatus(hadCalibration?`${phase} 시간 초과 · 이전 현재 세션 교정 유지`:`${phase} 시간 초과 · 현재 카메라는 계속 실행 중입니다. 다시 시도하세요.`);
+      message.textContent=hadCalibration?`${phase} 시간 초과 · 이전 현재 세션 교정을 유지하고 카메라를 계속 실행합니다.`:`${phase} 시간 초과 · 카메라를 계속 실행합니다. 다시 교정하세요.`;
+      calibrate.focus();updateFrozenGazeControls();startBackgroundAttention();return;
+    }
+    if(calibrationRunStart!==null&&now-calibrationRunStart>CALIBRATION_RUN_TIMEOUT_MS&&['training','validation'].includes(calibrationStage)){calibrationRunToken++;
       const hadCalibration=!!activeCalibration;
+      if(calibrationAdaptStartedAt!==null&&!calibrationAdaptFinished){if(!calibrationAdaptStarted){logCalibrationStage('calibration_adapt_start');calibrationAdaptStarted=true;}logCalibrationStage('calibration_adapt_error',{startedAt:calibrationAdaptStartedAt});calibrationAdaptFinished=true;}
+      if(calibrationSerializeStartedAt!==null&&!calibrationSerializeFinished){logCalibrationStage('adaptation_serialize_error',{startedAt:calibrationSerializeStartedAt});calibrationSerializeFinished=true;}
       calibrationStage=null;calibrationRunStart=null;capturedAdaptation=null;calibrationWindow.length=0;candidate=null;training=[];validation=[];restorePreviousCalibration();delete $('#target').dataset.pending;
       if(hadCalibration&&pilot?.calibration)pilot.calibration.lastRecalibrationFailureReason='calibration_run_timeout';else if(pilot)pilot.calibration={...pilot.calibration,passed:false,status:'failed',failureReason:'calibration_run_timeout'};
       $('#calibration').hidden=false;$('#calibrationInfo').textContent='전체 교정 시간 초과 · 교정을 취소했습니다. 다시 시도하세요.';
@@ -884,7 +934,7 @@ async function boot() {
     }
     if(!['training','validation'].includes(calibrationStage))return;
     if(calibrationTargetTimedOut(calibrationTargetShownAt,now,calibrationWindow)&&$('#target').dataset.pending!=='true'){
-      const phase=calibrationStage==='training'?'WebEyeTrack 적응':'별도 표본',targetNumber=sequence+1,hadCalibration=!!activeCalibration;
+      calibrationRunToken++;const phase=calibrationStage==='training'?'WebEyeTrack 적응':'별도 표본',targetNumber=sequence+1,hadCalibration=!!activeCalibration;
       const maxSampleAgeMs=calibrationSampleFreshnessMs(calibrationWindow),sampleStatus=calibrationSampleStatus(latest,{targetShownAt:calibrationTargetShownAt,now,maxAgeMs:maxSampleAgeMs}),windowStatus=calibrationWindowStatus(calibrationWindow,{targetShownAt:calibrationTargetShownAt,now});
       const reason=calibrationStage==='validation'&&windowStatus!=='ready'?windowStatus:sampleStatus==='ready'?'sample_processing_delayed':sampleStatus;
       calibrationStage=null;calibrationRunStart=null;capturedAdaptation=null;calibrationWindow.length=0;candidate=null;training=[];validation=[];restorePreviousCalibration();
@@ -898,6 +948,7 @@ async function boot() {
     if(now-calibrationTargetShownAt>=650&&!$('#target').dataset.pending)$('#target').click();
   },150);
   $('#target').addEventListener('click',async()=>{
+    const runToken=calibrationRunToken;
     if(!calibrationStage||calibrationStage==='loading'||$('#target').dataset.pending==='true')return;
     $('#target').dataset.pending='true';
     try{
@@ -909,7 +960,11 @@ async function boot() {
       if(calibrationStage==='validation'&&!stableCalibrationWindow(calibrationWindow,{targetShownAt:calibrationTargetShownAt,now})){const waitText={settling:'표적 표시 후 0.5초 이상 응시하세요',no_post_dwell_samples:'응시 대기 후 검증 표본을 기다리는 중',insufficient_recent_samples:'최근 검증 표본을 모으는 중',gaze_unstable:'시선 표본 흔들림이 큽니다. 표적을 계속 바라보세요'}[stabilityStatus]??'검증 표본을 기다리는 중';$('#calibrationInfo').textContent=waitText;return;}
       if(calibrationStage==='training'){
         if(!fresh){const waitText={no_open_eye_sample:'열린 눈 표본이 없습니다. 얼굴과 눈 검출을 기다리는 중',missing_sample_timestamp:'WebEyeTrack 표본 시각을 기다리는 중',no_post_dwell_sample:'표적을 0.5초 이상 바라본 뒤의 표본을 기다리는 중',stale_sample:'최근 열린 눈 표본을 기다리는 중',future_sample:'WebEyeTrack 표본 시각 확인 중'}[sampleStatus]??'열린 눈 표본을 기다리는 중';$('#calibrationInfo').textContent=waitText;return;}
-        try{const response=await controller.calibrate(target,calibrationTargetShownAt+500,sampleAgeLimitMs);if(response.adaptationSamples)capturedAdaptation=response.adaptationSamples;}catch(error){
+        const finalTrainingTarget=sequence===26;
+        if(finalTrainingTarget){calibrationAdaptStartedAt=performance.now();calibrationAdaptStarted=false;calibrationAdaptFinished=false;calibrationSerializeStartedAt=null;calibrationSerializeFinished=false;$('#calibrationInfo').textContent='27/27 표본 수집 완료 · WebEyeTrack 적응을 기다리는 중';}
+        try{const response=await controller.calibrate(target,calibrationTargetShownAt+500,sampleAgeLimitMs);if(runToken!==calibrationRunToken||calibrationStage!=='training')return;if(response.adaptationSamples)capturedAdaptation=response.adaptationSamples;}catch(error){
+          if(runToken!==calibrationRunToken||calibrationStage!=='training')return;
+          if(finalTrainingTarget){if(!calibrationAdaptStarted){logCalibrationStage('calibration_adapt_start');calibrationAdaptStarted=true;}if(!calibrationAdaptFinished)logCalibrationStage('calibration_adapt_error',{startedAt:calibrationAdaptStartedAt});calibrationAdaptFinished=true;}
           calibrationStage=null;candidate=null;training=[];validation=[];controller.cancelCalibration();restorePreviousCalibration();if(pilot?.calibration?.passed)pilot.calibration.lastRecalibrationStatus='failed';else if(pilot)pilot.calibration={...pilot.calibration,passed:false,status:'failed'};$('#calibration').hidden=true;message.textContent=`WebEyeTrack 적응 실패: ${error.message}`;showCalibrationStatus(activeCalibration?'재교정 실패 · 이전 현재 세션 적응 유지':'교정 실패 · 버튼으로 다시 시도');calibrate.focus();updateFrozenGazeControls();return;
         }
         training.push({id:`train-${sequence}`,target});
@@ -941,7 +996,8 @@ async function boot() {
           else if(pilot)pilot.calibration={...pilot.calibration,...metrics,landmarkResidual:residualSummary,passed:false,status:'completed',method:'WebEyeTrack.adapt',persistence:'local_adaptation_replay'};
           stopRemote();$('#worldGazeState').textContent=activeCalibration?'이전 현재 세션 적응 유지 · 정확도 미보장':'교정 실패 · 시선 분석 보류';
         }
-        if(passed&&capturedAdaptation){try{const store=await profileStorage;if(!store)throw Error('storage_unavailable');const profile=createGazeCalibrationProfile({adaptationSamples:capturedAdaptation,calibration:pilot.calibration,environment:gazeEnvironment(pilot.cameraSettings),runtime:profileRuntime,landmarkResidual:activeLandmarkResidual,affine:affineSelection?{model:affineModel,selection:affineSelection}:null});if(!await saveGazeCalibrationProfile(store,profile))throw Error('profile_write_failed');recordingStatus.textContent='교정 저장 완료';}catch{recordingStatus.textContent='교정 저장 실패 · 현재 세션에서만 사용';}}capturedAdaptation=null;
+        calibrationRunStart=null;
+        if(passed&&capturedAdaptation){const profileSaveStartedAt=performance.now();logCalibrationStage('profile_save_start');try{const store=await profileStorage;if(!store)throw Error('storage_unavailable');const profile=await createGazeCalibrationProfileAsync({adaptationSamples:capturedAdaptation,calibration:pilot.calibration,environment:gazeEnvironment(pilot.cameraSettings),runtime:profileRuntime,landmarkResidual:activeLandmarkResidual,affine:affineSelection?{model:affineModel,selection:affineSelection}:null},{batchSize:3,onProgress:count=>{$('#calibrationInfo').textContent=`교정 통과 · 로컬 재생 프로필 준비 ${count}/27`;}});if(!await saveGazeCalibrationProfile(store,profile))throw Error('profile_write_failed');logCalibrationStage('profile_save_complete',{startedAt:profileSaveStartedAt});recordingStatus.textContent='교정 저장 완료';}catch{logCalibrationStage('profile_save_error',{startedAt:profileSaveStartedAt});recordingStatus.textContent='교정 저장 실패 · 현재 세션에서만 사용';}}capturedAdaptation=null;
         const metricsSummary=`기준 WebEyeTrack 별도 평가 ${passed?'통과':'실패'}: 유효 ${(metrics.validRate*100).toFixed(1)}%, p95 ${metrics.p95===null?'없음':(metrics.p95*100).toFixed(2)+'%'} (화면 대각선 기준). 실사용 성능은 보장되지 않습니다.`;
         const residualMessage=residualSelected?`랜드마크 잔차 후보: 18회 적합, 같은 3×3 위치의 9회 반복 선택 표본 p95 ${(baselineHoldout.p95*100).toFixed(2)}% → ${(residualHoldout.p95*100).toFixed(2)}%. 일반화 검증은 아닙니다.`:residualModel?'랜드마크 잔차 후보는 같은 3×3 위치의 9회 반복 선택 표본에서 조건을 충족하지 않아 적용하지 않았습니다.':'랜드마크 잔차 후보는 특징 표본 누락 또는 퇴화로 적용하지 않았습니다.';
         message.textContent=passed?`${metricsSummary} ${residualMessage} 저장된 교정은 동일 환경의 다음 시작에서 재적용합니다. 저장 성공 여부는 기록 상태를 확인하세요.`:activeCalibration?`${metricsSummary} 이전 현재 세션 적응을 유지합니다.`:metricsSummary;
@@ -952,7 +1008,7 @@ async function boot() {
         updateFrozenGazeControls();return;
       }
       showTarget();
-    }finally{delete $('#target').dataset.pending;}
+    }finally{if(runToken===calibrationRunToken)delete $('#target').dataset.pending;}
   });
   void ensureProvisionalTracking().catch(()=>{});
   $('#runtimeStatus').textContent='카메라 시작 동의 대기 · Spark 별도 동의 필요';

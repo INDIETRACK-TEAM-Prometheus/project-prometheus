@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {eyeCrop,eyePreviewCrop} from '../src/gaze/index.js';
-import {restoreWebEyeTrackAdaptationSamples,serializeWebEyeTrackAdaptationSamples} from '../src/gaze/calibration-profile.js';
+import {restoreWebEyeTrackAdaptationSamples,serializeWebEyeTrackAdaptationSamples,serializeWebEyeTrackAdaptationSamplesAsync} from '../src/gaze/calibration-profile.js';
 
-function workerHarness({offscreen=true,transferFails=false,noCrops=false}={}) {
+function workerHarness({offscreen=true,transferFails=false,noCrops=false,deferFinalAdapt=false}={}) {
   const messages=[],bitmaps=[],dots=[],canvases=[],calibrationResults=new Map(),adaptations=[];
   const features=[.1,-.2,.3];
   const landmarks=Array.from({length:478},()=>({x:.55,y:.5}));
@@ -20,8 +20,9 @@ function workerHarness({offscreen=true,transferFails=false,noCrops=false}={}) {
   Object.assign(landmarks[473],{x:.55,y:.49});Object.assign(landmarks[474],{x:.54,y:.49});Object.assign(landmarks[475],{x:.55,y:.48});Object.assign(landmarks[476],{x:.56,y:.49});Object.assign(landmarks[477],{x:.55,y:.5});
   Object.assign(landmarks[468],{x:.35,y:.49});Object.assign(landmarks[469],{x:.34,y:.49});Object.assign(landmarks[470],{x:.35,y:.48});Object.assign(landmarks[471],{x:.36,y:.49});Object.assign(landmarks[472],{x:.35,y:.5});
   const faceLandmarks=noCrops?[]:landmarks;
-  let adaptCount=0;
-  const tracker={loaded:true,async step(frame,timestamp){assert.equal(frame.width,100);assert.equal(frame.height,100);assert.equal(timestamp,123);return {facialLandmarks:faceLandmarks,gazeState:'open',normPog:[0,0],eyePatch:new ImageData(new Uint8ClampedArray([1,2,3,255]),1,1),headVector:[0,0,1],faceOrigin3D:[0,0,1]};},async adapt(...args){adaptations.push(args);}};
+  let adaptCount=0,stepCount=0,finishFinalAdaptation,notifyFinalAdaptation;
+  const finalAdaptationStarted=new Promise(resolve=>{notifyFinalAdaptation=resolve;});
+  const tracker={loaded:true,async step(frame,timestamp){stepCount++;assert.equal(frame.width,100);assert.equal(frame.height,100);assert.equal(timestamp,123);return {facialLandmarks:faceLandmarks,gazeState:'open',normPog:[0,0],eyePatch:new ImageData(new Uint8ClampedArray([1,2,3,255]),1,1),headVector:[0,0,1],faceOrigin3D:[0,0,1]};},async adapt(...args){adaptations.push(args);}};
   class ImageData { constructor(data,width,height){this.data=data;this.width=width;this.height=height;} }
   class OffscreenCanvas {
     constructor(width,height){this.width=width;this.height=height;this.calls=[];canvases.push(this);}
@@ -44,20 +45,20 @@ function workerHarness({offscreen=true,transferFails=false,noCrops=false}={}) {
     },
     '/src/gaze/webeyetrack-bootstrap.js':{initializeWebEyeTrack:async()=>tracker},
     '/src/gaze/webeyetrack-adaptation.js':{
-      WEBEYETRACK_CALIBRATION_POINTS:27,handleWebEyeTrackAdaptation:async(_result,_add,_target,requestId)=>({type:'adapted',requestId,points:++adaptCount}),retainWebEyeTrackCalibrationResult(results,frameId,result){results.set(frameId,result);},
+      WEBEYETRACK_CALIBRATION_POINTS:27,handleWebEyeTrackAdaptation:async(_result,_add,_target,requestId)=>{const points=++adaptCount;if(deferFinalAdapt&&points===27){notifyFinalAdaptation();await new Promise(resolve=>{finishFinalAdaptation=resolve;});}return {type:'adapted',requestId,points};},retainWebEyeTrackCalibrationResult(results,frameId,result){results.set(frameId,result);},
       takeWebEyeTrackCalibrationResult(results,frameId){const result=results.get(frameId);results.delete(frameId);return result;},createWebEyeTrackCalibrationAdapter:()=>()=>1
     },
-    '/src/gaze/calibration-profile.js':{serializeWebEyeTrackAdaptationSamples,restoreWebEyeTrackAdaptationSamples},
+    '/src/gaze/calibration-profile.js':{serializeWebEyeTrackAdaptationSamples,serializeWebEyeTrackAdaptationSamplesAsync,restoreWebEyeTrackAdaptationSamples},
     '/vendor/vision_bundle.mjs':{}
   };
   const self={postMessage(message,transfer=[]){if(transferFails&&transfer.length)throw new Error('bitmap transfer unavailable');messages.push({message,transfer});}};
   let clock=0;
-  const context={self,ImageData,Uint8ClampedArray,performance:{now:()=>++clock},importScripts(){},mockImport:path=>Promise.resolve(modules[path]),...(offscreen?{OffscreenCanvas}:{})};
+  const context={self,ImageData,Uint8ClampedArray,performance:{now:()=>++clock},setTimeout,importScripts(){},mockImport:path=>Promise.resolve(modules[path]),...(offscreen?{OffscreenCanvas}:{})};
   const source=readFileSync(new URL('../src/gaze/webeyetrack-worker.js',import.meta.url),'utf8').replaceAll('import(','mockImport(');
   vm.runInNewContext(source,context,{filename:'webeyetrack-worker.js'});
   async function waitForResponse(expected,after=0){
-    for(let attempt=0;attempt<20;attempt++){const response=messages.find((entry,index)=>index>=after&&(entry.message.type===expected||entry.message.type==='error'));if(response)return response;await new Promise(resolve=>setImmediate(resolve));}
-    throw new Error('worker did not respond');
+    for(let attempt=0;attempt<200;attempt++){const response=messages.find((entry,index)=>index>=after&&(entry.message.type===expected||['error','adaptError','calibrationRestoreError'].includes(entry.message.type)));if(response){if(response.message.type!==expected)throw new Error(`worker responded with ${response.message.type}: ${response.message.code??response.message.step??''}`);return response;}await new Promise(resolve=>setTimeout(resolve,1));}
+    throw new Error(`worker did not respond: ${messages.slice(after).map(entry=>entry.message.type).join(',')}`);
   }
   async function frame(frameId=7){
     const after=messages.length;
@@ -66,7 +67,7 @@ function workerHarness({offscreen=true,transferFails=false,noCrops=false}={}) {
     self.onmessage({data:{type:'frame',frameId,width:100,height:100,pixels,captureTimestampMs:123,callbackTimestampMs:124,timestampKind:'browser_capture_estimate',sentAtMs:120}});
     return await waitForResponse('result',after);
   }
-  return {self,waitForResponse,frame,messages,bitmaps,dots,canvases,features,landmarks,adaptations};
+  return {self,waitForResponse,frame,messages,bitmaps,dots,canvases,features,landmarks,adaptations,get stepCount(){return stepCount;},waitForFinalAdaptation(){return finalAdaptationStarted;},finishFinalAdaptation(){finishFinalAdaptation?.();}};
 }
 
 test('worker renders eye, eyelid, iris and brow landmarks from eye-only frame pixel copies',async()=>{
@@ -134,4 +135,29 @@ test('worker exports typed ImageData adaptation samples and replays them into tr
   assert.equal(h.adaptations.length,1);
   assert.equal(h.adaptations[0][0].length,27);
   assert.ok(h.adaptations[0][0][0].data instanceof Uint8ClampedArray);
+});
+
+test('worker yields during final adaptation and skips candidate frames until replay serialization finishes',async()=>{
+  const h=workerHarness({noCrops:true,deferFinalAdapt:true});
+  h.self.onmessage({data:{type:'init'}});await h.waitForResponse('ready');
+  for(let i=0;i<26;i++){
+    await h.frame(i+1);
+    const after=h.messages.length;
+    h.self.onmessage({data:{type:'adapt',requestId:`adapt-${i+1}`,frameId:i+1,target:{x:0,y:0}}});
+    await h.waitForResponse('adapted',after);
+  }
+  await h.frame(27);
+  const after=h.messages.length;
+  h.self.onmessage({data:{type:'adapt',requestId:'adapt-27',frameId:27,target:{x:0,y:0}}});
+  await h.waitForResponse('calibrationProgress',after);
+  assert.equal(h.messages.some(entry=>entry.message.stage==='adaptation_started'),true);
+  const before=h.stepCount,skippedAt=h.messages.length;
+  h.self.onmessage({data:{type:'frame',frameId:28,width:100,height:100,pixels:new Uint8Array(40000),captureTimestampMs:123,callbackTimestampMs:124,timestampKind:'browser_video_capture_estimate',sentAtMs:120}});
+  await h.waitForResponse('frameSkipped',skippedAt);
+  assert.equal(h.stepCount,before);
+  await h.waitForFinalAdaptation();
+  h.finishFinalAdaptation();
+  const final=await h.waitForResponse('adapted',after);
+  assert.equal(final.message.adaptationSamples.length,27);
+  assert.equal(h.messages.some(entry=>entry.message.stage==='serialization_progress'&&entry.message.count===24),true);
 });
