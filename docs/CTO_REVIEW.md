@@ -6,7 +6,9 @@
 
 `docs/evidence/depth-colab-parity-20261101.json`: Colab이 **Tesla T4 / CUDA**임을 health response로 확인하고, `fixtures/sam-synthetic.png` 한 장을 CPU와 GPU에서 각각 5회 처리했다. 65,536개 픽셀 비교에서 validity mask 차이는 0, 평균 절대 깊이 차이는 **0.00000145 m**, 최대 차이는 **0.00000405 m**였다. warm worker inference median은 CPU **1,327 ms**, T4 **93 ms**였으며 round-trip median은 각각 **1,344 ms**와 **478 ms**다. (Round-trip은 local CPU worker와 Colab SSH tunnel을 포함한다.) report에는 입력 SHA-256, model/checkpoint 식별자, latency와 완료 후 VM·tunnel 종료 확인이 기록되어 있다.
 
-이는 같은 pinned model의 합성 이미지 backend parity 및 성능 표본 하나다. Depth accuracy, 실제 카메라 성능 또는 Gate 수용 시험이 아니며 G2-B 및 모든 기존 Gate 판정은 그대로 둔다. 실행 절차와 과금 중인 VM 정리 방법은 [Colab backend guide](depth-anything-v2-colab.md)에 있다. 실행 후 전체 `npm test`: **511/511 통과**; Python depth-worker unit tests: **5/5 통과**.
+`docs/evidence/depth-colab-transport-20261101-035955.json`: 같은 T4 세션과 synthetic fixture로 legacy identity·close와 optimized gzip negotiation·HTTP/1.1 reuse를 각 **12 warm requests** paired-block 방식으로 비교했다. Remote round-trip p50은 **474.734 ms → 304.409 ms**(관측 차이 **170.325 ms, 35.9% 감소**), nearest-rank p95는 **495.374 ms → 337.785 ms**(**157.589 ms, 31.8% 감소**)였다. p95는 표본 12개에서 관측 최대값과 같다. GPU inference p50은 legacy **92.815 ms**, optimized **91.727 ms**로 비슷했다. 이는 이번 합성 표본에서 왕복 시간 개선이 주로 응답 전송·연결 처리 쪽과 일치한다는 해석이며, tunnel RTT는 실행 중 크게 흔들렸다. 별도 `/health` 작은 응답 baseline은 p50 **204.064 ms**, p95 **379.712 ms**이며 inference latency에서 빼지 않았다. 두 transport의 depth 출력은 비교한 65,536 pixels에서 완전히 같았고 CPU/optimized GPU validity mask 차이는 0이었다. Cleanup 후 Colab active sessions 없음, tunnel PID file 없음, local port 49190 listener 0개를 확인했다.
+
+이는 합성 이미지 backend parity 및 한 번의 paired transport 성능 표본이다. Depth accuracy, 실제 카메라 성능, 반복 세션의 latency 분포 또는 Gate 수용 시험이 아니며 G2-B 및 모든 기존 Gate 판정은 그대로 둔다. 실행 절차와 VM 정리 방법은 [Colab backend guide](depth-anything-v2-colab.md)에 있다. 기존 transport 구현 커밋의 전체 `npm test`: **515/515 통과**; Python depth-service transport tests: **2/2 통과**.
 
 기록일: 2026-10-27 KST. 구현 agent: GPT-6.1-Terra, effort medium. 본 기록은 실제 실행 및 코드 검토에 근거하며 제품 완료 승인서가 아니다.
 

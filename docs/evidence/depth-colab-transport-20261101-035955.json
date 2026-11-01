@@ -1,0 +1,830 @@
+{
+  "kind": "depth_backend_parity",
+  "synthetic": true,
+  "gateStatus": "not_asserted",
+  "finishedAtUtc": "2026-11-01T04:02:08.965Z",
+  "input": {
+    "path": "fixtures/sam-synthetic.png",
+    "sha256": "bc7e5b80e3b31c0708a2b1562a4d68369706934028ae55f119974c92837b74c5",
+    "width": 256,
+    "height": 256,
+    "runsPerBackend": 12,
+    "pairedWarmSamplesPerTransport": 12
+  },
+  "local": {
+    "model": {
+      "id": "depth-anything/Depth-Anything-V2-Metric-Hypersim-Small",
+      "sha256": "b782898d8a3e8be1f639de33837ed85e9b4b73e40f8f5e5cd99067588d722545",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/DepthAnything/Depth-Anything-V2",
+      "sourceCommit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+      "encoder": "vits",
+      "dataset": "hypersim",
+      "maxDepthM": 20,
+      "units": "m",
+      "convention": "axial_z",
+      "device": "cpu",
+      "pythonVersion": "3.12.10",
+      "torchVersion": "2.6.0+cpu"
+    },
+    "samples": [
+      {
+        "run": 1,
+        "cold": true,
+        "requestRoundTripMs": 22018.767,
+        "inferenceMs": 1599.889,
+        "totalMs": 1691.225
+      },
+      {
+        "run": 2,
+        "cold": false,
+        "requestRoundTripMs": 1342.189,
+        "inferenceMs": 1325.871,
+        "totalMs": 1330.647
+      },
+      {
+        "run": 3,
+        "cold": false,
+        "requestRoundTripMs": 1507.433,
+        "inferenceMs": 1492.602,
+        "totalMs": 1496.682
+      },
+      {
+        "run": 4,
+        "cold": false,
+        "requestRoundTripMs": 1339.474,
+        "inferenceMs": 1324.351,
+        "totalMs": 1328.195
+      },
+      {
+        "run": 5,
+        "cold": false,
+        "requestRoundTripMs": 1359.917,
+        "inferenceMs": 1342.192,
+        "totalMs": 1346.105
+      },
+      {
+        "run": 6,
+        "cold": false,
+        "requestRoundTripMs": 1390.015,
+        "inferenceMs": 1373.58,
+        "totalMs": 1377.86
+      },
+      {
+        "run": 7,
+        "cold": false,
+        "requestRoundTripMs": 1416.056,
+        "inferenceMs": 1401.126,
+        "totalMs": 1404.987
+      },
+      {
+        "run": 8,
+        "cold": false,
+        "requestRoundTripMs": 1344.222,
+        "inferenceMs": 1327.888,
+        "totalMs": 1332.83
+      },
+      {
+        "run": 9,
+        "cold": false,
+        "requestRoundTripMs": 1493.581,
+        "inferenceMs": 1477.989,
+        "totalMs": 1481.774
+      },
+      {
+        "run": 10,
+        "cold": false,
+        "requestRoundTripMs": 1342.427,
+        "inferenceMs": 1327.045,
+        "totalMs": 1330.796
+      },
+      {
+        "run": 11,
+        "cold": false,
+        "requestRoundTripMs": 1443.412,
+        "inferenceMs": 1429.234,
+        "totalMs": 1433.179
+      },
+      {
+        "run": 12,
+        "cold": false,
+        "requestRoundTripMs": 1379.463,
+        "inferenceMs": 1366.371,
+        "totalMs": 1370.379
+      }
+    ],
+    "roundTripMs": {
+      "first": 22018.767,
+      "sampleCount": 12,
+      "samples": [
+        22018.767,
+        1342.189,
+        1507.433,
+        1339.474,
+        1359.917,
+        1390.015,
+        1416.056,
+        1344.222,
+        1493.581,
+        1342.427,
+        1443.412,
+        1379.463
+      ],
+      "warmSampleCount": 11,
+      "warmSamples": [
+        1342.189,
+        1507.433,
+        1339.474,
+        1359.917,
+        1390.015,
+        1416.056,
+        1344.222,
+        1493.581,
+        1342.427,
+        1443.412,
+        1379.463
+      ],
+      "warmP50": 1379.463,
+      "warmP95": 1507.433,
+      "warmMax": 1507.433
+    },
+    "inferenceMs": {
+      "first": 1599.889,
+      "sampleCount": 12,
+      "samples": [
+        1599.889,
+        1325.871,
+        1492.602,
+        1324.351,
+        1342.192,
+        1373.58,
+        1401.126,
+        1327.888,
+        1477.989,
+        1327.045,
+        1429.234,
+        1366.371
+      ],
+      "warmSampleCount": 11,
+      "warmSamples": [
+        1325.871,
+        1492.602,
+        1324.351,
+        1342.192,
+        1373.58,
+        1401.126,
+        1327.888,
+        1477.989,
+        1327.045,
+        1429.234,
+        1366.371
+      ],
+      "warmP50": 1366.371,
+      "warmP95": 1492.602,
+      "warmMax": 1492.602
+    }
+  },
+  "colab": {
+    "model": {
+      "id": "depth-anything/Depth-Anything-V2-Metric-Hypersim-Small",
+      "sha256": "b782898d8a3e8be1f639de33837ed85e9b4b73e40f8f5e5cd99067588d722545",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/DepthAnything/Depth-Anything-V2",
+      "sourceCommit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+      "encoder": "vits",
+      "dataset": "hypersim",
+      "maxDepthM": 20,
+      "units": "m",
+      "convention": "axial_z",
+      "device": "cuda",
+      "pythonVersion": "3.13.16",
+      "torchVersion": "2.11.0+cu130",
+      "gpu": "Tesla T4",
+      "backend": "colab_remote"
+    },
+    "samples": [
+      {
+        "run": 1,
+        "pair": "1.1",
+        "requestRoundTripMs": 314.876,
+        "inferenceMs": 91.382,
+        "totalMs": 93.172
+      },
+      {
+        "run": 2,
+        "pair": "1.2",
+        "requestRoundTripMs": 308.487,
+        "inferenceMs": 93.036,
+        "totalMs": 95.149
+      },
+      {
+        "run": 3,
+        "pair": "1.3",
+        "requestRoundTripMs": 302.017,
+        "inferenceMs": 92.22,
+        "totalMs": 94.025
+      },
+      {
+        "run": 4,
+        "pair": "1.4",
+        "requestRoundTripMs": 337.785,
+        "inferenceMs": 98.073,
+        "totalMs": 100.256
+      },
+      {
+        "run": 5,
+        "pair": "1.5",
+        "requestRoundTripMs": 304.409,
+        "inferenceMs": 91.787,
+        "totalMs": 93.748
+      },
+      {
+        "run": 6,
+        "pair": "1.6",
+        "requestRoundTripMs": 306.104,
+        "inferenceMs": 92.128,
+        "totalMs": 94.017
+      },
+      {
+        "run": 7,
+        "pair": "2.1",
+        "requestRoundTripMs": 323.151,
+        "inferenceMs": 91.389,
+        "totalMs": 93.224
+      },
+      {
+        "run": 8,
+        "pair": "2.2",
+        "requestRoundTripMs": 301.337,
+        "inferenceMs": 92.701,
+        "totalMs": 94.646
+      },
+      {
+        "run": 9,
+        "pair": "2.3",
+        "requestRoundTripMs": 301.141,
+        "inferenceMs": 91.727,
+        "totalMs": 93.663
+      },
+      {
+        "run": 10,
+        "pair": "2.4",
+        "requestRoundTripMs": 302.325,
+        "inferenceMs": 91.092,
+        "totalMs": 93.066
+      },
+      {
+        "run": 11,
+        "pair": "2.5",
+        "requestRoundTripMs": 315.648,
+        "inferenceMs": 90.756,
+        "totalMs": 92.513
+      },
+      {
+        "run": 12,
+        "pair": "2.6",
+        "requestRoundTripMs": 299.46,
+        "inferenceMs": 90.748,
+        "totalMs": 92.66
+      }
+    ],
+    "roundTripMs": {
+      "first": 314.876,
+      "sampleCount": 12,
+      "samples": [
+        314.876,
+        308.487,
+        302.017,
+        337.785,
+        304.409,
+        306.104,
+        323.151,
+        301.337,
+        301.141,
+        302.325,
+        315.648,
+        299.46
+      ],
+      "warmSampleCount": 12,
+      "warmSamples": [
+        314.876,
+        308.487,
+        302.017,
+        337.785,
+        304.409,
+        306.104,
+        323.151,
+        301.337,
+        301.141,
+        302.325,
+        315.648,
+        299.46
+      ],
+      "warmP50": 304.409,
+      "warmP95": 337.785,
+      "warmMax": 337.785
+    },
+    "inferenceMs": {
+      "first": 91.382,
+      "sampleCount": 12,
+      "samples": [
+        91.382,
+        93.036,
+        92.22,
+        98.073,
+        91.787,
+        92.128,
+        91.389,
+        92.701,
+        91.727,
+        91.092,
+        90.756,
+        90.748
+      ],
+      "warmSampleCount": 12,
+      "warmSamples": [
+        91.382,
+        93.036,
+        92.22,
+        98.073,
+        91.787,
+        92.128,
+        91.389,
+        92.701,
+        91.727,
+        91.092,
+        90.756,
+        90.748
+      ],
+      "warmP50": 91.727,
+      "warmP95": 98.073,
+      "warmMax": 98.073
+    },
+    "healthBaselineMs": {
+      "first": 303.291,
+      "sampleCount": 12,
+      "samples": [
+        303.291,
+        379.712,
+        213.583,
+        201.292,
+        201.378,
+        192.602,
+        206.709,
+        198.253,
+        194.936,
+        205.777,
+        209.018,
+        204.064
+      ],
+      "warmSampleCount": 12,
+      "warmSamples": [
+        303.291,
+        379.712,
+        213.583,
+        201.292,
+        201.378,
+        192.602,
+        206.709,
+        198.253,
+        194.936,
+        205.777,
+        209.018,
+        204.064
+      ],
+      "warmP50": 204.064,
+      "warmP95": 379.712,
+      "warmMax": 379.712
+    }
+  },
+  "transportComparison": {
+    "fixturePaired": true,
+    "measuredWarmSamplesPerTransport": 12,
+    "blockOrders": [
+      [
+        "legacy",
+        "optimized"
+      ],
+      [
+        "optimized",
+        "legacy"
+      ]
+    ],
+    "legacy": {
+      "model": {
+        "id": "depth-anything/Depth-Anything-V2-Metric-Hypersim-Small",
+        "sha256": "b782898d8a3e8be1f639de33837ed85e9b4b73e40f8f5e5cd99067588d722545",
+        "license": "Apache-2.0",
+        "sourceUrl": "https://github.com/DepthAnything/Depth-Anything-V2",
+        "sourceCommit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+        "encoder": "vits",
+        "dataset": "hypersim",
+        "maxDepthM": 20,
+        "units": "m",
+        "convention": "axial_z",
+        "device": "cuda",
+        "pythonVersion": "3.13.16",
+        "torchVersion": "2.11.0+cu130",
+        "gpu": "Tesla T4",
+        "backend": "colab_remote"
+      },
+      "pairedWarmSampleCount": 12,
+      "samples": [
+        {
+          "run": 1,
+          "pair": "1.1",
+          "requestRoundTripMs": 495.374,
+          "inferenceMs": 93.866,
+          "totalMs": 95.618
+        },
+        {
+          "run": 2,
+          "pair": "1.2",
+          "requestRoundTripMs": 482.051,
+          "inferenceMs": 92.376,
+          "totalMs": 94.101
+        },
+        {
+          "run": 3,
+          "pair": "1.3",
+          "requestRoundTripMs": 474.734,
+          "inferenceMs": 92.816,
+          "totalMs": 94.941
+        },
+        {
+          "run": 4,
+          "pair": "1.4",
+          "requestRoundTripMs": 477.339,
+          "inferenceMs": 92.679,
+          "totalMs": 94.58
+        },
+        {
+          "run": 5,
+          "pair": "1.5",
+          "requestRoundTripMs": 463.521,
+          "inferenceMs": 92.409,
+          "totalMs": 94.177
+        },
+        {
+          "run": 6,
+          "pair": "1.6",
+          "requestRoundTripMs": 471.259,
+          "inferenceMs": 97.707,
+          "totalMs": 99.612
+        },
+        {
+          "run": 7,
+          "pair": "2.1",
+          "requestRoundTripMs": 476.344,
+          "inferenceMs": 92.272,
+          "totalMs": 94.011
+        },
+        {
+          "run": 8,
+          "pair": "2.2",
+          "requestRoundTripMs": 465.883,
+          "inferenceMs": 92.815,
+          "totalMs": 94.906
+        },
+        {
+          "run": 9,
+          "pair": "2.3",
+          "requestRoundTripMs": 464.833,
+          "inferenceMs": 92.23,
+          "totalMs": 94.235
+        },
+        {
+          "run": 10,
+          "pair": "2.4",
+          "requestRoundTripMs": 466.308,
+          "inferenceMs": 93.026,
+          "totalMs": 94.704
+        },
+        {
+          "run": 11,
+          "pair": "2.5",
+          "requestRoundTripMs": 477.398,
+          "inferenceMs": 94.228,
+          "totalMs": 96.104
+        },
+        {
+          "run": 12,
+          "pair": "2.6",
+          "requestRoundTripMs": 479.729,
+          "inferenceMs": 92.864,
+          "totalMs": 94.8
+        }
+      ],
+      "roundTripMs": {
+        "first": 495.374,
+        "sampleCount": 12,
+        "samples": [
+          495.374,
+          482.051,
+          474.734,
+          477.339,
+          463.521,
+          471.259,
+          476.344,
+          465.883,
+          464.833,
+          466.308,
+          477.398,
+          479.729
+        ],
+        "warmSampleCount": 12,
+        "warmSamples": [
+          495.374,
+          482.051,
+          474.734,
+          477.339,
+          463.521,
+          471.259,
+          476.344,
+          465.883,
+          464.833,
+          466.308,
+          477.398,
+          479.729
+        ],
+        "warmP50": 474.734,
+        "warmP95": 495.374,
+        "warmMax": 495.374
+      },
+      "inferenceMs": {
+        "first": 93.866,
+        "sampleCount": 12,
+        "samples": [
+          93.866,
+          92.376,
+          92.816,
+          92.679,
+          92.409,
+          97.707,
+          92.272,
+          92.815,
+          92.23,
+          93.026,
+          94.228,
+          92.864
+        ],
+        "warmSampleCount": 12,
+        "warmSamples": [
+          93.866,
+          92.376,
+          92.816,
+          92.679,
+          92.409,
+          97.707,
+          92.272,
+          92.815,
+          92.23,
+          93.026,
+          94.228,
+          92.864
+        ],
+        "warmP50": 92.815,
+        "warmP95": 97.707,
+        "warmMax": 97.707
+      },
+      "warmups": [
+        {
+          "block": 1,
+          "requestRoundTripMs": 3522.596,
+          "inferenceMs": 2328.299,
+          "totalMs": 2377.124,
+          "elapsedMs": 3522.998
+        },
+        {
+          "block": 2,
+          "requestRoundTripMs": 322.442,
+          "inferenceMs": 91.293,
+          "totalMs": 93.172,
+          "elapsedMs": 322.57
+        }
+      ]
+    },
+    "optimized": {
+      "model": {
+        "id": "depth-anything/Depth-Anything-V2-Metric-Hypersim-Small",
+        "sha256": "b782898d8a3e8be1f639de33837ed85e9b4b73e40f8f5e5cd99067588d722545",
+        "license": "Apache-2.0",
+        "sourceUrl": "https://github.com/DepthAnything/Depth-Anything-V2",
+        "sourceCommit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+        "encoder": "vits",
+        "dataset": "hypersim",
+        "maxDepthM": 20,
+        "units": "m",
+        "convention": "axial_z",
+        "device": "cuda",
+        "pythonVersion": "3.13.16",
+        "torchVersion": "2.11.0+cu130",
+        "gpu": "Tesla T4",
+        "backend": "colab_remote"
+      },
+      "pairedWarmSampleCount": 12,
+      "samples": [
+        {
+          "run": 1,
+          "pair": "1.1",
+          "requestRoundTripMs": 314.876,
+          "inferenceMs": 91.382,
+          "totalMs": 93.172
+        },
+        {
+          "run": 2,
+          "pair": "1.2",
+          "requestRoundTripMs": 308.487,
+          "inferenceMs": 93.036,
+          "totalMs": 95.149
+        },
+        {
+          "run": 3,
+          "pair": "1.3",
+          "requestRoundTripMs": 302.017,
+          "inferenceMs": 92.22,
+          "totalMs": 94.025
+        },
+        {
+          "run": 4,
+          "pair": "1.4",
+          "requestRoundTripMs": 337.785,
+          "inferenceMs": 98.073,
+          "totalMs": 100.256
+        },
+        {
+          "run": 5,
+          "pair": "1.5",
+          "requestRoundTripMs": 304.409,
+          "inferenceMs": 91.787,
+          "totalMs": 93.748
+        },
+        {
+          "run": 6,
+          "pair": "1.6",
+          "requestRoundTripMs": 306.104,
+          "inferenceMs": 92.128,
+          "totalMs": 94.017
+        },
+        {
+          "run": 7,
+          "pair": "2.1",
+          "requestRoundTripMs": 323.151,
+          "inferenceMs": 91.389,
+          "totalMs": 93.224
+        },
+        {
+          "run": 8,
+          "pair": "2.2",
+          "requestRoundTripMs": 301.337,
+          "inferenceMs": 92.701,
+          "totalMs": 94.646
+        },
+        {
+          "run": 9,
+          "pair": "2.3",
+          "requestRoundTripMs": 301.141,
+          "inferenceMs": 91.727,
+          "totalMs": 93.663
+        },
+        {
+          "run": 10,
+          "pair": "2.4",
+          "requestRoundTripMs": 302.325,
+          "inferenceMs": 91.092,
+          "totalMs": 93.066
+        },
+        {
+          "run": 11,
+          "pair": "2.5",
+          "requestRoundTripMs": 315.648,
+          "inferenceMs": 90.756,
+          "totalMs": 92.513
+        },
+        {
+          "run": 12,
+          "pair": "2.6",
+          "requestRoundTripMs": 299.46,
+          "inferenceMs": 90.748,
+          "totalMs": 92.66
+        }
+      ],
+      "roundTripMs": {
+        "first": 314.876,
+        "sampleCount": 12,
+        "samples": [
+          314.876,
+          308.487,
+          302.017,
+          337.785,
+          304.409,
+          306.104,
+          323.151,
+          301.337,
+          301.141,
+          302.325,
+          315.648,
+          299.46
+        ],
+        "warmSampleCount": 12,
+        "warmSamples": [
+          314.876,
+          308.487,
+          302.017,
+          337.785,
+          304.409,
+          306.104,
+          323.151,
+          301.337,
+          301.141,
+          302.325,
+          315.648,
+          299.46
+        ],
+        "warmP50": 304.409,
+        "warmP95": 337.785,
+        "warmMax": 337.785
+      },
+      "inferenceMs": {
+        "first": 91.382,
+        "sampleCount": 12,
+        "samples": [
+          91.382,
+          93.036,
+          92.22,
+          98.073,
+          91.787,
+          92.128,
+          91.389,
+          92.701,
+          91.727,
+          91.092,
+          90.756,
+          90.748
+        ],
+        "warmSampleCount": 12,
+        "warmSamples": [
+          91.382,
+          93.036,
+          92.22,
+          98.073,
+          91.787,
+          92.128,
+          91.389,
+          92.701,
+          91.727,
+          91.092,
+          90.756,
+          90.748
+        ],
+        "warmP50": 91.727,
+        "warmP95": 98.073,
+        "warmMax": 98.073
+      },
+      "warmups": [
+        {
+          "block": 1,
+          "requestRoundTripMs": 805.643,
+          "inferenceMs": 93.541,
+          "totalMs": 95.922,
+          "elapsedMs": 805.81
+        },
+        {
+          "block": 2,
+          "requestRoundTripMs": 311.262,
+          "inferenceMs": 91.485,
+          "totalMs": 94.258,
+          "elapsedMs": 311.42
+        }
+      ]
+    },
+    "agreement": {
+      "comparedPixels": 65536,
+      "validMaskDisagreements": 0,
+      "meanAbsDiffM": 0,
+      "maxAbsDiffM": 0,
+      "meanRelDiff": 0
+    }
+  },
+  "agreement": {
+    "comparedPixels": 65536,
+    "validMaskDisagreements": 0,
+    "meanAbsDiffM": 0.0000014526704035233706,
+    "maxAbsDiffM": 0.0000040531158447265625,
+    "meanRelDiff": 7.378858420417e-7
+  },
+  "limitations": [
+    "One synthetic scene image; agreement shows backend parity, not depth accuracy.",
+    "Colab runs a different torch/CUDA build than the local CPU worker; small numeric differences are expected.",
+    "Round trip includes the SSH tunnel over the public internet and varies with network conditions.",
+    "The /health RTT is a small-response network baseline only; it is reported separately and is not subtracted from inference latency.",
+    "Transport measurements share one Colab session and fixture but still reflect public-internet variation; the observed difference is not a general latency guarantee."
+  ],
+  "cleanup": {
+    "colabSessionStopped": true,
+    "tunnelProcessStopped": true,
+    "tunnelPidFileRemoved": true,
+    "localPortListenerStopped": true,
+    "verifiedAtUtc": "2026-11-01T04:05:48.517Z"
+  }
+}
