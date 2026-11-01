@@ -1,5 +1,7 @@
 # SAM 3.1 서버 계약 — 2026-10-27 KST
 
+2026-11-01 정합성 메모: 아래 `store: false`의 "공급자 실호출 미검증"은 작성 시점 기준이다. 이후 `evidence/store-false-live.json`에서 SAM 요청이 수락되고 후속 조회가 404였음을 관측했다. 이는 보존 제로의 증거가 아니다. 공유 provider 추정 예산은 현재 기본 분당 $1(`PROMETHEUS_PROVIDER_BUDGET_PER_MINUTE`)이다.
+
 SRS v1.1 OBJ-01, API-01–03, T03/T22의 제한된 구현 기록이다. 합성 이미지 호출 검증은 웹캠·Depth·추적·Wonder 또는 제품 Gate 통과가 아니다.
 
 ## 공급자 계약과 근거

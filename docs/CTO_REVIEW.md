@@ -22,6 +22,20 @@
 
 ## Gate 판정
 
+### 2026-11-01 문서 정합성 정리 및 회귀 재실행
+
+10/31–11/01 구현 커밋에 대한 CTO_REVIEW 기록이 빠져 있어 README·단위 문서와 현재 코드가 어긋났다. 코드와 git 이력으로 확인한 사항만 정리한다.
+
+- `b726530`: 시작 시 웹캠 원본 영상을 로컬 `data/recordings/`에 WebM chunk로 기록한다(세션당 1GiB, 전체 5GiB, Git 제외, 외부 전송 없음). 앱 내 녹화 삭제·export와 동의 문구의 로컬 녹화 고지는 아직 없다.
+- `e22fca9`, `241e976`: 교정 적응 표본(눈 patch 포함)과 affine·잔차 보정을 IndexedDB 프로필로 저장하고 다음 시작 때 복원한다. 복원 후 독립 정확도 재검증은 없다.
+- `55bd193`, `bd1d810`: 1초 주기 백그라운드 SAM/Depth/Spark coordinator를 연결했다. 공유 provider 추정 예산 기본값을 분당 $0.10에서 $1로 올렸다(`PROMETHEUS_PROVIDER_BUDGET_PER_MINUTE`). 이 경로는 SAM 마스크를 경계 박스와 프레임 단위 후보 ID로 줄인다(`src/runtime/background-browser.js:45-46`, 감사 A03 확인).
+- `ddd3068`: Depth Anything V2 Metric Hypersim Small 로컬 CPU worker, 합성 smoke(`evidence/depth-u07-20261031.json`).
+- `b04ef6a`, `05f950a`, `1ac0cb6`, `7483d45`: One-Euro/affine 보정 수정, `munkres` 마스크 대응, 9조건 비교 채점기.
+
+회귀: commit `9811e07`(실행 시 작업 트리 clean), Node 24.22.1에서 `npm test` **313개 중 312 통과, 1 skip(PowerShell 7 필요한 HTTPS 시험), 실패 0** (`evidence/unit-tests-20261101-doc-consistency.txt`). GATE_PLAN의 258개는 원본 기록이 없는 작성 당시 수치로 남긴다.
+
+README의 현재 동작·Gate 표를 이 문서의 판정에 맞췄고, `unit-*.md`, `integration-status.md`, `webeyetrack-integration.md`, `reasoner-api-contract.md`, `sam-api-contract.md`에는 원문을 보존한 채 날짜가 있는 정합성 메모를 추가했다. 문서 수정과 단위 회귀만으로 어떤 Gate 판정도 바꾸지 않는다. 아래 현재 판정 표가 유지된다.
+
 ### 2026-10-29 SAM point 실호출
 
 합성 빨간 사각형 내부 좌표로 공식 SAM point prompt를 사용한 실제 요청 1회가 HTTP 200, 마스크 1개, IoU 0.99984375를 반환했다(`evidence/sam-point-pipeline-live.json`). 저장·검색 경로도 확인했으나 좌표는 합성값이며 실제 사용자의 시선, 광학 정렬 및 QA 화면을 검증한 것은 아니다. Gate 상태는 변경하지 않는다.

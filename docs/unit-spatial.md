@@ -1,5 +1,7 @@
 # Spatial geometry unit
 
+**2026-11-01 consistency note:** this records the original geometry unit. Since then actual `sam-3.1` calls have been made on synthetic scenes (`evidence/sam-live.json`, `spatial-live.json`), `src/spatial/tracker.js` links masks over time, and `src/spatial/mask-association.js` adds `munkres` global assignment (`mask-association.md`). The statements below that SAM is blocked or that no tracker exists are superseded. The geometry math and limits still apply. The live background path does not yet use persistent track IDs (audit A03), and G2 remains not_passed.
+
 This is a dependency-free, synthetic geometry foundation, not a 3D engine, SAM integration, object tracker, or end-to-end G2 acceptance. No inference input is produced from engine ground-truth IDs. Callers must keep evaluation channels separate.
 
 `pixelRay` uses image +x right, +y down, camera +z forward, with pinhole intrinsics and a row-major rigid camera-to-world transform in metres. Renderer adapters must explicitly convert their own axis, handedness, matrix layout and z-buffer; no such adapter is implemented. `firstSurface` intersects synthetic spheres and finite rectangles, returning only the nearest point and provenance, or null with a reason. `unprojectDepth` supports metres in axial_z and ray_range conventions; invalid depth, unscaled monocular depth and nonlinear z-buffer are withheld. Glass, reflection, holes, boundary confidence and alignment must be marked invalid by the caller; these functions do not infer those conditions.

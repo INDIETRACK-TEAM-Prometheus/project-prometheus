@@ -1,5 +1,7 @@
 # Integration status
 
+**2026-11-01 consistency note:** this page last changed before the 10/31–11/01 work. Since then the app records webcam video locally (`b726530`), persists calibration (`e22fca9`, `241e976`), runs a continuous background SAM/Depth/Spark coordinator (`55bd193`, `bd1d810`), serves local Depth Anything (`ddd3068`), associates masks with `munkres` (`05f950a`) and scores paired ablations offline (`7483d45`). See `README.md` and `CTO_REVIEW.md` for current behavior and Gate status. In the sections below, "SAM and Wonder remain blocked" is superseded: SAM and the approved Spark substitute have live synthetic evidence, and Wonder is unavailable.
+
 ## Current integrated provider path
 
 User-approved Standard `muse-spark-1.3` replaces unavailable Wonder (SRS 20.8). `/api/analyze` passes real SAM results, the same scene image, bounded observed gaze history and prior memory to Spark. The v2 and v4 actual calls produced three grounded scenarios; v3 failed and remains preserved. Latest live token/cost metadata is in `evidence/reasoner-live-v4.json`. Shared provider limits, fixed diagnostic error categories and cancellation remain separate from product acceptance.

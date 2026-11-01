@@ -1,5 +1,7 @@
 # Gaze unit: scope and evidence
 
+**2026-11-01 consistency note:** this records the original MediaPipe primitive unit. The app now uses `webeyetrack@0.0.2` with locally committed MediaPipe 0.10.21 and WebEyeTrack model assets under `vendor/` (see `webeyetrack-integration.md`, `mediapipe-assets.md`). Display smoothing is now implemented separately from raw samples (`src/gaze/display-filter.js`, causal One-Euro, `b04ef6a`). Calibration profiles persist in IndexedDB (`src/gaze/calibration-profile.js`). Eye-sphere nodes and binocular ray geometry exist in `eye-sphere.js` and `binocular-screen.js`. Statements below that assets are absent, smoothing is unimplemented, or "G1 blocked" are superseded; G1 is currently not_passed per `CTO_REVIEW.md`. Real-user accuracy, timing alignment (T01/T15) and the other limits below still apply.
+
 `src/gaze/index.js` is a dependency-free set of primitives; it does not open a camera, load a model, or process a frame on import. `src/gaze/webcam.js` provides an injectable browser controller for MediaPipe Face Landmarker, but its module, WASM and model assets are not bundled. Actual browser/model integration and G1 remain **blocked**, not passed. The earlier generic `createLandmarkSession` boundary is also available for other injected providers; neither wrapper guards camera acquisition performed by unrelated application code.
 
 ## Browser controller contract

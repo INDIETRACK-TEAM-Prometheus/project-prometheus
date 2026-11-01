@@ -1,0 +1,508 @@
+# npm test — 2026-11-01 KST, commit 9811e07 (clean working tree at run time), Node v24.22.1, Windows 11
+
+> prometheus-local-prototype@0.1.0 test
+> node --test test/*.test.js
+
+✔ actual attention handoff enforces consent and alignment and uses final frozen frame (28.3264ms)
+✔ completed coordinator event reaches perception, memory and reasoner boundary with aligned frame (27.6899ms)
+✔ handoff preserves render and presentation times without double-counting (1.5328ms)
+✔ attention start pin survives ring eviction, respects pin age, and pause releases it (25.8857ms)
+✔ injected advancing clock permits subsequent attention history (5.7863ms)
+✔ reloaded page evidence uses one session offset and fresh epoch (0.9399ms)
+✔ world frame resolution preserves exact fractional render time across offset (0.7975ms)
+✔ Gen2 MPS CSV uses device time, offline provenance, cutoff and nulls (4628.3864ms)
+✔ closed-loop pose preserves map identity and world transform (1529.4255ms)
+✔ latest-only background work keeps one active and one pending snapshot without cancelling for new frames (45.6184ms)
+✔ pause, resume, stop and session restart suppress stale work and accept a fresh snapshot (23.7182ms)
+✔ related invalidation aborts current work while unrelated objects retain it (6.4342ms)
+✔ causal snapshots and generated grounding are validated; next targets must be in the candidate space (6.4623ms)
+✔ cache hits preserve original evidence and source cutoff, and unchanged state refreshes after TTL (10.217ms)
+✔ timeout aborts work but holds its single slot until an uncooperative callback settles (39.3614ms)
+✔ browser work captures then segments then reasons on one immutable frame without a world pause (18.6255ms)
+✔ mismatched SAM or reasoner frame is rejected before it can be returned (7.6156ms)
+✔ gaze must join to the captured frame and cancellation prevents later provider calls (3.9464ms)
+✔ projects two measured rays to their common screen fixation (21.1307ms)
+✔ reports parallel rays as unavailable (3.2129ms)
+✔ rejects screen intersections behind the eyes (1.4518ms)
+✔ reports binocular disagreement and does not clamp off-screen projections (4.5087ms)
+✔ screen distance is explicit and changes projection for the same measured rays (1.7751ms)
+✔ browser evidence endpoint rejects cross-origin, malformed and oversized reports (481.6924ms)
+✔ profile replays ImageData bytes as typed arrays and stores only calibration inputs and summaries (98.9615ms)
+✔ profile load reports runtime or environment changes without mutating or recalibrating it (7.8112ms)
+✔ missing, corrupt, failed, and incomplete profiles stay unavailable (2.4339ms)
+✔ fits a robust affine candidate and selects it only on independent validation samples (16.1085ms)
+✔ affine selection withholds holdout samples outside the fitted feature bounds (2.1512ms)
+✔ identity affine calibration maps normalized features into a nonzero screen origin (0.8871ms)
+✔ saved affine feature bounds stay in normalized coordinate space (1.8789ms)
+✔ profile round-trips selected landmark residual coefficients and safe feature bounds (8.6199ms)
+✔ landmark residual profile rejects malformed shapes, nonfinite values, duplicate IDs, and unsafe bounds (2.3179ms)
+✔ calibration needs multiple settled recent samples; motion, old and future samples are rejected (4.8172ms)
+✔ scores paired conditions, proper multiclass probabilities, latency, lead time and cache cost (84.1335ms)
+✔ requires exact held-out sessions and condition/model/cutoff/cost pairing (35.7967ms)
+✔ rejects future evidence, future gaze controls and target-bearing model inputs (20.6317ms)
+✔ requires full-distribution probabilities and validates cache provenance (26.4287ms)
+✔ does not fabricate a confidence interval when fewer than two held-out sessions exist (7.7394ms)
+✔ supports explicitly personalized splits while retaining session and scene separation (11.825ms)
+✔ CLI reads local inputs only, hashes exact bytes and does not overwrite reports (1461.256ms)
+✔ SAM concept must be nonblank and bounded (5.8751ms)
+✔ alignment uses estimated presentation, not arrival, and enforces total error budget (5.1743ms)
+✔ pins survive ring eviction, share capacity, and record failures (3.6024ms)
+✔ history keeps prior observations and event insertion is idempotent (5.4857ms)
+✔ unrelated changes preserve cache, relevant changes and expiry invalidate (1.0978ms)
+✔ online evidence excludes future, unverified causal status and evaluation fields (1.4532ms)
+✔ local depth adapter returns validated metric depth for the exact frame (781.9165ms)
+✔ rejects malformed or oversized frame media before starting Python (3.1831ms)
+✔ provider allows one in-flight inference and rejects stale frame responses (1225.4755ms)
+✔ aborting a local inference terminates the worker and withholds its result (79.7182ms)
+✔ depth HTTP route isolates local access and passes frame binding through injected provider (313.3928ms)
+✔ causal One-Euro display filter passes the first sample and smooths later motion (44.4356ms)
+✔ invalid, duplicate, backward, and too-close timestamps are withheld and reset state (0.9869ms)
+✔ long gaps start a new unfiltered segment instead of carrying old position (1.115ms)
+✔ invalid filter settings are rejected (3.6266ms)
+✔ synthetic normalized jitter and step lag benchmark is reproducible (52.9663ms)
+✔ records immutable same-cutoff projections, with no fabricated gaze in scene-only (11.8799ms)
+✔ rejects future, ground truth, eye data and unverified timing (5.2592ms)
+✔ bounds, eviction, oversized entry and deletion are explicit (19.482ms)
+✔ app trace only records matching consented frames and clears them on deletion (544.2618ms)
+✔ rejects malformed events and ungrounded or duplicate outcomes (2.3046ms)
+✔ projects the same captured bundle at the three evaluation horizons without replay (2.1621ms)
+✔ withdrawn evidence removes research decisions and their outcomes (1.4359ms)
+✔ published next gaze is stored only within the recorded candidate space (4.9861ms)
+✔ dry run makes twelve cells and fixture sees only each profile and horizon (39.4604ms)
+✔ limits halt before calls and preserve failed cells (8.44ms)
+✔ preflights all inputs and split conflicts before any call (7.967ms)
+✔ wrong response horizon is a failed cell (3.5576ms)
+✔ participant and scene identities cannot cross splits even with different images (17.6414ms)
+✔ scores separately supplied test targets and ranked predictions without exposing labels (4.0172ms)
+✔ rejects invalid or non-test comparisons before calls (50.6256ms)
+✔ replay carries candidates but never held-out labels and validates output (9.4109ms)
+✔ exploration requires consent, skips busy work and limits requests (5.492ms)
+✔ each eye has >=30 unique sphere points and outward unit normals (17.993ms)
+✔ rigid eye rotation changes normals and produces temporal motion (7.0567ms)
+✔ frozen gaze automation runs no more than once per interval and stops cleanly (13.7923ms)
+✔ async runs stay serialized and wait a full interval after completion (3.0745ms)
+✔ stop and restart do not overlap an unfinished run or reset its interval (2.5234ms)
+✔ each gaze cycle releases its captured scene after async work, including failure (7.9541ms)
+✔ cancelled Spark persistence cannot republish a discarded result and history labels its exact scope (2.2299ms)
+✔ provisional gaze selector admits only a fresh post-freeze capture estimate inside the canvas (6.6485ms)
+✔ saved calibration point reaches SAM at the same normalized location after viewport resize (1.9331ms)
+✔ gaze-point SAM request and displayed mask stay attached to the exact frozen framebuffer (4.0723ms)
+✔ provisional Spark follow-up sends the same frame, estimated point and bounded SAM boxes only with explicit consent (6.6328ms)
+✔ maps a valid screen estimate into the world viewport in CSS-pixel geometry (13.0229ms)
+✔ withholds invalid, non-finite, outside, or degenerate viewport coordinates (1.1471ms)
+✔ centers the fixed-size marker at the exact normalized point and hides it outside live tracking (1.1439ms)
+✔ saved calibration point keeps its relative marker position after viewport resize (1.0287ms)
+✔ stores and reloads only a completed calibration model and its environment summary (24.5301ms)
+✔ does not save failed, malformed, or unavailable calibration storage (1.3982ms)
+✔ detects measured environment changes without treating them as a calibration failure (1.2915ms)
+✔ remaps saved viewport-pixel predictions by normalized position after viewport resize (1.1147ms)
+✔ gaze point prompt maps normalized image coordinates to pixel edges (5.053ms)
+✔ startup SAM analyzes the scene without a gaze prompt and requires the combined consent (4.5519ms)
+✔ iris-only heuristic emits a clearly uncalibrated normalized estimate (12.7321ms)
+✔ estimate responds to iris movement relative to both eye corners (1.3442ms)
+✔ session baseline keeps the initial estimate centered and bilateral lid deltas preserve direction with reversed corners (2.2393ms)
+✔ single visible eye is isolated to a labeled uncalibrated estimate (1.2326ms)
+✔ raw-camera horizontal iris movement maps to the opposite screen direction (1.1546ms)
+✔ missing, blink-invalid or malformed iris landmarks are withheld (1.0915ms)
+✔ estimate stays inside normalized viewport bounds at extreme iris offsets (0.9155ms)
+✔ provisional selector accepts fresh capture estimates and explicitly tagged callback time (1.8844ms)
+✔ provisional selector withholds absent face, stale sample, unknown time basis and outside-canvas estimate (1.2276ms)
+✔ calibration predicts independent points and reports normalized validation separately (10.3944ms)
+✔ calibrated mapping keeps the screen direction learned from its targets (1.6801ms)
+✔ MediaPipe landmarks reduce to bilateral iris and upper-lid features without exposing landmarks (3.2689ms)
+✔ landmark residual candidate fits 18 samples and compares on a third repeat of the 3x3 target set (9.0163ms)
+✔ missing or degenerate landmark features fall back from residual fitting (1.7333ms)
+✔ window offsets and diagnostic panel do not become world gaze (2.8966ms)
+✔ display mirroring and corners keep crop independent of iris (1.5513ms)
+✔ preview crop expands upward for brows without changing the tracker crop or lower edge (7.4553ms)
+✔ tracking loss, blink and degradation withhold current gaze (1.2925ms)
+✔ injected provider cannot receive frames before explicit start or after stop (2.0859ms)
+✔ camera opens only after explicit consent and sends a local worker sample (72.7046ms)
+✔ derived landmark cues reach the page only as a finite bounded feature vector (3.8807ms)
+✔ frame-keyed eye preview stays outside samples and closes transferred bitmaps after display (3.1477ms)
+✔ stale and stopped worker results close preview bitmaps without displaying them (2.9768ms)
+✔ camera permission is requested synchronously before waiting for the worker (1.2597ms)
+✔ camera permission failures keep a fixed diagnostic code and discard the browser message (1.5875ms)
+✔ worker initialization failures keep a fixed diagnostic code and discard worker text (9.3726ms)
+✔ worker initialization timeout stops an already acquired camera stream (17.0275ms)
+✔ fatal worker inference reports a fixed code without exposing worker text or gaze values (5.4821ms)
+✔ capture failure stops the camera with a fixed capture code (1.9612ms)
+✔ official adapt targets use normalized screen coordinates and commit validation state (12.4666ms)
+✔ calibration rejects samples older than the callback-time freshness window (10.6447ms)
+✔ explicit profile replay replaces the active tracker only after worker confirmation (4.2409ms)
+✔ failed profile replay leaves the prior tracker active and reports a fixed code (5.5578ms)
+✔ cancelled recalibration restores the prior in-memory tracker without reopening camera (5.1835ms)
+✔ stop during pending camera permission closes the stream when permission resolves (2.6777ms)
+✔ late permission from a stopped start cannot replace a restarted camera stream (3.5012ms)
+✔ server serves only explicit integration modules and rejects unknown paths (1285.262ms)
+✔ landmark worker sends derived gaze features rather than raw MediaPipe landmarks (109.482ms)
+✔ server exposes the pinned WebEyeTrack bundle and both local gaze-model files (7978.5288ms)
+✔ application wiring rejects unaligned samples and leaves provider integration blocked (6.7382ms)
+✔ application stop during camera start cannot start runtime or revive state (0.9693ms)
+✔ immutable RGBA scene evidence is bounded and selected by presentation time (1.2529ms)
+✔ aligned injected evidence flows to memory while no real model is claimed (6.5143ms)
+✔ glimpse closes on invalid tracking, excludes gap, and samples are serialized (1.6488ms)
+✔ recording stop drains last chunk before server finalization (9.6982ms)
+✔ stopping while session opens cannot start a late camera recording (1.9094ms)
+✔ perception persists supplied correction atomically and retrieval preserves source (72.6885ms)
+✔ invalid correction rolls back frame and observations (18.008ms)
+✔ zero detections cannot bypass correction destination validation (18.9197ms)
+✔ withdrawal, eviction, and a later invalid correction do not revive an older transform (8.0336ms)
+✔ uses source-pixel mask IoU and ignores SAM per-image ids (15.1128ms)
+✔ appearance disagreement vetoes a spatial mask match (2.5376ms)
+✔ global assignment beats greedy pair selection, then abstains when the IDs remain ambiguous (7.7157ms)
+✔ withholds identity on tied masks, dimension changes, and exceeded work budget (51.6237ms)
+✔ rejects malformed rasters and duplicate local track ids (2.6702ms)
+✔ exclusive lock, consent and restart time age evidence without renewal (26.2096ms)
+✔ create refuses existing slot and reopen rejects missing, expired or rolled-back state (12.3508ms)
+✔ expired deletion failure is surfaced and lock is released (3.7852ms)
+✔ expired-looking snapshots with ambiguous retention metadata are preserved (36.6561ms)
+✔ provider crash survives reopen and removal deletes journal (8.1847ms)
+✔ atomic slot deletion failure preserves both records and can be retried (5.4785ms)
+✔ IndexedDB deletes both keys in one transaction and rejects an abort (2.747ms)
+✔ T16: shared evidence is counted once, pin failure and expiry are explicit (9.552ms)
+✔ T05/T06/T07: immutable events, last-seen history and late revisions (6.4584ms)
+✔ T17: reversible identity and temporal relation do not alter source observations (2.5684ms)
+✔ T20: evidence deletion invalidates derived records and retrieval (2.797ms)
+✔ T21: only available causal data at issue time is returned (1.7681ms)
+✔ service serializes ingestion, revises and deletes evidence with atomic snapshot (27.561ms)
+✔ durable consent required, save failure rolls back, default close removes session (4.7492ms)
+✔ injected clock governs retention on mutation, read and reopen (2.5544ms)
+✔ pin expiry updates event validity and derivation; revisions supersede only after processing (7.3895ms)
+✔ record and byte quotas reject without modifying snapshot (3.8965ms)
+✔ close and delete wait for queued save and reject later writes (53.5617ms)
+✔ observation revisions preserve history and invalidate derivations without resurrecting deleted evidence (4.998ms)
+✔ perception cancellation skips queued and pending abortable writes (9.0754ms)
+✔ attention history uses both cutoffs and suppresses superseded, deleted, evicted or unpinned evidence (55.1366ms)
+✔ attention history selects newest twenty in stable chronological order (147.6104ms)
+✔ attention history excludes pinned records without online causal provenance (6.2321ms)
+✔ durable expiry uses wall clock across monotonic resets and rejects ambiguous metadata (4.0395ms)
+✔ durable reads reject wall rollback and checkpoints reject future processed records (2.5569ms)
+✔ committed withdrawals notify transitive identifiers, failed saves do not (3.872ms)
+✔ eviction invalidates derivations through observation evidence, including later derivations (3.148ms)
+✔ evicted evidence IDs cannot be reintroduced through ingestion paths (3.808ms)
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_validated","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_started","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_completed","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_completed","status":200}
+{"event":"api_stage","route":"reason","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason","stage":"request_validated","status":null}
+{"event":"api_stage","route":"reason","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"reason","stage":"reasoner_completed","status":null}
+{"event":"api_stage","route":"reason","stage":"request_completed","status":200}
+✔ synthetic live probe contract completes over injected providers and retrieves namespaced memory (489.6371ms)
+✔ synthetic aligned perception flows through tracker, memory and runtime (61.3157ms)
+✔ withholds missing timing, excess uncertainty, future fields and prevents late segment writes after stop (3.8297ms)
+✔ rejects mismatched server response and invalid masks without writing memory (3.0484ms)
+✔ map corrections reset identity without inventing motion and invalidate old map (12.1488ms)
+✔ only latest pending input submits to runtime (25.7196ms)
+✔ revises earlier attention event against the exact final frame evidence (54.9933ms)
+✔ pinned historical surface is attributed and unavailable geometry stays null (104.7764ms)
+✔ pins are released for replaced pending frames and after stop (1.7927ms)
+✔ alignment uses presentation estimate and keeps render and capture timestamps distinct (2.7564ms)
+✔ reasoner receives retained gaze transitions across distinct objects plus current event (181.1473ms)
+✔ stopping while historical retrieval waits cannot submit history (10.9866ms)
+✔ decision hook receives a detached pixel-free bundle only when runtime accepts (6.4864ms)
+✔ changed linked observation invalidates dependent prepared and pending results only (79.2767ms)
+✔ unchanged linked observation does not invalidate unrelated or dependent cache entries (5.4986ms)
+✔ withdrawal invalidates a cached result and its historical aliases (55.5862ms)
+✔ withdrawal while a reasoner is running suppresses publication (104.6965ms)
+✔ scene exploration commits observations without inventing gaze or invoking reasoning (2.6496ms)
+✔ scene-only SAM accepts render evidence with explicitly unavailable presentation timing and rejects gaze (2.0252ms)
+✔ gaze preempts an in-flight scene exploration (31.9872ms)
+✔ stopping exploration during an abortable save leaves no scene observations (5.7293ms)
+✔ exploration reports empty and nonempty results without inventing observations (3.807ms)
+✔ separate remote pipeline namespaces cannot reuse tracked identities (5.8596ms)
+✔ segment receives only validated aligned gaze, and scene exploration receives no gaze (5.3609ms)
+✔ pilot report withholds completion until duration and valid calibrated samples (14.9096ms)
+✔ paused time is excluded from pilot duration (0.7353ms)
+✔ preparation display uses published metadata and clears on expiry or withdrawal (11.125ms)
+✔ an old expiry callback cannot clear a newer published result (1.3259ms)
+✔ a crash or failed request remains uncertain on reopen and cannot be replayed (49.156ms)
+✔ completed and concurrent duplicate calls are suppressed; full and failed storage fail closed (25.6614ms)
+✔ durable journals require consent and valid expiry (1.7818ms)
+✔ expiry during a provider call withholds its result and does not write completion (6.0698ms)
+✔ expiry during the claim prevents the provider call (2.0964ms)
+✔ shares concurrency, interval, call and cost budgets across providers (14.516ms)
+✔ rate limit and offline failure open exponential breaker without retry (3.22ms)
+✔ cancellation does not dispatch or poison the breaker (1.2729ms)
+✔ cancelled in-flight failure releases slot without opening circuit (1.8127ms)
+✔ cost ceiling independently blocks additional calls (1.4133ms)
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_validated","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_completed","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_completed","status":200}
+✔ provisional route validates frame-scoped mask candidates and allows only ranked IDs or abstention labels (366.3732ms)
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_rejected","status":400}
+✔ provisional route rejects arbitrary candidate IDs or bounds before calling the reasoner (78.505ms)
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_validated","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_failed","status":502}
+✔ provisional route rejects provider targets outside this mask candidate space (29.8386ms)
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_validated","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_completed","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_completed","status":200}
+✔ provisional response omits nextGaze when older callers supply no candidates (43.9153ms)
+✔ persists only provisional summaries and restores them after restart until explicit deletion (17.052ms)
+✔ requires explicit consent and rejects malformed gaze samples without writing anything (3.9595ms)
+✔ calibrated gaze demo remains explicitly provisional while preserving its calibration label (2.9476ms)
+✔ SAM summaries survive Spark failure and Spark outcomes update the same record (8.1775ms)
+✔ exclusive lock prevents a second writer and standalone deletion removes the persistent slot (2.861ms)
+{"event":"api_stage","route":"reason","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason","stage":"request_validated","status":null}
+{"event":"api_stage","route":"reason","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"reason","stage":"reasoner_completed","status":null}
+{"event":"api_stage","route":"reason","stage":"request_completed","status":200}
+{"event":"api_stage","route":"reason","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason","stage":"request_rejected","status":400}
+✔ reason-only endpoint sends causal observed evidence and image once, never SAM (406.4161ms)
+✔ reason-only adapter requires consent, verifies provenance and propagates abort (98.5182ms)
+{"event":"api_stage","route":"reason","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason","stage":"request_validated","status":null}
+{"event":"api_stage","route":"reason","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"reason","stage":"reasoner_completed","status":null}
+{"event":"api_stage","route":"reason","stage":"request_completed","status":200}
+{"event":"api_stage","route":"reason","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason","stage":"request_rejected","status":400}
+✔ reason-only endpoint respects explicit gaze-time cutoff while preserving frame time (55.81ms)
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_validated","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_completed","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_completed","status":200}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_validated","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_completed","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_completed","status":200}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_validated","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_completed","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_completed","status":200}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_rejected","status":400}
+✔ provisional follow-up requires its own scope and never upgrades estimated timing to causal (83.6467ms)
+{"event":"api_stage","route":"reason_provisional","stage":"request_received","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_validated","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"reason_provisional","stage":"request_failed","status":429}
+✔ provisional Spark failures expose only an allowlisted provider reason (182.6844ms)
+✔ sends constrained request and returns grounded scenarios (253.4176ms)
+✔ rejects future, noncausal and unlisted input before network (3.4665ms)
+✔ accepts explicitly tagged provisional evidence without presenting it as causal (2.8479ms)
+✔ rejects unknown grounding, malformed and wrong model; allows abstention (8.9319ms)
+✔ sanitizes provider errors and handles cancellation (16.8275ms)
+✔ sends validated scene image alongside typed evidence and rejects arbitrary URLs (14.9044ms)
+✔ caps serialized evidence and reports only bounded usage and estimated cost (7.6674ms)
+✔ incomplete diagnostics contain only bounded fixed values (2.965ms)
+✔ optional evaluation horizon constrains the request and response (5.9937ms)
+✔ next gaze is separate and constrained to current candidates (6.4238ms)
+✔ recording route rejects cross-site writes and preserves chunk bytes (433.3536ms)
+✔ local chunks are ordered, bounded and finalized on disk (274.2594ms)
+✔ local end-to-end: frame, gaze, events, context, masks, scenario and dependency cache (30.0318ms)
+✔ unverified providers blocked; malformed scenario cannot publish (19.9939ms)
+✔ related invalidation and stop reject in-flight results; limits block next request (91.6392ms)
+✔ nested hidden state and noncausal or future evidence are rejected before any fixture call (4.4217ms)
+✔ unknown grounding is rejected; partial store and publish failures are reported and scheduler drains (12.8254ms)
+✔ late response after stop never publishes and a later restart works (74.8397ms)
+✔ common contract rejects incompatible versions, missing IDs, nonfinite values and invalid nulls (8.7538ms)
+✔ T15: drift and display uncertainty are budgeted; frame selection uses present time (4.2362ms)
+✔ T10/T18: unrelated context remains valid; object, evidence and map changes invalidate dependencies (2.5828ms)
+✔ T19: open scenarios support free text and empty results, not a fixed action ontology (2.2258ms)
+✔ T22: unverified provider capabilities remain blocked; frame text is data (1.7664ms)
+✔ T09: latest-only scheduler rejects stale and stopped results, bounds pending, and times out (154.6536ms)
+✔ sends SAM request and decodes a real protocol mask with half-open bounds (215.5065ms)
+✔ accepts empty matches and rejects malformed or unexpected provider output (18.2089ms)
+✔ sanitizes upstream failures and supports cancellation (1.939ms)
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_validated","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_started","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_completed","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_completed","status":200}
+✔ SAM route forwards only validated image and prompt and returns frame provenance (348.3993ms)
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_rejected","status":403}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_rejected","status":403}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_rejected","status":415}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_rejected","status":413}
+✔ SAM route rejects cross-origin, invalid media, malformed input, and oversize bodies before provider (344.3583ms)
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_rejected","status":403}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_validated","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_started","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_failed","status":502}
+✔ SAM route rejects untrusted Host and sanitizes provider errors (69.8205ms)
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_validated","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_started","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_validated","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_started","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_rejected","status":429}
+{"event":"api_stage","route":"sam_segment","stage":"sam_completed","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_completed","status":200}
+{"event":"api_stage","route":"sam_segment","stage":"sam_completed","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_completed","status":200}
+✔ SAM route bounds concurrent provider calls (88.3172ms)
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_validated","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_started","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_validated","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_started","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_failed","status":504}
+{"event":"api_stage","route":"sam_segment","stage":"request_failed","status":504}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_rejected","status":429}
+✔ timeout responds without freeing a slot while a provider ignores cancellation (63.7719ms)
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_validated","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_started","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_failed","status":502}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_validated","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_started","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_failed","status":502}
+✔ provider HTTP status is included only for recognized upstream errors (41.5981ms)
+✔ diagnostic module is served while provider internals stay private (34.1022ms)
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_validated","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_started","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_failed","status":502}
+{"event":"api_stage","route":"sam_segment","stage":"request_received","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_validated","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"sam_started","status":null}
+{"event":"api_stage","route":"sam_segment","stage":"request_failed","status":502}
+✔ provider diagnostics expose fixed codes only (28.6363ms)
+✔ perception browser module and its spatial dependency are served, server code remains private (70.0751ms)
+✔ synthetic scene and IoU are deterministic (145.8347ms)
+✔ cropped masks are placed at the offset and scaled by pixel centers (1.9778ms)
+✔ flips bottom-left framebuffer and places mask in top-left source coordinates (13.9912ms)
+✔ rejects mismatched frames and never displays a cancelled late result (3.0925ms)
+✔ successful response renders only its matching frozen frame (2.0805ms)
+✔ waits for async result display work before releasing the request cycle (2.2165ms)
+✔ cancellation during async result display remains cancelled (2.4947ms)
+✔ unavailable, failing or mismatched depth does not suppress the RGB and mask result (3.0475ms)
+✔ pins the same frame through a delayed result and releases on success, failure and cancel (2.7213ms)
+﹣ optional HTTPS serves the API over loopback and accepts only its HTTPS origin (3.1253ms) # PowerShell 7 is needed to create an ephemeral test certificate
+{"event":"api_stage","route":"analyze","stage":"request_received","status":null}
+{"event":"api_stage","route":"analyze","stage":"request_validated","status":null}
+{"event":"api_stage","route":"analyze","stage":"sam_started","status":null}
+{"event":"api_stage","route":"analyze","stage":"sam_completed","status":null}
+{"event":"api_stage","route":"analyze","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"analyze","stage":"reasoner_completed","status":null}
+{"event":"api_stage","route":"analyze","stage":"request_completed","status":200}
+{"event":"api_stage","route":"analyze","stage":"request_received","status":null}
+{"event":"api_stage","route":"analyze","stage":"request_rejected","status":400}
+{"event":"api_stage","route":"analyze","stage":"request_received","status":null}
+{"event":"api_stage","route":"analyze","stage":"request_rejected","status":400}
+✔ server chains SAM to the reasoner with causal, allowlisted evidence (328.2264ms)
+✔ remote adapter requires consent and runtime rejects stopped or late outputs (38.4606ms)
+✔ remote runtime publishes valid response and rejects unknown grounding (11.6708ms)
+✔ pipeline returns a sanitized error when the reasoner fails after SAM (20.9625ms)
+✔ API stage logs include only fixed route, stage, and status fields (27.2211ms)
+{"event":"api_stage","route":"analyze","stage":"request_received","status":null}
+{"event":"api_stage","route":"analyze","stage":"request_validated","status":null}
+{"event":"api_stage","route":"analyze","stage":"sam_started","status":null}
+{"event":"api_stage","route":"analyze","stage":"sam_completed","status":null}
+{"event":"api_stage","route":"analyze","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"analyze","stage":"reasoner_completed","status":null}
+{"event":"api_stage","route":"analyze","stage":"request_completed","status":200}
+{"event":"api_stage","route":"analyze","stage":"request_received","status":null}
+{"event":"api_stage","route":"analyze","stage":"request_rejected","status":400}
+✔ gaze history preserves observed event details (31.8976ms)
+✔ configured status remains unverified until a response (11.74ms)
+{"event":"api_stage","route":"analyze","stage":"request_received","status":null}
+{"event":"api_stage","route":"analyze","stage":"request_validated","status":null}
+{"event":"api_stage","route":"analyze","stage":"sam_started","status":null}
+{"event":"api_stage","route":"analyze","stage":"sam_completed","status":null}
+{"event":"api_stage","route":"analyze","stage":"reasoner_started","status":null}
+{"event":"api_stage","route":"analyze","stage":"request_failed","status":502}
+✔ reasoner diagnostics are bounded and reconstructed (14.8187ms)
+✔ runtime forwards only bounded provider metadata after a validated response (4.94ms)
+✔ pixel rays and depth conventions reconstruct metric surface with explicit camera frame (23.3363ms)
+✔ first visible synthetic surface wins and empty scene is no_hit without engine identity (3.8304ms)
+✔ uncertainty preserves multiple mask candidates and rejects future and noncausal input (4.5376ms)
+✔ map correction does not create motion and gaze hit is not object anchor (3.2672ms)
+✔ dynamic synthetic 3D surface gives metric front hit, occlusion and current-only samples (9.3822ms)
+✔ frame history fixes raycast time, presentation estimate is explicit, eviction and dispose are bounded (14.3954ms)
+✔ pinned moving frame survives history eviction and releases without leaking geometry (333.5496ms)
+✔ startup diagnostics expose only an allowlisted code and its fixed step (6.2609ms)
+✔ runtime startup failure has a fixed stage and stops the acquired camera (1.7785ms)
+✔ optical timing record requires the current setup, independent holdouts and measured clock pairs (15.7502ms)
+✔ runtime drift monitor latches a clock jump and never estimates after expiry (5.8351ms)
+✔ each calibrated gaze band selects the exact retained frame using optical presentation time (3.521ms)
+✔ tracker revocation is time-bounded in persisted memory and invalidates derived observation (33.1865ms)
+✔ moving synthetic detections preserve identity and occlusion remains last seen (34.405ms)
+✔ SAM per-frame ids are ignored and stale masks do not carry IDs past the configured gap (8.5641ms)
+✔ ambiguous candidates stay separate, and a link can be revoked without deleting old evidence (53.1716ms)
+✔ crop raster maps mask pixels to aligned depth while gaze contact and anchor stay distinct (3.7183ms)
+✔ tracker rejects misaligned gaze and enforces frame and mask limits (4.2538ms)
+✔ WebEyeTrack calibration retains patches and adapts once with all 27 targets (25.8699ms)
+✔ calibration acknowledgment waits for upstream adaptation and maps rejection to an error response (2.3954ms)
+✔ calibration results are selected by exact frame ID and retained in a bounded ring (1.4042ms)
+✔ worker bootstrap consumes individually exported UMD globals and keeps MediaPipe local (11.4639ms)
+✔ worker bootstrap rejects a namespace-shaped or missing UMD global (3.1216ms)
+✔ pinned npm UMD bundle exposes the worker globals and initializes through the local MediaPipe override (6695.2816ms)
+✔ worker renders detected eye, eyelid, iris and brow landmarks into the same mirrored frame crop (30.2158ms)
+✔ worker does not copy a full frame for preview when neither eye crop is available (10.1855ms)
+✔ worker keeps inference results flowing when offscreen bitmaps are unsupported or rejected (23.394ms)
+✔ worker exports typed ImageData adaptation samples and replays them into tracker.adapt (39.7588ms)
+ℹ tests 313
+ℹ suites 0
+ℹ pass 312
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 1
+ℹ todo 0
+ℹ duration_ms 13541.2979
