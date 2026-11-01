@@ -121,3 +121,29 @@ test('gaze proxy passes the worker failure code to the browser and logs it witho
     assert.equal(logs.some(line=>line.includes('session_1')||line.includes('255')),false);
   }finally{await new Promise(resolve=>server.close(resolve));}
 });
+
+test('calibration target and adapt routes validate the body and relay to the provider', async () => {
+  const calls = [];
+  const jpeg = Buffer.from([255, 216, 255, 217, 1, 2, 3, 4]).toString('base64');
+  const gazeProvider = {async health() { return {ready: true}; },
+    async calibrationTarget(input) { calls.push(['target', input.sessionId, input.phase, input.pointIndex, input.frames.length]); return {status: 'accepted', phase: input.phase, pointIndex: input.pointIndex, totalFrames: 1, faceFrames: 1, closedFrames: 0, usableFrames: 1, frameErrors: 0, eyeAspectRatio: null, collected: 1}; },
+    async finalizeCandidate(id) { calls.push(['adapt', id]); return {adapted: true, points: 27}; }, async close() {}};
+  const server = createLocalServer({computeProfile: 'cloud', gazeProvider}); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`, post = (path, body, type = 'application/json') => fetch(base + path, {method: 'POST', headers: {'content-type': type}, body: typeof body === 'string' ? body : JSON.stringify(body)});
+    const good = {phase: 'train', pointIndex: 3, target: [0, 0], frames: [{frameId: 1, captureTimestampMs: 5, jpeg}]};
+    const ok = await post('/api/gaze/sessions/session_1/calibration/target', good);
+    assert.equal(ok.status, 200); assert.equal((await ok.json()).status, 'accepted');
+    assert.deepEqual(calls[0], ['target', 'session_1', 'train', 3, 1]);
+    assert.equal((await post('/api/gaze/sessions/session_1/calibration/target', {...good, extra: 1})).status, 400);
+    assert.equal((await post('/api/gaze/sessions/session_1/calibration/target', '{not json')).status, 400);
+    assert.equal((await post('/api/gaze/sessions/session_1/calibration/target', 'x', 'text/plain')).status, 415);
+    const limit = 2 * 1024 * 1024 + 64 * 1024, overhead = JSON.stringify({...good, pad: ''}).length;
+    assert.equal((await post('/api/gaze/sessions/session_1/calibration/target', JSON.stringify({...good, pad: 'x'.repeat(limit + 1 - overhead)}))).status, 413);
+    assert.equal(calls.length, 1);
+    const adapt = await post('/api/gaze/sessions/session_1/candidate/adapt', '{}');
+    assert.equal(adapt.status, 200); assert.deepEqual(await adapt.json(), {adapted: true, points: 27});
+    assert.deepEqual(calls[1], ['adapt', 'session_1']);
+    assert.equal((await fetch(base + '/api/gaze/sessions/session_1/calibration/target')).status, 404);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});

@@ -34,4 +34,19 @@ $env:PROMETHEUS_GAZE_REMOTE_URL = 'http://127.0.0.1:49191/'
 
 `PROMETHEUS_COMPUTE_PROFILE=cloud` selects remote GPU gaze inference; the gaze provider fails closed if its remote URL or worker is unavailable. Depth uses the existing `PROMETHEUS_DEPTH_BACKEND=colab` switch. Browser requests continue through the loopback-only Node server; do not expose either worker or the Node server on a public interface.
 
+## Calibration with the cloud profile (key-driven, batched)
+
+The cloud worker handles one request at a time and rejects overlapping requests with 429, so calibration does not stream frames while it runs. Instead:
+
+1. The live frame stream is held as soon as calibration starts (the frame in flight finishes first).
+2. For each of the 27 adaptation targets the user looks at the target with eyes open and presses **Enter or Space**. The browser then captures a burst of 5 JPEG frames over about 0.5 s and keeps it in memory; Esc cancels. Key repeat is ignored and a target accepts a press only 0.5 s after it appears.
+3. The **first target is analysed at once** (`POST .../calibration/target`), so a missing face or closed-eye judgement is reported with the per-eye EAR before the other 26 targets are collected. The remaining targets are sent together after the 27th press, one burst per request; a retry re-sends the same frame IDs and the worker answers idempotently.
+4. For each target the worker keeps the open-eye frame closest to the median gaze of the burst (at least 3 usable frames and half of the burst). Targets without enough usable frames are re-collected one at a time (up to 3 attempts in adaptation).
+5. `POST .../candidate/adapt` adapts the candidate model once from the 27 stored samples. The separate 27 validation targets follow the same key-driven, batched path; the worker only measures them. A validation target that still fails after one re-collection counts as invalid and stays in the denominator of the valid rate.
+6. The existing verdict (valid rate and p95 against the screen diagonal) decides acceptance. The live stream resumes after accept or cancel; the previously accepted model is kept on failure.
+
+During live tracking a single failed frame no longer stops the camera: five consecutive failures stop it, except unrecoverable ones (lost session, oversize frame, incompatible adapter), which stop at once. The stop message names the underlying reason.
+
+Verified with the real app in a browser pane against a fake cloud provider and synthetic frames; not yet run with a real camera or the real Colab worker.
+
 This setup verifies worker readiness and model/device metadata, not gaze accuracy, optical timing, or camera performance. No user-camera run is included in this launcher change. Any accuracy claim still requires separate consented validation on a physical camera and display.

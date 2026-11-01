@@ -29,6 +29,7 @@ files.set('/web/model.json',['vendor/webeyetrack-model/model.json','application/
 files.set('/web/group1-shard1of1.bin',['vendor/webeyetrack-model/group1-shard1of1.bin','application/octet-stream']);
 const maxBody = 8 * 1024 * 1024;
 const maxGazeFrameBody = 512 * 1024;
+const maxGazeTargetBody = 2 * 1024 * 1024 + 64 * 1024;
 const loopback = address => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address);
 function json(res, status, body) {
   if (!res.destroyed && !res.writableEnded) { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}); res.end(JSON.stringify(body)); }
@@ -103,7 +104,7 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
       }catch(error){const code=typeof error?.code==='string'&&/^GAZE_[A-Z_]+$/.test(error.code)?error.code:'GAZE_INVALID_REQUEST';const status=code==='GAZE_SESSION_UNAVAILABLE'?404:code==='GAZE_REMOTE_TIMEOUT'?504:code==='GAZE_INVALID_REQUEST'?400:code==='GAZE_ADAPTER_INCOMPATIBLE'?409:503;json(res,status,{error:'gaze_unavailable',code});}
       return;
     }
-    const gazeSession=/^\/api\/gaze\/sessions\/([A-Za-z0-9_-]{1,128})(?:\/(candidate\/start|candidate\/accept|candidate\/discard|calibration\/sample|frame))?$/.exec(pathname);
+    const gazeSession=/^\/api\/gaze\/sessions\/([A-Za-z0-9_-]{1,128})(?:\/(candidate\/start|candidate\/accept|candidate\/discard|candidate\/adapt|calibration\/sample|calibration\/target|frame))?$/.exec(pathname);
     if(gazeSession){
       const [,sessionId,operation]=gazeSession;
       if(!localRequest(req)||computeProfile!=='cloud'){req.resume();json(res,403,{error:'forbidden'});return;}
@@ -117,6 +118,18 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
         if(typeof frameIdText!=='string'||!/^[1-9]\d*$/.test(frameIdText)||!Number.isSafeInteger(frameId)||typeof captureText!=='string'||!captureText.trim()||!Number.isFinite(captureTimestampMs)||captureTimestampMs<0){req.resume();json(res,400,{error:'invalid_request'});return;}
         const abort=new AbortController();res.on('close',()=>{if(!res.writableEnded)abort.abort();});
         try{let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxGazeFrameBody){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}const result=await gazeProvider.frame({sessionId,frameId,captureTimestampMs,bytes:Buffer.concat(chunks),signal:abort.signal});json(res,200,result);}
+        catch(error){respondError(error);}return;
+      }
+      if(operation==='candidate/adapt'&&req.method==='POST'){
+        req.resume();try{json(res,200,await gazeProvider.finalizeCandidate(sessionId));}catch(error){respondError(error);}return;
+      }
+      if(operation==='calibration/target'&&req.method==='POST'){
+        if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']??'')){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+        const abort=new AbortController();res.on('close',()=>{if(!res.writableEnded)abort.abort();});
+        try{let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxGazeTargetBody){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
+          let input;try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{json(res,400,{error:'invalid_request'});return;}
+          if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).sort().join(',')!=='frames,phase,pointIndex,target'){json(res,400,{error:'invalid_request'});return;}
+          json(res,200,await gazeProvider.calibrationTarget({sessionId,...input,signal:abort.signal}));}
         catch(error){respondError(error);}return;
       }
       if(['candidate/start','candidate/accept','candidate/discard'].includes(operation)&&req.method==='POST'){

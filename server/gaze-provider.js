@@ -41,6 +41,36 @@ function validEar(value) {
   return value && typeof value === 'object' && ok(value.left) && ok(value.right) && ok(value.threshold) ? {left: value.left, right: value.right, threshold: value.threshold} : null;
 }
 
+const TARGET_STATUSES = new Set(['accepted', 'insufficient', 'measured']);
+const MAX_TARGET_FRAMES = 8;
+const count = value => Number.isInteger(value) && value >= 0 && value <= 64;
+
+export function validateCalibrationTargetRequest({phase, pointIndex, target, frames} = {}) {
+  if (!['train', 'validate'].includes(phase) || !Number.isInteger(pointIndex) || pointIndex < 0 || pointIndex > 26 ||
+      !Array.isArray(target) || target.length !== 2 || !target.every(x => finite(x) && x >= -.5 && x <= .5) ||
+      !Array.isArray(frames) || frames.length < 1 || frames.length > MAX_TARGET_FRAMES) throw fail('GAZE_INVALID_REQUEST');
+  const ids = new Set();
+  for (const frame of frames) {
+    if (!frame || typeof frame !== 'object' || Object.keys(frame).sort().join(',') !== 'captureTimestampMs,frameId,jpeg' ||
+        !Number.isSafeInteger(frame.frameId) || frame.frameId < 1 || ids.has(frame.frameId) || !finite(frame.captureTimestampMs) || frame.captureTimestampMs < 0 ||
+        typeof frame.jpeg !== 'string' || frame.jpeg.length < 8 || frame.jpeg.length > 700_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(frame.jpeg) ||
+        !Buffer.from(frame.jpeg, 'base64').subarray(0, 3).equals(Buffer.from([255, 216, 255]))) throw fail('GAZE_INVALID_REQUEST');
+    ids.add(frame.frameId);
+  }
+  return {phase, pointIndex, target, frames: frames.map(frame => ({frameId: frame.frameId, captureTimestampMs: frame.captureTimestampMs, jpeg: frame.jpeg}))};
+}
+
+function sanitizeTargetResult(info, request) {
+  const ear = info?.eyeAspectRatio;
+  const validEarSummary = ear === null || (ear && finite(ear.min) && ear.min >= 0 && ear.min <= 2 && finite(ear.threshold) && ear.threshold >= 0 && ear.threshold <= 2);
+  if (!TARGET_STATUSES.has(info?.status) || info.pointIndex !== request.pointIndex || info.phase !== request.phase || ![info.totalFrames, info.faceFrames, info.closedFrames, info.usableFrames, info.frameErrors].every(count) ||
+      info.totalFrames !== request.frames.length || info.usableFrames > info.faceFrames || info.faceFrames > info.totalFrames || !validEarSummary ||
+      (info.status === 'measured') !== (request.phase === 'validate' && info.normPog !== undefined) || (info.status === 'measured' && !(Array.isArray(info.normPog) && info.normPog.length === 2 && info.normPog.every(x => finite(x) && x >= -.5 && x <= .5))) ||
+      (info.status === 'measured' && request.phase !== 'validate') || (info.status === 'accepted' && request.phase !== 'train')) throw fail('GAZE_PROTOCOL_ERROR');
+  return {status: info.status, phase: info.phase, pointIndex: info.pointIndex, totalFrames: info.totalFrames, faceFrames: info.faceFrames, closedFrames: info.closedFrames, usableFrames: info.usableFrames, frameErrors: info.frameErrors,
+    eyeAspectRatio: ear === null || ear === undefined ? null : {min: ear.min, threshold: ear.threshold}, ...(info.status === 'measured' ? {normPog: [...info.normPog]} : {}), ...(info.status === 'accepted' && count(info.collected) ? {collected: info.collected} : {})};
+}
+
 function validPog(value) {
   return value === null || (Array.isArray(value) && value.length === 2 && value.every(x => finite(x) && x >= -.5 && x <= .5));
 }
@@ -79,6 +109,8 @@ export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs 
       signal?.removeEventListener('abort', abort);
     }
   }
+
+  const request_ = request;
 
   function requireSession(sessionId) {
     if (!validSessionId(sessionId) || !sessions.has(sessionId)) throw fail('GAZE_SESSION_UNAVAILABLE');
@@ -122,6 +154,19 @@ export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs 
       const info = await request(`sessions/${id}/candidate/start`, {method: 'POST', signal});
       if (info?.status!=='started'||info.points!==0||info.requiredPoints!==27) throw fail('GAZE_PROTOCOL_ERROR');
       return {status: 'ready'};
+    },
+    // A short burst for one calibration target; train keeps the best open-eye frame, validate only measures.
+    async calibrationTarget({sessionId, phase, pointIndex, target, frames, signal} = {}) {
+      const id = requireSession(sessionId);
+      const request = validateCalibrationTargetRequest({phase, pointIndex, target, frames});
+      const info = await request_(`sessions/${id}/calibration/target`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(request), signal, timeout: 60000});
+      return sanitizeTargetResult(info, request);
+    },
+    async finalizeCandidate(sessionId, signal) {
+      const id = requireSession(sessionId);
+      const info = await request_(`sessions/${id}/candidate/adapt`, {method: 'POST', signal, timeout: 120000});
+      if (info?.status !== 'adapted' || info.points !== 27) throw fail('GAZE_PROTOCOL_ERROR');
+      return {adapted: true, points: 27};
     },
     async addCalibrationSample({sessionId, frameId, pointIndex, target, signal} = {}) {
       const id = requireSession(sessionId);

@@ -40,6 +40,30 @@ export function describeOpenEyeWait(sample) {
   return '서버 응답: 열린 눈 확인';
 }
 
+const MAX_CONSECUTIVE_FRAME_FAILURES = 5;
+const NON_TRANSIENT_FRAME_CODES = new Set(['gaze_frame_too_large', 'gaze_session_unavailable', 'gaze_adapter_incompatible', 'gaze_remote_not_configured']);
+const BATCH_FRAME_COUNT = 5;
+const BATCH_SPAN_MS = 500;
+
+// Why one calibration target could not be used (shown right after the burst is analysed).
+export function describeCalibrationTarget(result) {
+  if (!result) return '결과 없음';
+  if (result.status !== 'insufficient') return `사용 가능한 프레임 ${result.usableFrames}/${result.totalFrames}`;
+  if (result.faceFrames === 0) return `얼굴 미검출 (프레임 ${result.totalFrames}장)`;
+  if (result.closedFrames > 0 && result.usableFrames < result.closedFrames) {
+    const ear = result.eyeAspectRatio;
+    return ear ? `눈 감김 판정 (EAR 최소 ${ear.min.toFixed(2)}, 기준 ${ear.threshold.toFixed(2)} 미만이면 감김)` : '눈 감김 판정';
+  }
+  if (result.frameErrors > 0) return `프레임 처리 오류 ${result.frameErrors}건`;
+  return `사용 가능한 프레임 부족 (${result.usableFrames}/${result.totalFrames})`;
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
+
 function validNorm(value) {
   return Array.isArray(value) && value.length === 2 && value.every(x => finite(x) && x >= -.5 && x <= .5);
 }
@@ -74,7 +98,7 @@ export function createRemoteWebcamGazeController({
   let stream = null, running = false, starting = false, paused = false, generation = 0, callbackId = null;
   let sessionId = null, sessionAbort = null, pendingFrame = null, inFlight = null, captureCanvas = null, candidateDiscard = Promise.resolve();
   let lastSentAt = -Infinity, frameNumber = 0, latestSample = null, calibrated = false, candidate = false, calibrationPointIndex = 0;
-  let timing = null, clockMonitor = null, lastTimestamp = -1, modelInfo = null;
+  let timing = null, clockMonitor = null, lastTimestamp = -1, modelInfo = null, consecutiveFailures = 0;
   // Bounded per-frame transport timings (A12/G4-D): browser clock only, not optical display time.
   const TELEMETRY_SAMPLES = 256, telemetryRows = [];
   const telemetryCounts = {captured:0, superseded:0, sent:0, received:0, published:0, staleDropped:0, busy:0, failed:0, oversized:0};
@@ -116,7 +140,7 @@ export function createRemoteWebcamGazeController({
     const captureTime = finite(metadata.captureTime) && metadata.captureTime >= 0 ? metadata.captureTime : now;
     telemetryCounts.captured++; if (pendingFrame) telemetryCounts.superseded++;
     pendingFrame = {captureTimestampMs:captureTime, callbackTimestampMs:now, timestampKind:finite(metadata.captureTime)?'browser_capture_estimate':'callback_time_not_capture'};
-    if (!inFlight && now - lastSentAt >= 1000 / maxFrameHz) void sendLatest(token);
+    if (!inFlight && !candidate && now - lastSentAt >= 1000 / maxFrameHz) void sendLatest(token);
     schedule(token);
   }
 
@@ -175,7 +199,7 @@ export function createRemoteWebcamGazeController({
   }
 
   async function sendLatest(token) {
-    if (inFlight || !running || paused || token !== generation || !pendingFrame || !sessionId) return;
+    if (inFlight || candidate || !running || paused || token !== generation || !pendingFrame || !sessionId) return;
     const frame = pendingFrame;
     pendingFrame = null;
     const frameId = ++frameNumber;
@@ -202,13 +226,16 @@ export function createRemoteWebcamGazeController({
       telemetryCounts.received++;
       const remoteMs = result.durations && typeof result.durations === 'object' ? Object.values(result.durations).filter(finite).reduce((sum, value) => sum + value, 0) : null;
       recordTelemetry({sentAt, encodeMs:sentAt - encodeStartedAt, roundTripMs:receivedAt - sentAt, remoteModelMs:remoteMs, ageAtSampleMs:receivedAt - frame.callbackTimestampMs, bytes:bytes.byteLength});
+      consecutiveFailures = 0;
       if (running && !paused && token === generation) sampleFrom(result, request, receivedAt, sentAt);
     })();
     inFlight = job;
     try { await job; }
     catch (error) {
       if (running && !paused && token === generation && error?.code !== 'GAZE_CANCELLED') {
+        const transient = !NON_TRANSIENT_FRAME_CODES.has(error?.detail ?? error?.code) && error?.code !== 'gaze_frame_too_large';
         if (error?.code === 'gaze_provider_busy') { telemetryCounts.busy++; diagnose('gaze_provider_busy'); }
+        else if (transient && ++consecutiveFailures < MAX_CONSECUTIVE_FRAME_FAILURES) { telemetryCounts.failed++; diagnose('gaze_frame_retry'); }
         else { telemetryCounts.failed++; const safe=startupError(error?.code==='gaze_frame_too_large'?'gaze_frame_too_large':'gaze_remote_inference_failed');const reason=error?.detail??error?.code;if(typeof reason==='string'&&/^[a-z_]{3,48}$/.test(reason))safe.detail=reason;diagnose(safe.code);running=false;generation++;stopCamera();onError(safe); }
       }
     } finally {
@@ -254,7 +281,7 @@ export function createRemoteWebcamGazeController({
         if(token!==generation){for(const track of acquired.getTracks())track.stop();throw startupError('camera_request_aborted');}
         stream=acquired;diagnose('camera_stream_acquired');
         video.srcObject=stream;diagnose('video_attached');await video.play();diagnose('video_playback_started');
-        running=true;paused=false;pendingFrame=null;inFlight=null;lastSentAt=-Infinity;latestSample=null;frameNumber=0;
+        running=true;paused=false;pendingFrame=null;inFlight=null;lastSentAt=-Infinity;latestSample=null;frameNumber=0;consecutiveFailures=0;
         schedule(token);diagnose('capture_started');
         const settings=stream.getVideoTracks()[0]?.getSettings?.()??{};
         return {width:settings.width??null,height:settings.height??null,frameRate:settings.frameRate??null};
@@ -265,10 +292,46 @@ export function createRemoteWebcamGazeController({
     },
     async beginCalibration() {
       if(!running||starting||candidate)throw new Error('calibration unavailable');
-      await candidateDiscard;
-      const id=sessionId;
-      await jsonRequest(`/api/gaze/sessions/${encodeURIComponent(id)}/candidate/start`,{method:'POST'});
-      candidate=true;calibrationPointIndex=0;latestSample=null;return {ready:true};
+      // Hold the live stream first so no frame request overlaps the candidate requests, then let the one in flight finish.
+      candidate=true;pendingFrame=null;
+      try{
+        await candidateDiscard;
+        const pending=inFlight;if(pending)await pending.catch(()=>{});
+        const id=sessionId;
+        await jsonRequest(`/api/gaze/sessions/${encodeURIComponent(id)}/candidate/start`,{method:'POST'});
+      }catch(error){candidate=false;throw error;}
+      calibrationPointIndex=0;latestSample=null;return {ready:true};
+    },
+    // Short burst of frames for one calibration target, kept in memory until uploaded (nothing is sent here).
+    async captureCalibrationFrames({count=BATCH_FRAME_COUNT,spanMs=BATCH_SPAN_MS}={}) {
+      if(!candidate||!running||paused)throw new Error('calibration candidate unavailable');
+      if(!Number.isInteger(count)||count<1||count>8||!finite(spanMs)||spanMs<0||spanMs>5000)throw new Error('invalid calibration burst');
+      const frames=[],gap=count>1?spanMs/(count-1):0;
+      for(let i=0;i<count;i++){
+        if(!candidate||!running||paused)throw new Error('calibration candidate unavailable');
+        const startedAt=clockNow();
+        const blob=await encodeLatest(null);
+        if(blob.size>512*1024)throw startupError('gaze_frame_too_large');
+        frames.push({frameId:++frameNumber,captureTimestampMs:startedAt,bytes:new Uint8Array(await blob.arrayBuffer())});
+        const wait=gap-(clockNow()-startedAt);
+        if(i<count-1&&wait>0)await new Promise(resolve=>setTimeout(resolve,wait));
+      }
+      return frames;
+    },
+    async uploadCalibrationTarget({phase,pointIndex,target,frames,signal}={}) {
+      if(!candidate||!running)throw new Error('calibration candidate unavailable');
+      const viewport=getViewport();
+      if(!['train','validate'].includes(phase)||!Number.isInteger(pointIndex)||pointIndex<0||pointIndex>26||!finite(target?.x)||!finite(target?.y)||!finite(viewport?.width)||!finite(viewport?.height)||viewport.width<=0||viewport.height<=0||!Array.isArray(frames)||!frames.length)throw new Error('invalid calibration target');
+      const body=JSON.stringify({phase,pointIndex,target:[target.x/viewport.width-.5,target.y/viewport.height-.5],frames:frames.map(frame=>({frameId:frame.frameId,captureTimestampMs:frame.captureTimestampMs,jpeg:bytesToBase64(frame.bytes)}))});
+      const result=await jsonRequest(`/api/gaze/sessions/${encodeURIComponent(sessionId)}/calibration/target`,{method:'POST',headers:{'content-type':'application/json'},body,signal});
+      if(!['accepted','insufficient','measured'].includes(result?.status)||result.pointIndex!==pointIndex||result.phase!==phase||result.totalFrames!==frames.length||!Number.isInteger(result.usableFrames))throw startupError('gaze_protocol_error');
+      return result;
+    },
+    async finalizeCalibration() {
+      if(!candidate||!running)throw new Error('calibration candidate unavailable');
+      const result=await jsonRequest(`/api/gaze/sessions/${encodeURIComponent(sessionId)}/candidate/adapt`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+      if(result?.adapted!==true||result.points!==27)throw startupError('gaze_protocol_error');
+      calibrationPointIndex=27;return {adapted:true,points:27};
     },
     async calibrate(target,notBeforeTimestampMs=-Infinity,maxSampleAgeMs=250) {
       const sample=latestSample;
@@ -357,6 +420,10 @@ export function createProfiledWebcamGazeController(options) {
     pause(){return controller?.pause?.();},
     resume(){return controller?.resume?.();},
     beginCalibration(...args){return selectController().then(c=>c.beginCalibration(...args));},
+    get batchCalibration(){return remote;},
+    captureCalibrationFrames(...args){return selectController().then(c=>c.captureCalibrationFrames(...args));},
+    uploadCalibrationTarget(...args){return selectController().then(c=>c.uploadCalibrationTarget(...args));},
+    finalizeCalibration(...args){return selectController().then(c=>c.finalizeCalibration(...args));},
     calibrate(...args){return selectController().then(c=>c.calibrate(...args));},
     restoreCalibration(...args){return selectController().then(c=>c.restoreCalibration(...args));},
     commitCalibration(...args){return selectController().then(c=>c.commitCalibration(...args));},

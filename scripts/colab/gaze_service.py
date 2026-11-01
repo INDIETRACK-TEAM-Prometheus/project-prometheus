@@ -39,6 +39,9 @@ CALIBRATION_POINTS = 27
 MAX_FRAME_BYTES = 6 * 1024 * 1024
 MAX_FRAME_PIXELS = 2_764_800  # 1920 x 1440
 MAX_JSON_BYTES = 16 * 1024
+MAX_TARGET_FRAMES = 8
+MIN_USABLE_FRAMES = 3
+MAX_TARGET_JSON_BYTES = 2 * 1024 * 1024
 MAX_ADAPTER_JSON_BYTES = 64 * 1024
 MODEL_ID = "webeyetrack-blazegaze-mpiifacegaze"
 ADAPTER_ID = "webeyetrack-gaze-mlp-f32-v1"
@@ -176,6 +179,8 @@ class TrackerState:
         self.frames = OrderedDict()
         self.calibration = []
         self.calibration_by_index = {}
+        self.batch = {}
+        self.batch_results = {}
         self.calibrated = False
         self.failed = False
 
@@ -199,6 +204,8 @@ def _clear_tracker_state(state):
     state.frames.clear()
     state.calibration.clear()
     state.calibration_by_index.clear()
+    state.batch.clear()
+    state.batch_results.clear()
     tracker = state.tracker
     state.tracker = None
     if tracker is None:
@@ -425,6 +432,10 @@ def add_calibration_sample(session, body):
     candidate.calibration_by_index[index] = {"frameId": frame_id, "target": target}
     if len(candidate.calibration) < CALIBRATION_POINTS:
         return {"status": "collecting", "points": len(candidate.calibration), "requiredPoints": CALIBRATION_POINTS}
+    return _adapt_candidate(candidate)
+
+
+def _adapt_candidate(candidate):
     try:
         with TF.device("/GPU:0"):
             candidate.tracker.adapt(
@@ -452,6 +463,126 @@ def add_calibration_sample(session, body):
     except Exception:
         pass
     return {"status": "adapted", "points": CALIBRATION_POINTS, "requiredPoints": CALIBRATION_POINTS}
+
+
+def _decode_jpeg_base64(value):
+    if not isinstance(value, str) or not value or len(value) > (MAX_FRAME_BYTES * 4) // 3 + 8:
+        raise ServiceError(400, "GAZE_INVALID_FRAME")
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except Exception:
+        raise ServiceError(400, "GAZE_INVALID_FRAME")
+    if len(raw) < 4 or len(raw) > MAX_FRAME_BYTES or raw[:3] != b"\xff\xd8\xff":
+        raise ServiceError(400, "GAZE_INVALID_FRAME")
+    return raw
+
+
+def _median(values):
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def process_calibration_target(session, body):
+    """Analyse a short burst of frames for one calibration target (train or validate) while no live stream runs.
+
+    Training stores the most representative open-eye frame's features for the final adaptation; validation only
+    measures the adapted candidate. Re-sending the same frame IDs returns the stored answer, so retries are safe.
+    """
+    candidate = session.candidate
+    if candidate is None or candidate.failed:
+        raise ServiceError(409, "GAZE_CANDIDATE_UNAVAILABLE")
+    if set(body) - {"phase", "pointIndex", "target", "frames"}:
+        raise ServiceError(400, "GAZE_INVALID_REQUEST")
+    phase = body.get("phase")
+    if phase not in ("train", "validate"):
+        raise ServiceError(400, "GAZE_INVALID_REQUEST")
+    index = body.get("pointIndex")
+    if not isinstance(index, int) or isinstance(index, bool) or index < 0 or index >= CALIBRATION_POINTS:
+        raise ServiceError(400, "GAZE_INVALID_CALIBRATION_INDEX")
+    target = calibration_target(body.get("target"))
+    frames = body.get("frames")
+    if not isinstance(frames, list) or not 1 <= len(frames) <= MAX_TARGET_FRAMES:
+        raise ServiceError(400, "GAZE_INVALID_REQUEST")
+    if phase == "train" and candidate.calibrated:
+        raise ServiceError(409, "GAZE_CANDIDATE_ALREADY_ADAPTED")
+    if phase == "validate" and not candidate.calibrated:
+        raise ServiceError(409, "GAZE_CANDIDATE_NOT_ADAPTED")
+    ids = []
+    decoded = []
+    for item in frames:
+        if not isinstance(item, dict) or set(item) != {"frameId", "captureTimestampMs", "jpeg"} or not valid_frame_id(item["frameId"]):
+            raise ServiceError(400, "GAZE_INVALID_FRAME_METADATA")
+        ids.append(item["frameId"])
+        decoded.append(_decode_jpeg_base64(item["jpeg"]))
+    previous = candidate.batch_results.get((phase, index))
+    if previous is not None and previous["ids"] == ids and previous["target"] == target:
+        return previous["response"]
+
+    results = []
+    frame_errors = []
+    for item, jpeg in zip(frames, decoded):
+        try:
+            results.append(infer_frame(session, item["frameId"], item["captureTimestampMs"], jpeg))
+        except ServiceError as error:
+            frame_errors.append(error.code)
+    usable = [r for r in results if r["faceDetected"] and r["gazeState"] == "open" and r["normPog"] is not None]
+    faces = [r for r in results if r["faceDetected"]]
+    closed = [r for r in faces if r["gazeState"] == "closed"]
+    ears = [r["eyeAspectRatio"] for r in results if r.get("eyeAspectRatio")]
+    summary = {
+        "pointIndex": index,
+        "phase": phase,
+        "totalFrames": len(frames),
+        "faceFrames": len(faces),
+        "closedFrames": len(closed),
+        "usableFrames": len(usable),
+        "frameErrors": len(frame_errors),
+        "eyeAspectRatio": {"min": min(min(e["left"], e["right"]) for e in ears), "threshold": ears[0]["threshold"]} if ears else None,
+    }
+    needed = max(1, min(MIN_USABLE_FRAMES, len(frames)))
+    if len(usable) < needed or len(usable) * 2 < len(frames):
+        for frame_id in ids:
+            candidate.frames.pop(frame_id, None)
+        summary["status"] = "insufficient"
+    else:
+        center = [_median([r["normPog"][0] for r in usable]), _median([r["normPog"][1] for r in usable])]
+        if phase == "train":
+            best = min(usable, key=lambda r: (r["normPog"][0] - center[0]) ** 2 + (r["normPog"][1] - center[1]) ** 2)
+            sample = candidate.frames.pop(best["frameId"], None)
+            for frame_id in ids:
+                candidate.frames.pop(frame_id, None)
+            if sample is None or sample.get("gazeState") != "open":
+                raise ServiceError(422, "GAZE_CALIBRATION_FRAME_UNAVAILABLE")
+            sample.update({"frameId": best["frameId"], "target": target})
+            candidate.batch[index] = sample
+            summary["status"] = "accepted"
+            summary["collected"] = len(candidate.batch)
+            summary["requiredPoints"] = CALIBRATION_POINTS
+        else:
+            for frame_id in ids:
+                candidate.frames.pop(frame_id, None)
+            summary["status"] = "measured"
+            summary["normPog"] = center
+    candidate.batch_results[(phase, index)] = {"ids": ids, "target": target, "response": summary}
+    return summary
+
+
+def finalize_candidate(session):
+    candidate = session.candidate
+    if candidate is None or candidate.failed:
+        raise ServiceError(409, "GAZE_CANDIDATE_UNAVAILABLE")
+    if candidate.calibrated:
+        return {"status": "adapted", "points": CALIBRATION_POINTS, "requiredPoints": CALIBRATION_POINTS}
+    if len(candidate.batch) != CALIBRATION_POINTS:
+        raise ServiceError(409, "GAZE_CALIBRATION_INCOMPLETE")
+    candidate.calibration = [candidate.batch[i] for i in range(CALIBRATION_POINTS)]
+    candidate.calibration_by_index = {i: {"frameId": candidate.batch[i]["frameId"], "target": candidate.batch[i]["target"]} for i in range(CALIBRATION_POINTS)}
+    result = _adapt_candidate(candidate)
+    candidate.batch.clear()
+    for key in [key for key in candidate.batch_results if key[0] == "train"]:
+        del candidate.batch_results[key]
+    return result
 
 
 def accept_candidate(session):
@@ -641,6 +772,10 @@ def serve(health):
                     self.read_body(MAX_JSON_BYTES, allow_empty=True)
                 elif operation == ["calibration", "sample"]:
                     body = read_json_body(self.read_body(MAX_JSON_BYTES))
+                elif operation == ["calibration", "target"]:
+                    body = read_json_body(self.read_body(MAX_TARGET_JSON_BYTES))
+                elif operation == ["candidate", "adapt"]:
+                    self.read_body(MAX_JSON_BYTES, allow_empty=True)
                 else:
                     self.close_connection = True
                     self.reply(404, {"status": "error", "error": "not_found"})
@@ -659,6 +794,10 @@ def serve(health):
                         result = discard_candidate(session)
                     elif operation == ["calibration", "sample"]:
                         result = add_calibration_sample(session, body)
+                    elif operation == ["calibration", "target"]:
+                        result = process_calibration_target(session, body)
+                    elif operation == ["candidate", "adapt"]:
+                        result = finalize_candidate(session)
                 finally:
                     COMPUTE_LOCK.release()
                 self.reply(200, result)

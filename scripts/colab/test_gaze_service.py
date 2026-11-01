@@ -191,5 +191,130 @@ class GazeServiceTests(unittest.TestCase):
         self.assertEqual(error.exception.code, "GAZE_INVALID_ADAPTER")
 
 
+class BatchCalibrationTests(unittest.TestCase):
+    """Per-target frame bursts and the final adaptation, with inference replaced by a scripted fake."""
+
+    def setUp(self):
+        import base64
+        self.jpeg = base64.b64encode(b"\xff\xd8\xff\xd9").decode("ascii")
+        namespace = service["process_calibration_target"].__globals__
+        namespace["NP"] = np
+        namespace["TF"] = FakeTF
+        self.namespace = namespace
+        self.original_infer = namespace["infer_frame"]
+        self.addCleanup(lambda: namespace.__setitem__("infer_frame", self.original_infer))
+        self.session = service["GazeSession"]("batch-session", (1920, 1080), (53.1, 29.8), FakeTracker())
+        self.session.candidate = service["TrackerState"](FakeTracker())
+        self.script = {}
+
+        def fake_infer(session, frame_id, timestamp, jpeg):
+            outcome = self.script.get(frame_id, {"face": True, "state": "open", "pog": [0.1, 0.2]})
+            if outcome.get("raise"):
+                raise service["ServiceError"](503, outcome["raise"])
+            result = {"frameId": frame_id, "faceDetected": outcome["face"], "gazeState": outcome["state"] if outcome["face"] else "unknown",
+                      "normPog": outcome["pog"] if outcome["face"] else None, "eyeAspectRatio": outcome.get("ear")}
+            if outcome["face"] and outcome["state"] == "open":
+                session.candidate.frames[frame_id] = {"gazeState": "open", "eyePatch": frame_id, "headVector": frame_id, "faceOrigin3D": frame_id}
+            return result
+
+        namespace["infer_frame"] = fake_infer
+
+    def body(self, ids, phase="train", index=0, target=(0.0, 0.0)):
+        return {"phase": phase, "pointIndex": index, "target": list(target), "frames": [{"frameId": i, "captureTimestampMs": float(i), "jpeg": self.jpeg} for i in ids]}
+
+    def test_train_target_keeps_the_most_representative_open_frame_and_clears_the_rest(self):
+        self.script = {1: {"face": True, "state": "open", "pog": [0.10, 0.10]}, 2: {"face": True, "state": "open", "pog": [0.12, 0.10]},
+                       3: {"face": True, "state": "open", "pog": [0.50, 0.50]}, 4: {"face": True, "state": "open", "pog": [0.11, 0.11]},
+                       5: {"face": True, "state": "closed", "pog": [0.0, 0.0]}}
+        response = service["process_calibration_target"](self.session, self.body([1, 2, 3, 4, 5]))
+        candidate = self.session.candidate
+        self.assertEqual(response["status"], "accepted")
+        self.assertEqual((response["usableFrames"], response["closedFrames"], response["collected"]), (4, 1, 1))
+        self.assertEqual(candidate.batch[0]["frameId"], 4)  # closest to the median, not the outlier
+        self.assertEqual(len(candidate.frames), 0)
+        self.assertEqual(candidate.batch[0]["target"], [0.0, 0.0])
+
+    def test_closed_or_missing_faces_are_reported_with_eye_aspect_ratio_and_store_nothing(self):
+        ear = {"left": 0.17, "right": 0.19, "threshold": 0.2}
+        self.script = {i: {"face": True, "state": "closed", "pog": [0.0, 0.0], "ear": ear} for i in range(1, 6)}
+        response = service["process_calibration_target"](self.session, self.body(range(1, 6)))
+        self.assertEqual(response["status"], "insufficient")
+        self.assertEqual((response["faceFrames"], response["closedFrames"], response["usableFrames"]), (5, 5, 0))
+        self.assertEqual(response["eyeAspectRatio"], {"min": 0.17, "threshold": 0.2})
+        self.assertEqual(len(self.session.candidate.batch), 0)
+        self.script = {i: {"face": False, "state": "unknown", "pog": None} for i in range(6, 11)}
+        none = service["process_calibration_target"](self.session, self.body(range(6, 11), index=1))
+        self.assertEqual((none["status"], none["faceFrames"], none["eyeAspectRatio"]), ("insufficient", 0, None))
+
+    def test_frame_errors_do_not_abort_the_burst_but_too_few_usable_frames_fail(self):
+        self.script = {1: {"raise": "GAZE_INFERENCE_FAILED"}, 2: {"raise": "GAZE_INFERENCE_FAILED"}, 3: {"raise": "GAZE_INFERENCE_FAILED"}}
+        response = service["process_calibration_target"](self.session, self.body([1, 2, 3, 4, 5]))
+        self.assertEqual((response["status"], response["frameErrors"], response["usableFrames"]), ("insufficient", 3, 2))
+
+    def test_resending_the_same_frames_is_idempotent_and_new_frames_replace_the_sample(self):
+        first = service["process_calibration_target"](self.session, self.body([1, 2, 3, 4, 5]))
+        again = service["process_calibration_target"](self.session, self.body([1, 2, 3, 4, 5]))
+        self.assertIs(first, again)
+        self.assertEqual(len(self.session.candidate.batch), 1)
+        replaced = service["process_calibration_target"](self.session, self.body([6, 7, 8, 9, 10]))
+        self.assertEqual(replaced["status"], "accepted")
+        self.assertEqual(len(self.session.candidate.batch), 1)
+        self.assertGreaterEqual(self.session.candidate.batch[0]["frameId"], 6)
+
+    def test_requests_are_validated_before_any_inference(self):
+        calls = []
+        self.namespace["infer_frame"] = lambda *args: calls.append(args)
+        bad_bodies = [
+            {**self.body([1]), "phase": "other"}, {**self.body([1]), "pointIndex": 27}, {**self.body([1]), "target": [0.9, 0]},
+            {**self.body([1]), "extra": 1}, {**self.body([]),}, self.body(range(1, 10)),
+            {**self.body([1]), "frames": [{"frameId": 1, "captureTimestampMs": 1.0, "jpeg": "not base64!"}]},
+            {**self.body([1]), "frames": [{"frameId": 1, "captureTimestampMs": 1.0, "jpeg": "AAAAAAA="}]},
+            {**self.body([1]), "frames": [{"frameId": 0, "captureTimestampMs": 1.0, "jpeg": self.jpeg}]},
+        ]
+        for body in bad_bodies:
+            with self.assertRaises(service["ServiceError"]) as error:
+                service["process_calibration_target"](self.session, body)
+            self.assertEqual(error.exception.status, 400, body.keys())
+        self.assertEqual(calls, [])
+        self.session.candidate = None
+        with self.assertRaises(service["ServiceError"]) as error:
+            service["process_calibration_target"](self.session, self.body([1]))
+        self.assertEqual(error.exception.code, "GAZE_CANDIDATE_UNAVAILABLE")
+
+    def test_phase_must_match_the_candidate_state(self):
+        with self.assertRaises(service["ServiceError"]) as error:
+            service["process_calibration_target"](self.session, self.body([1, 2, 3], phase="validate"))
+        self.assertEqual(error.exception.code, "GAZE_CANDIDATE_NOT_ADAPTED")
+        self.session.candidate.calibrated = True
+        with self.assertRaises(service["ServiceError"]) as error:
+            service["process_calibration_target"](self.session, self.body([1, 2, 3]))
+        self.assertEqual(error.exception.code, "GAZE_CANDIDATE_ALREADY_ADAPTED")
+
+    def test_validation_measures_the_median_without_storing_samples(self):
+        self.session.candidate.calibrated = True
+        self.script = {1: {"face": True, "state": "open", "pog": [0.0, 0.0]}, 2: {"face": True, "state": "open", "pog": [0.2, 0.4]},
+                       3: {"face": True, "state": "open", "pog": [0.4, 0.2]}}
+        response = service["process_calibration_target"](self.session, self.body([1, 2, 3], phase="validate"))
+        self.assertEqual(response["status"], "measured")
+        self.assertEqual(response["normPog"], [0.2, 0.2])
+        self.assertEqual((len(self.session.candidate.batch), len(self.session.candidate.frames)), (0, 0))
+
+    def test_finalize_requires_all_27_targets_then_adapts_once_in_target_order(self):
+        for index in range(26):
+            service["process_calibration_target"](self.session, self.body([index * 10 + i for i in range(1, 6)], index=index, target=(0.0, 0.0)))
+        with self.assertRaises(service["ServiceError"]) as error:
+            service["finalize_candidate"](self.session)
+        self.assertEqual(error.exception.code, "GAZE_CALIBRATION_INCOMPLETE")
+        service["process_calibration_target"](self.session, self.body([1001, 1002, 1003, 1004, 1005], index=26, target=(0.0, 0.0)))
+        tracker = self.session.candidate.tracker
+        result = service["finalize_candidate"](self.session)
+        self.assertEqual(result, {"status": "adapted", "points": 27, "requiredPoints": 27})
+        self.assertEqual(len(tracker.adapt_calls), 1)
+        self.assertEqual(len(tracker.adapt_calls[0][0]), 27)
+        self.assertTrue(self.session.candidate.calibrated)
+        self.assertEqual(service["finalize_candidate"](self.session)["status"], "adapted")
+        self.assertEqual(len(tracker.adapt_calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

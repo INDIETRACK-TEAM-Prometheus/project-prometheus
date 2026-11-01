@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createProfiledWebcamGazeController,createRemoteWebcamGazeController,describeOpenEyeWait,validateRemoteGazeAdapter} from '../src/gaze/remote-webcam.js';
+import {createProfiledWebcamGazeController,createRemoteWebcamGazeController,describeCalibrationTarget,describeOpenEyeWait,validateRemoteGazeAdapter} from '../src/gaze/remote-webcam.js';
 
 const model={id:'webeyetrack-blazegaze-mpiifacegaze',sourceCommit:'75fbd2f5f784f2eb3a39675a8dcbf1b01c697f1c',sha256:'a'.repeat(64)};
 const shapes=[[518,16],[16],[16,16],[16],[16,2],[2]];
 function adapter(){return {schemaVersion:1,adapterId:'webeyetrack-gaze-mlp-f32-v1',modelId:model.id,sourceCommit:model.sourceCommit,modelSha256:model.sha256,weights:shapes.map(shape=>{const count=shape.reduce((n,x)=>n*x,1),bytes=Buffer.alloc(count*4);for(let i=0;i<count;i++)bytes.writeFloatLE(.125,i*4);return {shape,dtype:'float32-le',data:bytes.toString('base64')};})};}
 function response(body,status=200){return new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});}
 
-function harness({ready=true,restoreAdapter=null,holdFirstFrame=false,frameHz=8,frameFailure=null,frameFields=null}={}){
+function harness({ready=true,restoreAdapter=null,holdFirstFrame=false,frameHz=8,frameFailure=null,frameFields=null,targetBehaviour=null}={}){
   let now=1000,callback=null,callbackId=0,mediaOpens=0,trackStops=0,frameCalls=0,resolveFirst=null,active=false;
-  const errors=[],samples=[],calls=[],video={videoWidth:1280,videoHeight:720,srcObject:null,async play(){},pause(){},requestVideoFrameCallback(fn){callback=fn;return ++callbackId;},cancelVideoFrameCallback(){callback=null;},emit(captureTime=now){now=captureTime;const fn=callback;callback=null;assert.ok(fn,'video frame callback scheduled');fn(now,{captureTime});}};
+  const targetCalls=[],errors=[],samples=[],calls=[],video={videoWidth:1280,videoHeight:720,srcObject:null,async play(){},pause(){},requestVideoFrameCallback(fn){callback=fn;return ++callbackId;},cancelVideoFrameCallback(){callback=null;},emit(captureTime=now){now=captureTime;const fn=callback;callback=null;assert.ok(fn,'video frame callback scheduled');fn(now,{captureTime});}};
   const track={stop(){trackStops++;},getSettings(){return {width:1280,height:720,frameRate:30};}};
   const mediaDevices={async getUserMedia(){mediaOpens++;return {getTracks:()=>[track],getVideoTracks:()=>[track]};}};
   const fetchImpl=async(url,options={})=>{
@@ -20,9 +20,13 @@ function harness({ready=true,restoreAdapter=null,holdFirstFrame=false,frameHz=8,
     if(url.endsWith('/candidate/start'))return response({status:'ready'});
     if(url.endsWith('/candidate/discard'))return response({status:'ready'});
     if(url.endsWith('/candidate/accept'))return response({status:'accepted',calibrated:true,adapter:adapter()});
+    if(url.endsWith('/calibration/target')){const input=JSON.parse(options.body),behaviour=targetBehaviour?.(input)??'ok',n=input.frames.length;targetCalls.push(input);
+      if(behaviour==='insufficient')return response({status:'insufficient',phase:input.phase,pointIndex:input.pointIndex,totalFrames:n,faceFrames:n,closedFrames:n,usableFrames:0,frameErrors:0,eyeAspectRatio:{min:.17,threshold:.2}});
+      return response(input.phase==='train'?{status:'accepted',phase:'train',pointIndex:input.pointIndex,totalFrames:n,faceFrames:n,closedFrames:0,usableFrames:n,frameErrors:0,eyeAspectRatio:null,collected:input.pointIndex+1}:{status:'measured',phase:'validate',pointIndex:input.pointIndex,totalFrames:n,faceFrames:n,closedFrames:0,usableFrames:n,frameErrors:0,eyeAspectRatio:null,normPog:[0,.1]});}
+    if(url.endsWith('/candidate/adapt'))return response({adapted:true,points:27});
     if(url.endsWith('/calibration/sample')){const input=JSON.parse(options.body);return response({adapted:input.pointIndex===26,points:input.pointIndex+1});}
     if(url.endsWith('/frame')){
-      frameCalls++;if(frameFailure)return response({error:'gaze_unavailable',code:frameFailure},503);const headers=options.headers,frameId=Number(headers['x-frame-id']),captureTimestampMs=Number(headers['x-capture-timestamp-ms']);
+      frameCalls++;const failure=typeof frameFailure==='function'?frameFailure(frameCalls):frameFailure;if(failure)return response({error:'gaze_unavailable',code:failure},503);const headers=options.headers,frameId=Number(headers['x-frame-id']),captureTimestampMs=Number(headers['x-capture-timestamp-ms']);
       if(holdFirstFrame&&frameCalls===1)await new Promise(resolve=>{resolveFirst=resolve;options.signal.addEventListener('abort',()=>resolveFirst?.(),{once:true});});
       return response({status:'ok',frameId,captureTimestampMs,faceDetected:true,gazeState:'open',normPog:[0,.1],durations:{total:7},...(frameFields??{})});
     }
@@ -31,7 +35,7 @@ function harness({ready=true,restoreAdapter=null,holdFirstFrame=false,frameHz=8,
   const canvas={width:0,height:0,getContext(){return {drawImage(){}};},toBlob(done,type){done(new Blob([Uint8Array.from([255,216,255,217])],{type}));}};
   const diagnostics=[];
   const controller=createRemoteWebcamGazeController({video,mediaDevices,fetchImpl,createCanvas:()=>canvas,clockNow:()=>now,getViewport:()=>({width:800,height:600}),maxFrameHz:frameHz,getAdapter:async()=>restoreAdapter,onSample:sample=>samples.push(sample),onError:error=>errors.push(error),onDiagnostic:code=>diagnostics.push(code)});
-  return {controller,video,samples,errors,calls,diagnostics,counts:()=>({mediaOpens,trackStops,frameCalls,active}),setTime(value){now=value;},async flush(){for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));},releaseFirst(){resolveFirst?.();resolveFirst=null;}};
+  return {controller,video,samples,errors,calls,targetCalls,diagnostics,counts:()=>({mediaOpens,trackStops,frameCalls,active}),setTime(value){now=value;},async flush(){for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));},releaseFirst(){resolveFirst?.();resolveFirst=null;}};
 }
 
 test('remote gaze health blocks startup before camera access and has no local-worker fallback',async()=>{
@@ -68,19 +72,54 @@ test('remote uploader keeps one in-flight request and coalesces a latest frame',
   await h.controller.stop();
 });
 
-test('cloud calibration uses 27 fresh frame IDs, accepts model-only weights, and can restore them',async()=>{
-  const h=harness();await h.controller.start({userInitiated:true,cameraConsent:true});await h.controller.beginCalibration();
+test('cloud calibration holds the live stream, uploads one burst per target, adapts once and can be restored',async()=>{
+  const h=harness();await h.controller.start({userInitiated:true,cameraConsent:true});
+  await assert.rejects(h.controller.captureCalibrationFrames(),/calibration candidate unavailable/);
+  await h.controller.beginCalibration();
+  h.video.emit(1100);await h.flush();
+  assert.equal(h.counts().frameCalls,0);
+  let lastFrameId=0;
   for(let index=0;index<27;index++){
-    const before=h.samples.length;h.video.emit(1100+index*150);await h.flush();assert.equal(h.samples.length,before+1);
-    const result=await h.controller.calibrate({x:400,y:300},-Infinity,250);
-    assert.equal(result.points,index+1);assert.equal(result.adapted,index===26);
+    const frames=await h.controller.captureCalibrationFrames({count:3,spanMs:0});
+    assert.equal(frames.length,3);assert.equal(frames[0].bytes.length,4);
+    for(const frame of frames){assert.ok(frame.frameId>lastFrameId);lastFrameId=frame.frameId;}
+    const result=await h.controller.uploadCalibrationTarget({phase:'train',pointIndex:index,target:{x:400,y:300},frames});
+    assert.equal(result.status,'accepted');assert.equal(result.collected,index+1);
   }
+  assert.equal(h.targetCalls.length,27);
+  const first=h.targetCalls[0];
+  assert.deepEqual(first.target,[400/800-.5,300/600-.5]);assert.equal(first.frames[0].jpeg,Buffer.from([255,216,255,217]).toString('base64'));
+  assert.deepEqual(await h.controller.finalizeCalibration(),{adapted:true,points:27});
   const committed=await h.controller.commitCalibration();assert.equal(validateRemoteGazeAdapter(committed.adapter,model),true);
+  h.video.emit(3000);await h.flush();assert.equal(h.counts().frameCalls,1);
   const saved=harness({restoreAdapter:committed.adapter});await saved.controller.start({userInitiated:true,cameraConsent:true});
   const createCall=saved.calls.find(call=>call.url==='/api/gaze/sessions'&&call.options.method==='POST');
   assert.ok(JSON.parse(createCall.options.body).adapter);assert.equal(saved.controller.calibrated,true);
   saved.video.emit(6000);await saved.flush();assert.equal(saved.samples[0].valid,true);
   await saved.controller.stop();await h.controller.stop();
+});
+
+test('cancelling calibration resumes the live stream and an insufficient target is returned, not hidden',async()=>{
+  const h=harness({targetBehaviour:()=> 'insufficient'});
+  await h.controller.start({userInitiated:true,cameraConsent:true});await h.controller.beginCalibration();
+  const frames=await h.controller.captureCalibrationFrames({count:3,spanMs:0});
+  const result=await h.controller.uploadCalibrationTarget({phase:'train',pointIndex:0,target:{x:10,y:10},frames});
+  assert.equal(result.status,'insufficient');
+  assert.match(describeCalibrationTarget(result),/눈 감김 판정 \(EAR 최소 0\.17, 기준 0\.20 미만이면 감김\)/);
+  await assert.rejects(h.controller.uploadCalibrationTarget({phase:'train',pointIndex:27,target:{x:10,y:10},frames}),/invalid calibration target/);
+  await h.controller.cancelCalibration();
+  h.video.emit(2000);await h.flush();assert.equal(h.counts().frameCalls,1);
+  await h.controller.stop();
+});
+
+test('target descriptions name no face, closed eyes, frame errors and missing frames',()=>{
+  const base={status:'insufficient',totalFrames:5,faceFrames:5,closedFrames:0,usableFrames:0,frameErrors:0,eyeAspectRatio:null};
+  assert.equal(describeCalibrationTarget(null),'결과 없음');
+  assert.equal(describeCalibrationTarget({...base,status:'accepted',usableFrames:4}),'사용 가능한 프레임 4/5');
+  assert.equal(describeCalibrationTarget({...base,faceFrames:0}),'얼굴 미검출 (프레임 5장)');
+  assert.equal(describeCalibrationTarget({...base,closedFrames:5}),'눈 감김 판정');
+  assert.equal(describeCalibrationTarget({...base,frameErrors:2,usableFrames:1}),'프레임 처리 오류 2건');
+  assert.equal(describeCalibrationTarget({...base,usableFrames:1}),'사용 가능한 프레임 부족 (1/5)');
 });
 
 test('remote uploader records bounded per-frame transport telemetry on the browser clock',async()=>{
@@ -97,23 +136,38 @@ test('remote uploader records bounded per-frame transport telemetry on the brows
   await h.controller.stop();
 });
 
-test('a failed remote frame stops tracking with the underlying reason attached',async()=>{
-  const worker=harness({frameFailure:'GAZE_INFERENCE_FAILED'});
-  await worker.controller.start({userInitiated:true,cameraConsent:true});
-  worker.video.emit(1010);await worker.flush();
-  assert.equal(worker.errors.length,1);
-  assert.equal(worker.errors[0].code,'gaze_remote_inference_failed');
-  assert.equal(worker.errors[0].detail,'gaze_inference_failed');
-  assert.equal(worker.controller.telemetry().counts.failed,1);
-  const timeout=harness({frameFailure:'GAZE_REMOTE_TIMEOUT'});
-  await timeout.controller.start({userInitiated:true,cameraConsent:true});
-  timeout.video.emit(1010);await timeout.flush();
-  assert.equal(timeout.errors[0].detail,'gaze_remote_timeout');
+async function emitFrames(h,times){for(const at of times){h.video.emit(at);await h.flush();}}
+const spaced=count=>Array.from({length:count},(_,i)=>1010+i*200);
+
+test('transient frame failures are tolerated and only the fifth consecutive one stops tracking with the reason attached',async()=>{
+  const h=harness({frameFailure:'GAZE_INFERENCE_FAILED'});
+  await h.controller.start({userInitiated:true,cameraConsent:true});
+  await emitFrames(h,spaced(4));
+  assert.equal(h.errors.length,0);assert.equal(h.controller.telemetry().counts.failed,4);
+  assert.equal(h.diagnostics.filter(code=>code==='gaze_frame_retry').length,4);
+  await emitFrames(h,[1810]);
+  assert.equal(h.errors.length,1);
+  assert.equal(h.errors[0].code,'gaze_remote_inference_failed');
+  assert.equal(h.errors[0].detail,'gaze_inference_failed');
+  assert.equal(h.controller.telemetry().counts.failed,5);
+});
+
+test('a successful frame resets the failure streak',async()=>{
+  const h=harness({frameFailure:calls=>[1,2,3,4,6,7,8,9,10].includes(calls)?'GAZE_REMOTE_TIMEOUT':null});
+  await h.controller.start({userInitiated:true,cameraConsent:true});
+  await emitFrames(h,spaced(9));
+  assert.equal(h.errors.length,0);assert.equal(h.samples.length,1);
+  await emitFrames(h,[3000]);
+  assert.equal(h.errors.length,1);assert.equal(h.errors[0].detail,'gaze_remote_timeout');
+});
+
+test('failures that cannot recover stop tracking immediately',async()=>{
+  const gone=harness({frameFailure:'GAZE_SESSION_UNAVAILABLE'});
+  await gone.controller.start({userInitiated:true,cameraConsent:true});await emitFrames(gone,[1010]);
+  assert.equal(gone.errors.length,1);assert.equal(gone.errors[0].detail,'gaze_session_unavailable');
   const odd=harness({frameFailure:'not a code'});
-  await odd.controller.start({userInitiated:true,cameraConsent:true});
-  odd.video.emit(1010);await odd.flush();
-  assert.equal(odd.errors[0].code,'gaze_remote_inference_failed');
-  assert.equal(odd.errors[0].detail,'gaze_remote_unavailable');
+  await odd.controller.start({userInitiated:true,cameraConsent:true});await emitFrames(odd,spaced(5));
+  assert.equal(odd.errors.length,1);assert.equal(odd.errors[0].detail,'gaze_remote_unavailable');
 });
 
 test('closed-eye responses carry their eye aspect ratios and the wait message names the real reason',async()=>{
