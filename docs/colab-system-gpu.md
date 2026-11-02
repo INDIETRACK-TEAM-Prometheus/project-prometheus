@@ -34,6 +34,10 @@ $env:PROMETHEUS_GAZE_REMOTE_URL = 'http://127.0.0.1:49191/'
 
 `PROMETHEUS_COMPUTE_PROFILE=cloud` selects remote GPU gaze inference; the gaze provider fails closed if its remote URL or worker is unavailable. Depth uses the existing `PROMETHEUS_DEPTH_BACKEND=colab` switch. Browser requests continue through the loopback-only Node server; do not expose either worker or the Node server on a public interface.
 
+## Depth acceleration (xFormers, optional)
+
+`WARNING:dinov2:xFormers not available` is printed by the pinned DINOv2 attention code when the optional xFormers accelerator is not installed; DINOv2 then uses plain PyTorch attention. The depth model itself runs either way. The depth service now tries to install `xformers==0.0.35` (`--no-deps`, so PyTorch is never replaced; it requires `torch>=2.10`) before the DINOv2 modules are imported. The install is kept only if a real GPU attention call in a separate process matches PyTorch's attention to 1e-3; otherwise xFormers is uninstalled and the service starts without it. `PROMETHEUS_XFORMERS=0` disables the attempt. The startup line shows `xformers 0.0.35` or `xformers unavailable (plain PyTorch attention)`, and `/health` carries `accelerators.xformers`. Attention results can differ from the plain path by floating-point rounding; the earlier CPU/GPU parity and transport evidence was recorded without xFormers.
+
 ## Calibration with the cloud profile (key-driven, batched)
 
 The cloud worker handles one request at a time and rejects overlapping requests with 429, so calibration does not stream frames while it runs. Instead:

@@ -59,6 +59,57 @@ def download(url, destination, timeout=300):
                 next_progress += 16 * 1024 * 1024
 
 
+XFORMERS_VERSION = "0.0.35"
+# Run in a separate interpreter so a broken binary can never crash the service: a real GPU attention call must match PyTorch.
+XFORMERS_VERIFY_CODE = """
+import sys, torch
+import xformers
+import xformers.ops as ops
+if not torch.cuda.is_available():
+    sys.exit(2)
+generator = torch.Generator(device="cuda").manual_seed(7)
+q, k, v = (torch.randn(1, 64, 6, 64, device="cuda", generator=generator) for _ in range(3))
+got = ops.memory_efficient_attention(q, k, v)
+want = torch.nn.functional.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)).transpose(1, 2)
+if not torch.isfinite(got).all() or (got - want).abs().max().item() > 1e-3:
+    sys.exit(3)
+print(xformers.__version__)
+"""
+
+
+def ensure_xformers(run=subprocess.run, environ=None, python=sys.executable):
+    """Install the optional xFormers accelerator for the DINOv2 attention and return its version, or None.
+
+    Never required and never allowed to break the service: torch is not touched (--no-deps), the install must pass a
+    real GPU attention check in a separate process, and any failure removes xFormers so DINOv2 uses plain PyTorch attention.
+    """
+    import os
+    if (os.environ if environ is None else environ).get("PROMETHEUS_XFORMERS") == "0":
+        return None
+
+    def verified():
+        try:
+            result = run([python, "-c", XFORMERS_VERIFY_CODE], capture_output=True, text=True, timeout=300)
+        except Exception:
+            return False
+        return result.returncode == 0 and result.stdout.strip().splitlines()[-1:] == [XFORMERS_VERSION]
+
+    try:
+        if verified():
+            return XFORMERS_VERSION
+        install = run([python, "-m", "pip", "install", "--no-deps", "--quiet", "--disable-pip-version-check", f"xformers=={XFORMERS_VERSION}"],
+                      capture_output=True, text=True, timeout=600)
+        if install.returncode == 0 and verified():
+            return XFORMERS_VERSION
+    except Exception:
+        pass
+    try:
+        run([python, "-m", "pip", "uninstall", "-y", "--quiet", "--disable-pip-version-check", "xformers"], capture_output=True, text=True, timeout=300)
+    except Exception:
+        pass
+    return None
+
+
 def bootstrap():
     if not (APP / "model.py").is_file() or not (APP / "worker.py").is_file():
         raise SystemExit("upload scripts/depth/model.py and worker.py to /content/prometheus-depth/app first")
@@ -87,12 +138,14 @@ def bootstrap():
     import torch
     import worker
     print("loading checkpoint on CUDA", flush=True)
+    xformers_version = ensure_xformers()   # before the DINOv2 modules are imported by load_model
+    print(json.dumps({"xformers": xformers_version or "unavailable"}), flush=True)
     model, checkpoint_hash, load_ms = depth_model.load_model(HOME, device="cuda")
     gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True).stdout.strip()
     ready = {
         "type": "ready", "status": "ready", "model": depth_model.model_metadata(checkpoint_hash, "cuda"), "modelLoadMs": load_ms,
         "pythonVersion": sys.version.split()[0], "torchVersion": torch.__version__, "device": "cuda", "gpu": gpu or None,
-        "backend": "colab_remote",
+        "backend": "colab_remote", "accelerators": {"xformers": xformers_version},
     }
     return model, checkpoint_hash, ready, worker, depth_model
 

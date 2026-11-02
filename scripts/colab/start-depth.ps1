@@ -80,7 +80,8 @@ if (-not $health) {
   }
   throw "tunnel /health did not answer ($lastHealthFailure; SSH $sshState; $sshReason). Run stop-depth.ps1 and retry."
 }
-Write-Output ("ready: {0} on {1} ({2}), torch {3}" -f $health.model.id, $health.gpu, $health.device, $health.torchVersion)
+$xformersNote = if ($health.accelerators.xformers) { "xformers $($health.accelerators.xformers)" } else { "xformers unavailable (plain PyTorch attention)" }
+Write-Output ("ready: {0} on {1} ({2}), torch {3}, {4}" -f $health.model.id, $health.gpu, $health.device, $health.torchVersion, $xformersNote)
 Write-Output "Before npm start, set:"
 Write-Output "  `$env:PROMETHEUS_DEPTH_BACKEND = 'colab'"
 Write-Output "  `$env:PROMETHEUS_DEPTH_REMOTE_URL = 'http://127.0.0.1:$LocalPort/'"

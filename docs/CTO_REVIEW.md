@@ -40,6 +40,14 @@ The gaze worker was booted in a separate, temporary T4 session using only the of
 
 ## Gate 판정
 
+### 2026-11-02 깊이 서비스의 xFormers 가속 설치 (사용자 요청)
+
+사용자 요청으로 `WARNING:dinov2:xFormers not available`을 없애도록 깊이 서비스가 xFormers를 설치하게 했다. 이 경고는 DINOv2 어텐션 코드가 선택 사항인 xFormers를 못 찾을 때 내는 안내이고 깊이 모델은 어느 쪽이든 동작한다(경고는 `attention.py`·`block.py` 두 곳에서 나와 두 줄로 보인다).
+
+PyPI 확인: 안정판 0.0.35는 `torch>=2.10`만 요구하고 `py39-none-manylinux_2_28_x86_64` 휠을 제공해, 앞서 점검한 Colab PyTorch 2.11.0에서 PyTorch 교체 없이 설치될 가능성이 높다. 구현: 서비스 시작 시 `--no-deps`로 설치하고, 별도 프로세스에서 실제 GPU `memory_efficient_attention`을 PyTorch SDPA와 1e-3 이내로 비교해 통과할 때만 유지한다. 설치·검증 실패, 시간 초과, 예외는 모두 xFormers를 제거하고 기존 방식으로 계속한다. `PROMETHEUS_XFORMERS=0`으로 끌 수 있고, 시작 출력과 `/health`에 사용 여부를 기록한다.
+
+시험: Colab Python 깊이 서비스 시험 8개(신규 6: 비활성, 재사용, 고정 버전·`--no-deps`·PyTorch 미변경, 실패 시 제거, 예외 비전파), 전체 회귀 Node 559개 중 558 통과·1 skip. **실제 Colab에서는 검증하지 못했다** — 사용자의 세션이 실행 중이라 두 번째 T4 할당이 거절되었고(`Allocation refused`), 실행 중인 VM을 건드리지 않기 위해 점검하지 않았다. xFormers 사용 시 어텐션 수치가 부동소수점 수준에서 달라질 수 있어, 이전의 CPU/GPU 비교·전송 증거는 xFormers 없이 기록된 것이다. 다음 시작 로그의 `xformers` 줄로 결과를 확인한다.
+
 ### 2026-11-02 실제 얼굴이 "얼굴 없음"으로 처리된 원인 확정과 수정
 
 사용자 실행의 교정 첫 표적에서 진단 문구가 `얼굴은 찾았지만 눈 영역 추출 실패 5/5장 (OpenCV(4.14.0) :-1: error: (-5:Bad argument) in function 'findHomography')`를 보였다. 눈·자세 문제가 아니라 서버 환경 문제였다.
