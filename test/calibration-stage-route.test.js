@@ -46,3 +46,22 @@ test('calibration stage log rotates at its fixed size bound',async()=>{
    assert.deepEqual((await readdir(temp)).sort(),['calibration-stages.jsonl','calibration-stages.jsonl.1']);
  }finally{await rm(temp,{recursive:true,force:true});}
 });
+
+test('calibration verdict event carries only aggregate outcome numbers',async()=>{
+ const {sanitizeCalibrationStageEvent}=await import('../server/calibration-stage-log.js');
+ const sessionId=randomUUID(),base={event:'calibration_verdict',sessionId,count:27};
+ assert.deepEqual(sanitizeCalibrationStageEvent({...base,passed:false,validCount:26,attempts:27,p95Bp:742}),{event:'calibration_verdict',sessionId,count:27,passed:false,validCount:26,attempts:27,p95Bp:742});
+ assert.deepEqual(sanitizeCalibrationStageEvent({...base,passed:true,validCount:0,attempts:27}),{event:'calibration_verdict',sessionId,count:27,passed:true,validCount:0,attempts:27});
+ for(const invalid of [
+   {...base},                                                             // outcome missing
+   {...base,passed:'no',validCount:1,attempts:27},
+   {...base,passed:true,validCount:28,attempts:27},
+   {...base,passed:true,validCount:20,attempts:10},                      // more valid than attempted
+   {...base,passed:true,validCount:1,attempts:0},
+   {...base,passed:true,validCount:1,attempts:27,p95Bp:-1},
+   {...base,passed:true,validCount:1,attempts:27,p95Bp:100001},
+   {...base,passed:true,validCount:1,attempts:27,p95Bp:1.5},
+   {...base,passed:true,validCount:1,attempts:27,note:'PRIVATE'},
+   {event:'calibration_adapt_complete',sessionId,passed:true,validCount:1,attempts:27}  // verdict numbers only on the verdict event
+ ]) assert.equal(sanitizeCalibrationStageEvent(invalid),null,JSON.stringify(invalid));
+});
