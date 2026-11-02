@@ -154,7 +154,7 @@ export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs 
       if (!base) return {ready: false, reason: 'not_configured'};
       try {
         const info = await request('health', {timeout: healthTimeoutMs});
-        const ready=info?.status === 'ready' && info?.backend === 'colab_remote' && info?.device === 'cuda' && info?.model?.id===MODEL_ID && info?.model?.sourceCommit===SOURCE_COMMIT && /^[a-f0-9]{64}$/i.test(info?.model?.sha256??'');
+        const ready=info?.status === 'ready' && ['colab_remote', 'ssh_remote'].includes(info?.backend) && info?.device === 'cuda' && info?.model?.id===MODEL_ID && info?.model?.sourceCommit===SOURCE_COMMIT && /^[a-f0-9]{64}$/i.test(info?.model?.sha256??'');
         model=ready?{id:info.model.id,sourceCommit:info.model.sourceCommit,sha256:info.model.sha256}:null;
         return {ready,model};
       } catch {

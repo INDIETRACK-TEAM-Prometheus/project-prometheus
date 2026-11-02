@@ -9,6 +9,7 @@ import contextlib
 import dataclasses
 import gc
 import io
+import os
 import re
 import base64
 import hashlib
@@ -28,7 +29,9 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 
-HOME = Path("/content/prometheus-gaze")
+# Colab by default; a self-hosted GPU (scripts/gpu-host) points this at its own directory.
+HOME = Path(os.environ.get("PROMETHEUS_GAZE_HOME", "/content/prometheus-gaze"))
+BACKEND_LABEL = "ssh_remote" if os.environ.get("PROMETHEUS_BACKEND_LABEL") == "ssh_remote" else "colab_remote"
 APP = HOME / "app"
 SOURCE = HOME / "source"
 ARCHIVE = HOME / "upstream.zip"
@@ -1189,7 +1192,7 @@ def bootstrap():
     MODEL_SHA256 = _sha256(weights)
     return {
         "status": "ready",
-        "backend": "colab_remote",
+        "backend": BACKEND_LABEL,
         "device": "cuda",
         "gpu": gpu_name,
         "model": {

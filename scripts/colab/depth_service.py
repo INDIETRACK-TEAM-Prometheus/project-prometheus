@@ -9,6 +9,7 @@ scripts/colab/start-depth.ps1. It reuses the local worker's request validation a
 import gzip
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -18,7 +19,9 @@ import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-HOME = Path("/content/prometheus-depth")
+# Colab by default; a self-hosted GPU (scripts/gpu-host) points this at its own directory.
+HOME = Path(os.environ.get("PROMETHEUS_DEPTH_HOME", "/content/prometheus-depth"))
+BACKEND_LABEL = "ssh_remote" if os.environ.get("PROMETHEUS_BACKEND_LABEL") == "ssh_remote" else "colab_remote"
 APP = HOME / "app"
 PORT = 8765
 SOURCE_COMMIT = "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf"
@@ -145,7 +148,7 @@ def bootstrap():
     ready = {
         "type": "ready", "status": "ready", "model": depth_model.model_metadata(checkpoint_hash, "cuda"), "modelLoadMs": load_ms,
         "pythonVersion": sys.version.split()[0], "torchVersion": torch.__version__, "device": "cuda", "gpu": gpu or None,
-        "backend": "colab_remote", "accelerators": {"xformers": xformers_version},
+        "backend": BACKEND_LABEL, "accelerators": {"xformers": xformers_version},
     }
     return model, checkpoint_hash, ready, worker, depth_model
 

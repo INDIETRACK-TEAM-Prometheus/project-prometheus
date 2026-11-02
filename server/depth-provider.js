@@ -74,7 +74,7 @@ function validateFrame(frame) {
 function validateReady(value, devices = ['cpu']) {
   const model = value?.model;
   if (value?.type !== 'ready' || value.status !== 'ready' || !model || model.id !== MODEL_ID || model.sha256 !== MODEL_SHA256 || model.license !== 'Apache-2.0' || model.sourceCommit !== SOURCE_COMMIT || model.units !== 'm' || model.convention !== 'axial_z' || !devices.includes(model.device) || !Number.isFinite(value.modelLoadMs) || value.modelLoadMs < 0) throw normalizedError(value?.error);
-  return { ...model, modelLoadMs: value.modelLoadMs, pythonVersion: value.pythonVersion, torchVersion: value.torchVersion, ...(typeof value.gpu === 'string' ? { gpu: value.gpu.slice(0, 80) } : {}), ...(value.backend === 'colab_remote' ? { backend: 'colab_remote' } : {}) };
+  return { ...model, modelLoadMs: value.modelLoadMs, pythonVersion: value.pythonVersion, torchVersion: value.torchVersion, ...(typeof value.gpu === 'string' ? { gpu: value.gpu.slice(0, 80) } : {}), ...(['colab_remote', 'ssh_remote'].includes(value.backend) ? { backend: value.backend } : {}) };
 }
 
 function decodeMap(message, frame, model) {
