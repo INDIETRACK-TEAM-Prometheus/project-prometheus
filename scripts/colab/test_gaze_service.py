@@ -16,9 +16,15 @@ with contextlib.redirect_stdout(io.StringIO()):
 
 
 class FakeTF:
+    float32 = "float32"
+
     @staticmethod
     def device(_):
         return nullcontext()
+
+    @staticmethod
+    def convert_to_tensor(value, dtype=None):
+        return np.asarray(value, dtype=np.float32)
 
 
 class FakeLandmarker:
@@ -50,6 +56,8 @@ class FakeTracker:
 
     def adapt(self, eye_patches, head_vectors, face_origins, targets, **kwargs):
         self.adapt_calls.append((eye_patches, head_vectors, face_origins, targets, kwargs))
+        if kwargs.get("affine_transform") and len(targets) > 3:
+            self.affine_matrix = np.array([[1.1, 0.0, 0.01], [0.0, 0.9, -0.02]])
 
 
 class GazeServiceTests(unittest.TestCase):
@@ -133,7 +141,7 @@ class GazeServiceTests(unittest.TestCase):
         adapted = candidate.tracker.adapt_calls[0]
         self.assertEqual(len(adapted[0]), 27)
         self.assertEqual(adapted[3][26], [0.26, -0.26])
-        self.assertEqual(adapted[4], {"steps_inner": 5, "inner_lr": 1e-5, "affine_transform": False, "pt_type": "calib"})
+        self.assertEqual(adapted[4], {"steps_inner": 10, "inner_lr": 1e-4, "affine_transform": True, "pt_type": "calib"})
         self.assertEqual(candidate.frames, {})
         self.assertEqual(candidate.calibration, [])
 
@@ -189,6 +197,86 @@ class GazeServiceTests(unittest.TestCase):
         with self.assertRaises(service["ServiceError"]) as error:
             service["decode_adapter"](adapter)
         self.assertEqual(error.exception.code, "GAZE_INVALID_ADAPTER")
+
+    def test_adapter_carries_the_calibration_affine_and_restores_it(self):
+        source = FakeTracker()
+        source.affine_matrix = np.array([[1.1, 0.0, 0.01], [0.0, 0.9, -0.02]])
+        adapter = service["export_adapter"](source)
+        self.assertEqual(adapter["affine"], [[1.1, 0.0, 0.01], [0.0, 0.9, -0.02]])
+        restored = FakeTracker()
+        self.assertTrue(service["apply_adapter"](restored, service["decode_adapter"](adapter)))
+        np.testing.assert_array_equal(restored.affine_matrix, source.affine_matrix)
+        self.assertEqual(restored.affine_matrix_tf.shape, (2, 3))
+        legacy = service["export_adapter"](FakeTracker())
+        self.assertNotIn("affine", legacy)
+        self.assertIsNone(service["decode_adapter"](legacy)["affine"])
+
+    def test_invalid_or_extreme_affine_is_rejected(self):
+        adapter = service["export_adapter"](FakeTracker())
+        for bad in ([[1, 0, 0]], [[1, 0, 0], [0, 1, float("nan")]], [[1, 0, 0], [0, 1, 1000.0]], [[1, 0, "x"], [0, 1, 0]]):
+            with self.assertRaises(service["ServiceError"]) as error:
+                service["decode_adapter"]({**adapter, "affine": bad})
+            self.assertEqual(error.exception.code, "GAZE_INVALID_ADAPTER")
+        broken = FakeTracker()
+        broken.affine_matrix = np.array([[np.inf, 0, 0], [0, 1, 0]])
+        with self.assertRaises(service["ServiceError"]) as error:
+            service["export_adapter"](broken)
+        self.assertEqual(error.exception.code, "GAZE_AFFINE_INVALID")
+
+
+class ClickCorrectionTests(unittest.TestCase):
+    def setUp(self):
+        import base64
+        namespace = service["click_correction"].__globals__
+        namespace["TF"] = FakeTF
+        namespace["NP"] = np
+        self.namespace = namespace
+        self.jpeg = base64.b64encode(bytes([0xFF, 0xD8, 0xFF, 0xD9])).decode("ascii")
+        self.session = service["GazeSession"]("click-session", (1920, 1080), (53.1, 29.8), FakeTracker())
+        self.session.active.calibrated = True
+        self.original = namespace["_frame_result"]
+        self.addCleanup(lambda: namespace.__setitem__("_frame_result", self.original))
+
+    def fake_frames(self, open_ids):
+        def fake(state, session, frame_id, timestamp, jpeg, keep_features=False):
+            self.assertTrue(keep_features)
+            if frame_id in open_ids:
+                state.frames[frame_id] = {"gazeState": "open", "eyePatch": f"eye-{frame_id}", "headVector": "h", "faceOrigin3D": "f"}
+            return {}
+        self.namespace["_frame_result"] = fake
+
+    def body(self, ids, target=(0.1, -0.2)):
+        return {"target": list(target), "frames": [{"frameId": i, "captureTimestampMs": 10.0 * i, "jpeg": self.jpeg} for i in ids]}
+
+    def test_click_adapts_the_accepted_tracker_with_upstream_click_settings(self):
+        self.fake_frames({5, 7})
+        result = service["click_correction"](self.session, self.body([5, 6, 7]))
+        self.assertEqual(result, {"status": "adapted", "usableFrames": 2, "totalFrames": 3})
+        call = self.session.active.tracker.adapt_calls[0]
+        self.assertEqual(call[0], ["eye-5", "eye-7"])
+        self.assertEqual(call[3], [[0.1, -0.2], [0.1, -0.2]])
+        self.assertEqual(call[4], {"steps_inner": 10, "inner_lr": 1e-4, "affine_transform": True, "pt_type": "click"})
+        self.assertEqual(self.session.active.frames, {})
+
+    def test_click_without_open_eyes_changes_nothing(self):
+        self.fake_frames(set())
+        self.assertEqual(service["click_correction"](self.session, self.body([1]))["status"], "insufficient")
+        self.assertEqual(self.session.active.tracker.adapt_calls, [])
+
+    def test_click_needs_an_accepted_calibration_no_candidate_and_at_most_three_frames(self):
+        self.fake_frames({1})
+        with self.assertRaises(service["ServiceError"]) as error:
+            service["click_correction"](self.session, self.body([1, 2, 3, 4]))
+        self.assertEqual(error.exception.code, "GAZE_INVALID_REQUEST")
+        self.session.candidate = service["TrackerState"](FakeTracker())
+        with self.assertRaises(service["ServiceError"]) as error:
+            service["click_correction"](self.session, self.body([1]))
+        self.assertEqual(error.exception.code, "GAZE_CANDIDATE_EXISTS")
+        self.session.candidate = None
+        self.session.active.calibrated = False
+        with self.assertRaises(service["ServiceError"]) as error:
+            service["click_correction"](self.session, self.body([1]))
+        self.assertEqual(error.exception.code, "GAZE_NOT_CALIBRATED")
 
 
 class BatchCalibrationTests(unittest.TestCase):
@@ -449,6 +537,27 @@ class UpstreamLandmarkCompatibilityTests(unittest.TestCase):
                 service["_patch_upstream_mediapipe_compatibility"](Path(directory))
             self.assertIn("landmark array assumption changed", str(error.exception))
 
+
+
+class KalmanConfigTests(unittest.TestCase):
+    def test_kalman_is_switched_off_for_factory_and_plain_defaults(self):
+        import dataclasses
+
+        @dataclasses.dataclass(frozen=True)   # hashable, so it may also be a plain default
+        class Kalman:
+            enabled: bool = True
+            dt: float = 0.1
+
+        @dataclasses.dataclass
+        class FactoryConfig:
+            kalman_config: Kalman = dataclasses.field(default_factory=Kalman)
+
+        @dataclasses.dataclass
+        class PlainConfig:
+            kalman_config: Kalman = Kalman(dt=0.2)
+
+        self.assertEqual(service["kalman_disabled"](FactoryConfig), Kalman(enabled=False, dt=0.1))
+        self.assertEqual(service["kalman_disabled"](PlainConfig), Kalman(enabled=False, dt=0.2))
 
 if __name__ == "__main__":
     unittest.main()

@@ -49,6 +49,12 @@ The cloud worker handles one request at a time and rejects overlapping requests 
 5. `POST .../candidate/adapt` adapts the candidate model once from the 27 stored samples. The separate 27 validation targets follow the same key-driven, batched path; the worker only measures them. A validation target that still fails after one re-collection counts as invalid and stays in the denominator of the valid rate.
 6. The existing verdict (valid rate and p95 against the screen diagonal) decides acceptance. The live stream resumes after accept or cancel; the previously accepted model is kept on failure.
 
+Adaptation follows the upstream demo: an affine fit from the base predictions to the targets, then 10 steps at 1e-4 with that affine in the loss. The affine (2x3) is stored in the adapter next to the MLP weights and restored with them. The worker's Kalman filter is off; the browser smooths the display.
+
+After an accepted calibration, clicking the live view sends two frames to `POST .../calibration/click` (upstream click calibration). It changes the current session's model only, is never saved and is not independently validated.
+
+Live frames are pipelined: up to two are in flight, a frame waits at most 0.5 s for the GPU (a click up to 2 s) instead of failing with 429, and the browser sends at most 12 frames per second.
+
 During live tracking a single failed frame no longer stops the camera: five consecutive failures stop it, except unrecoverable ones (lost session, oversize frame, incompatible adapter), which stop at once. The stop message names the underlying reason.
 
 Verified with the real app in a browser pane against a fake cloud provider and synthetic frames; not yet run with a real camera or the real Colab worker.

@@ -170,3 +170,29 @@ test('connection failures keep a bounded network reason on the unavailable error
   assert.deepEqual(await frame(async url => (await session(url)) ?? Promise.reject(Object.assign(new TypeError('x'), {cause: {code: 'bad value!'}}))), ['GAZE_REMOTE_UNAVAILABLE', null]);
   assert.deepEqual(await frame(async url => (await session(url)) ?? new Response('<html>', {status: 502})), ['GAZE_REMOTE_UNAVAILABLE', 'HTTP_502']);
 });
+
+test('adapters may carry a bounded calibration affine and the session may carry the screen size', async () => {
+  const sample = adapter();
+  assert.equal(validateRemoteGazeAdapter({...sample, affine: [[1.1, 0, .01], [0, .9, -.02]]}, model), true);
+  assert.equal(validateRemoteGazeAdapter({...sample, affine: [[1, 0, 0], [0, 1, Infinity]]}, model), false);
+  assert.equal(validateRemoteGazeAdapter({...sample, extra: true}, model), false);
+  const mock = serviceMock(), provider = createRemoteGazeProvider({baseUrl: 'http://127.0.0.1:49191/', fetchImpl: mock.fetchImpl});
+  await provider.createSession({screenPxDimensions: [1920, 1200], screenCmDimensions: [30.2, 18.9]});
+  assert.deepEqual(JSON.parse(mock.calls.find(call => call.url.pathname === '/sessions').options.body).screenCmDimensions, [30.2, 18.9]);
+  await assert.rejects(provider.createSession({screenCmDimensions: [-1, 2]}), error => error.code === 'GAZE_INVALID_REQUEST');
+});
+
+test('click correction forwards at most three frames and checks the answer', async () => {
+  const {provider, sessionId, seen} = await targetProvider(async (path, options) => {
+    const body = JSON.parse(options.body);
+    return json({status: 'adapted', usableFrames: body.frames.length, totalFrames: body.frames.length});
+  });
+  assert.deepEqual(await provider.clickCorrection({sessionId, target: [.1, -.2], frames: targetFrames([1, 2])}), {status: 'adapted', usableFrames: 2, totalFrames: 2});
+  assert.equal(seen[0][0], '/sessions/session-1/calibration/click');
+  assert.deepEqual(Object.keys(seen[0][2]).sort(), ['frames', 'target']);
+  await assert.rejects(provider.clickCorrection({sessionId, target: [0, 0], frames: targetFrames([1, 2, 3, 4])}), error => error.code === 'GAZE_INVALID_REQUEST');
+  await assert.rejects(provider.clickCorrection({sessionId, target: [.9, 0], frames: targetFrames([1])}), error => error.code === 'GAZE_INVALID_REQUEST');
+  assert.equal(seen.length, 1);
+  const {provider: liar, sessionId: other} = await targetProvider(async () => json({status: 'adapted', usableFrames: 5, totalFrames: 1}));
+  await assert.rejects(liar.clickCorrection({sessionId: other, target: [0, 0], frames: targetFrames([1])}), error => error.code === 'GAZE_PROTOCOL_ERROR');
+});

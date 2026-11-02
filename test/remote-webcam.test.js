@@ -7,7 +7,7 @@ const shapes=[[518,16],[16],[16,16],[16],[16,2],[2]];
 function adapter(){return {schemaVersion:1,adapterId:'webeyetrack-gaze-mlp-f32-v1',modelId:model.id,sourceCommit:model.sourceCommit,modelSha256:model.sha256,weights:shapes.map(shape=>{const count=shape.reduce((n,x)=>n*x,1),bytes=Buffer.alloc(count*4);for(let i=0;i<count;i++)bytes.writeFloatLE(.125,i*4);return {shape,dtype:'float32-le',data:bytes.toString('base64')};})};}
 function response(body,status=200){return new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});}
 
-function harness({ready=true,restoreAdapter=null,holdFirstFrame=false,frameHz=8,frameFailure=null,frameFields=null,targetBehaviour=null}={}){
+function harness({ready=true,restoreAdapter=null,holdFirstFrame=false,frameHz=8,frameFailure=null,frameFields=null,targetBehaviour=null,screenCm=null,clickStatus='adapted'}={}){
   let now=1000,callback=null,callbackId=0,mediaOpens=0,trackStops=0,frameCalls=0,resolveFirst=null,active=false;
   const targetCalls=[],errors=[],samples=[],calls=[],video={videoWidth:1280,videoHeight:720,srcObject:null,async play(){},pause(){},requestVideoFrameCallback(fn){callback=fn;return ++callbackId;},cancelVideoFrameCallback(){callback=null;},emit(captureTime=now){now=captureTime;const fn=callback;callback=null;assert.ok(fn,'video frame callback scheduled');fn(now,{captureTime});}};
   const track={stop(){trackStops++;},getSettings(){return {width:1280,height:720,frameRate:30};}};
@@ -24,6 +24,7 @@ function harness({ready=true,restoreAdapter=null,holdFirstFrame=false,frameHz=8,
       if(behaviour==='insufficient')return response({status:'insufficient',phase:input.phase,pointIndex:input.pointIndex,totalFrames:n,faceFrames:n,closedFrames:n,usableFrames:0,frameErrors:0,eyeAspectRatio:{min:.17,threshold:.2}});
       return response(input.phase==='train'?{status:'accepted',phase:'train',pointIndex:input.pointIndex,totalFrames:n,faceFrames:n,closedFrames:0,usableFrames:n,frameErrors:0,eyeAspectRatio:null,collected:input.pointIndex+1}:{status:'measured',phase:'validate',pointIndex:input.pointIndex,totalFrames:n,faceFrames:n,closedFrames:0,usableFrames:n,frameErrors:0,eyeAspectRatio:null,normPog:[0,.1]});}
     if(url.endsWith('/candidate/adapt'))return response({adapted:true,points:27});
+    if(url.endsWith('/calibration/click')){const input=JSON.parse(options.body);return response({status:clickStatus,usableFrames:clickStatus==='adapted'?input.frames.length:0,totalFrames:input.frames.length});}
     if(url.endsWith('/calibration/sample')){const input=JSON.parse(options.body);return response({adapted:input.pointIndex===26,points:input.pointIndex+1});}
     if(url.endsWith('/frame')){
       frameCalls++;const failure=typeof frameFailure==='function'?frameFailure(frameCalls):frameFailure;if(failure)return response({error:'gaze_unavailable',code:failure},503);const headers=options.headers,frameId=Number(headers['x-frame-id']),captureTimestampMs=Number(headers['x-capture-timestamp-ms']);
@@ -34,7 +35,7 @@ function harness({ready=true,restoreAdapter=null,holdFirstFrame=false,frameHz=8,
   };
   const canvas={width:0,height:0,getContext(){return {drawImage(){}};},toBlob(done,type){done(new Blob([Uint8Array.from([255,216,255,217])],{type}));}};
   const diagnostics=[];
-  const controller=createRemoteWebcamGazeController({video,mediaDevices,fetchImpl,createCanvas:()=>canvas,clockNow:()=>now,getViewport:()=>({width:800,height:600}),maxFrameHz:frameHz,getAdapter:async()=>restoreAdapter,onSample:sample=>samples.push(sample),onError:error=>errors.push(error),onDiagnostic:code=>diagnostics.push(code)});
+  const controller=createRemoteWebcamGazeController({video,mediaDevices,fetchImpl,createCanvas:()=>canvas,clockNow:()=>now,getViewport:()=>({width:800,height:600}),maxFrameHz:frameHz,getAdapter:async()=>restoreAdapter,getScreenCm:()=>screenCm,onSample:sample=>samples.push(sample),onError:error=>errors.push(error),onDiagnostic:code=>diagnostics.push(code)});
   return {controller,video,samples,errors,calls,targetCalls,diagnostics,counts:()=>({mediaOpens,trackStops,frameCalls,active}),setTime(value){now=value;},async flush(){for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));},releaseFirst(){resolveFirst?.();resolveFirst=null;}};
 }
 
@@ -206,4 +207,52 @@ test('a server that found no face names whether landmarks or the eye patch faile
   const base = {status: 'insufficient', totalFrames: 5, faceFrames: 0, closedFrames: 0, usableFrames: 0, frameErrors: 0, eyeAspectRatio: null};
   assert.equal(describeCalibrationTarget({...base, eyePatchFailures: 5, failureMessage: 'shape mismatch'}), '얼굴은 찾았지만 눈 영역 추출 실패 5/5장 (shape mismatch)');
   assert.equal(describeCalibrationTarget({...base, eyePatchFailures: 0}), '얼굴 미검출 (프레임 5장)');
+});
+
+test('two live frames are pipelined so a result does not wait a full round trip for the next request',async()=>{
+  const h=harness({holdFirstFrame:true});await h.controller.start({userInitiated:true,cameraConsent:true});
+  h.video.emit(1010);await h.flush();assert.equal(h.counts().frameCalls,1);
+  h.video.emit(1200);await h.flush();assert.equal(h.counts().frameCalls,2,'second frame sent while the first is still on the GPU');
+  assert.equal(h.samples.length,1);assert.equal(h.samples[0].captureSourceMs,1200);
+  h.releaseFirst();await h.flush();
+  assert.equal(h.samples.length,1,'the older result arriving late is dropped, not published');
+  assert.equal(h.controller.telemetry().counts.staleDropped,1);
+  await h.controller.stop();
+});
+
+test('a pipelined frame overtaken by a newer one is dropped without counting as a failure',async()=>{
+  const h=harness({frameFailure:'GAZE_FRAME_OUT_OF_ORDER'});await h.controller.start({userInitiated:true,cameraConsent:true});
+  for(const t of spaced(7)){h.setTime(t);h.video.emit(t);await h.flush();}
+  assert.equal(h.errors.length,0);assert.equal(h.controller.telemetry().counts.outOfOrder,7);assert.equal(h.controller.telemetry().counts.failed,0);
+  await h.controller.stop();
+});
+
+test('stored adapters may carry the calibration affine and nothing else extra',()=>{
+  const sample=adapter();
+  assert.equal(validateRemoteGazeAdapter({...sample,affine:[[1.1,0,.01],[0,.9,-.02]]},model),true);
+  assert.equal(validateRemoteGazeAdapter({...sample,affine:[[1,0,0]]},model),false);
+  assert.equal(validateRemoteGazeAdapter({...sample,affine:[[1,0,0],[0,1,500]]},model),false);
+  assert.equal(validateRemoteGazeAdapter({...sample,extra:1},model),false);
+});
+
+test('the physical screen size is sent with the session only when it is valid',async()=>{
+  const h=harness({screenCm:[30.2,18.9]});await h.controller.start({userInitiated:true,cameraConsent:true});
+  assert.deepEqual(JSON.parse(h.calls.find(call=>call.url==='/api/gaze/sessions').options.body).screenCmDimensions,[30.2,18.9]);
+  await h.controller.stop();
+  const bad=harness({screenCm:[0,18.9]});await bad.controller.start({userInitiated:true,cameraConsent:true});
+  assert.equal('screenCmDimensions' in JSON.parse(bad.calls.find(call=>call.url==='/api/gaze/sessions').options.body),false);
+  await bad.controller.stop();
+});
+
+test('click correction needs an accepted calibration and sends the clicked point with two fresh frames',async()=>{
+  const cold=harness();await cold.controller.start({userInitiated:true,cameraConsent:true});
+  await assert.rejects(cold.controller.clickCorrection({x:10,y:10}),/unavailable/);await cold.controller.stop();
+  const h=harness({restoreAdapter:adapter()});await h.controller.start({userInitiated:true,cameraConsent:true});
+  assert.deepEqual(await h.controller.clickCorrection({x:600,y:150}),{adapted:true,usableFrames:2,totalFrames:2});
+  const body=JSON.parse(h.calls.find(call=>call.url.endsWith('/calibration/click')).options.body);
+  assert.deepEqual(body.target,[.25,-.25]);assert.equal(body.frames.length,2);assert.ok(body.frames[1].frameId>body.frames[0].frameId);
+  await h.controller.stop();
+  const none=harness({restoreAdapter:adapter(),clickStatus:'insufficient'});await none.controller.start({userInitiated:true,cameraConsent:true});
+  assert.deepEqual(await none.controller.clickCorrection({x:0,y:0}),{adapted:false,usableFrames:0,totalFrames:2});
+  await none.controller.stop();
 });

@@ -6,6 +6,7 @@ Camera frames, eye patches, and calibration examples are kept in RAM only.
 """
 
 import contextlib
+import dataclasses
 import gc
 import io
 import re
@@ -46,6 +47,10 @@ MAX_TARGET_FRAMES = 8
 MIN_USABLE_FRAMES = 3
 MAX_TARGET_JSON_BYTES = 2 * 1024 * 1024
 MAX_ADAPTER_JSON_BYTES = 64 * 1024
+MAX_CLICK_FRAMES = 3   # at most 3 samples, so upstream never refits the calibration affine from clicks alone
+MAX_AFFINE_ABS = 100.0
+FRAME_LOCK_WAIT_SECONDS = 0.5   # a second live frame waits for the GPU instead of failing with 429
+CLICK_LOCK_WAIT_SECONDS = 2.0
 MODEL_ID = "webeyetrack-blazegaze-mpiifacegaze"
 ADAPTER_ID = "webeyetrack-gaze-mlp-f32-v1"
 ADAPTER_WEIGHT_SHAPES = ((518, 16), (16,), (16, 16), (16,), (16, 2), (2,))
@@ -106,7 +111,8 @@ def screen_dimensions(body):
 def decode_adapter(adapter):
     if adapter is None:
         return None
-    if not isinstance(adapter, dict) or set(adapter) != {"schemaVersion", "adapterId", "modelId", "sourceCommit", "modelSha256", "weights"}:
+    base_keys = {"schemaVersion", "adapterId", "modelId", "sourceCommit", "modelSha256", "weights"}
+    if not isinstance(adapter, dict) or set(adapter) not in (base_keys, base_keys | {"affine"}):
         raise ServiceError(400, "GAZE_INVALID_ADAPTER")
     if adapter.get("schemaVersion") != 1 or adapter.get("adapterId") != ADAPTER_ID:
         raise ServiceError(409, "GAZE_ADAPTER_VERSION_MISMATCH")
@@ -131,7 +137,27 @@ def decode_adapter(adapter):
         if not NP.isfinite(values).all():
             raise ServiceError(400, "GAZE_INVALID_ADAPTER")
         decoded.append(values.reshape(expected_shape).copy())
-    return decoded
+    return {"weights": decoded, "affine": decode_affine(adapter["affine"]) if "affine" in adapter else None}
+
+
+def decode_affine(value):
+    """The 2x3 calibration affine (row-major) that upstream applies after the gaze MLP."""
+    if not isinstance(value, list) or len(value) != 2 or any(not isinstance(row, list) or len(row) != 3 for row in value):
+        raise ServiceError(400, "GAZE_INVALID_ADAPTER")
+    if any(not valid_number(item) or abs(item) > MAX_AFFINE_ABS for row in value for item in row):
+        raise ServiceError(400, "GAZE_INVALID_ADAPTER")
+    return NP.asarray(value, dtype=NP.float64)
+
+
+def tracker_affine(tracker):
+    """The tracker's fitted affine as nested floats, or None; a non-finite or extreme fit is rejected."""
+    matrix = getattr(tracker, "affine_matrix", None)
+    if matrix is None:
+        return None
+    array = NP.asarray(matrix, dtype=NP.float64)
+    if array.shape != (2, 3) or not NP.isfinite(array).all() or NP.abs(array).max() > MAX_AFFINE_ABS:
+        raise ServiceError(503, "GAZE_AFFINE_INVALID")
+    return [[float(item) for item in row] for row in array]
 
 
 def export_adapter(tracker):
@@ -148,6 +174,7 @@ def export_adapter(tracker):
             "dtype": "float32-le",
             "data": base64.b64encode(array.tobytes(order="C")).decode("ascii"),
         })
+    affine = tracker_affine(tracker)
     return {
         "schemaVersion": 1,
         "adapterId": ADAPTER_ID,
@@ -155,17 +182,23 @@ def export_adapter(tracker):
         "sourceCommit": SOURCE_COMMIT,
         "modelSha256": MODEL_SHA256,
         "weights": entries,
+        **({"affine": affine} if affine is not None else {}),
     }
 
 
-def apply_adapter(tracker, adapter_weights):
-    if adapter_weights is None:
+def apply_adapter(tracker, adapter):
+    if adapter is None:
         return False
+    adapter_weights = adapter["weights"]
     model = tracker.blazegaze.gaze_mlp
     expected = model.get_weights()
     if len(expected) != len(adapter_weights) or any(tuple(left.shape) != tuple(right.shape) for left, right in zip(expected, adapter_weights)):
         raise ServiceError(409, "GAZE_ADAPTER_SHAPE_MISMATCH")
     model.set_weights(adapter_weights)
+    if adapter["affine"] is not None:
+        # The weights were trained with this affine in the loss, so both must be restored together.
+        tracker.affine_matrix = adapter["affine"].copy()
+        tracker.affine_matrix_tf = TF.convert_to_tensor(adapter["affine"], dtype=TF.float32)
     return True
 
 
@@ -263,14 +296,14 @@ def create_session(body):
     if set(body) - {"screenPxDimensions", "screenCmDimensions", "adapter"}:
         raise ServiceError(400, "GAZE_INVALID_REQUEST")
     screen_px, screen_cm = screen_dimensions(body)
-    adapter_weights = decode_adapter(body.get("adapter"))
+    adapter = decode_adapter(body.get("adapter"))
     _expire_sessions()
     with SESSION_LOCK:
         if len(SESSIONS) >= MAX_SESSIONS:
             raise ServiceError(429, "GAZE_SESSION_LIMIT")
     tracker = _new_tracker(screen_px, screen_cm)
     try:
-        calibrated = apply_adapter(tracker, adapter_weights)
+        calibrated = apply_adapter(tracker, adapter)
     except Exception:
         _clear_tracker_state(TrackerState(tracker))
         raise
@@ -341,7 +374,7 @@ def _eye_aspect_ratios(state, result, width, height):
     return None
 
 
-def _frame_result(state, session, frame_id, capture_timestamp_ms, jpeg):
+def _frame_result(state, session, frame_id, capture_timestamp_ms, jpeg, keep_features=False):
     encoded = NP.frombuffer(jpeg, dtype=NP.uint8)
     frame = CV2.imdecode(encoded, CV2.IMREAD_COLOR)
     if frame is None or frame.ndim != 3 or frame.shape[2] != 3:
@@ -382,7 +415,7 @@ def _frame_result(state, session, frame_id, capture_timestamp_ms, jpeg):
         except Exception:
             pass
     durations["workerTotalMs"] = total_ms
-    if face_detected and gaze_state == "open" and norm is not None and state is session.candidate:
+    if face_detected and gaze_state == "open" and norm is not None and (state is session.candidate or keep_features):
         try:
             features = {
                 "eyePatch": NP.array(result.eye_patch, copy=True),
@@ -458,6 +491,19 @@ def add_calibration_sample(session, body):
     return _adapt_candidate(candidate)
 
 
+def kalman_disabled(config_class):
+    """The tracker's Kalman config with filtering off; the field is a default_factory after the Python 3.13 patch."""
+    field_info = config_class.__dataclass_fields__["kalman_config"]
+    default = field_info.default_factory() if field_info.default_factory is not dataclasses.MISSING else field_info.default
+    return dataclasses.replace(default, enabled=False)
+
+
+# Upstream demo values (affine fit, then 10 steps at 1e-4); the library defaults (5 steps at 1e-5, no affine) leave
+# the estimate almost unchanged.
+ADAPT_STEPS = 10
+ADAPT_LEARNING_RATE = 1e-4
+
+
 def _adapt_candidate(candidate):
     try:
         with TF.device("/GPU:0"):
@@ -466,11 +512,12 @@ def _adapt_candidate(candidate):
                 [sample["headVector"] for sample in candidate.calibration],
                 [sample["faceOrigin3D"] for sample in candidate.calibration],
                 [sample["target"] for sample in candidate.calibration],
-                steps_inner=5,
-                inner_lr=1e-5,
-                affine_transform=False,
+                steps_inner=ADAPT_STEPS,
+                inner_lr=ADAPT_LEARNING_RATE,
+                affine_transform=True,
                 pt_type="calib",
             )
+        tracker_affine(candidate.tracker)
     except Exception:
         candidate.failed = True
         candidate.frames.clear()
@@ -591,6 +638,65 @@ def process_calibration_target(session, body):
             summary["normPog"] = center
     candidate.batch_results[(phase, index)] = {"ids": ids, "target": target, "response": summary}
     return summary
+
+
+def click_correction(session, body):
+    """Upstream's click calibration on the accepted tracker: the user looked at the point they clicked.
+
+    The change lives in this session only; the stored profile stays the one that passed the independent check.
+    """
+    if set(body) != {"target", "frames"}:
+        raise ServiceError(400, "GAZE_INVALID_REQUEST")
+    state = session.active
+    if session.candidate is not None:
+        raise ServiceError(409, "GAZE_CANDIDATE_EXISTS")
+    if state is None or state.tracker is None or state.failed or not state.calibrated:
+        raise ServiceError(409, "GAZE_NOT_CALIBRATED")
+    target = calibration_target(body.get("target"))
+    frames = body.get("frames")
+    if not isinstance(frames, list) or not 1 <= len(frames) <= MAX_CLICK_FRAMES:
+        raise ServiceError(400, "GAZE_INVALID_REQUEST")
+    decoded = []
+    for item in frames:
+        if not isinstance(item, dict) or set(item) != {"frameId", "captureTimestampMs", "jpeg"} or not valid_frame_id(item["frameId"]):
+            raise ServiceError(400, "GAZE_INVALID_FRAME_METADATA")
+        if not valid_number(item["captureTimestampMs"]) or item["captureTimestampMs"] < 0:
+            raise ServiceError(400, "GAZE_INVALID_FRAME_METADATA")
+        decoded.append((item["frameId"], float(item["captureTimestampMs"]), _decode_jpeg_base64(item["jpeg"])))
+    samples = []
+    try:
+        for frame_id, timestamp, jpeg in decoded:
+            try:
+                _frame_result(state, session, frame_id, timestamp, jpeg, keep_features=True)
+            except ServiceError:
+                continue
+            sample = state.frames.pop(frame_id, None)
+            if sample is not None and sample.get("gazeState") == "open":
+                samples.append(sample)
+        if not samples:
+            return {"status": "insufficient", "usableFrames": 0, "totalFrames": len(frames)}
+        try:
+            with TF.device("/GPU:0"):
+                state.tracker.adapt(
+                    [sample["eyePatch"] for sample in samples],
+                    [sample["headVector"] for sample in samples],
+                    [sample["faceOrigin3D"] for sample in samples],
+                    [target for _ in samples],
+                    steps_inner=ADAPT_STEPS,
+                    inner_lr=ADAPT_LEARNING_RATE,
+                    affine_transform=True,
+                    pt_type="click",
+                )
+        except Exception:
+            raise ServiceError(503, "GAZE_ADAPTATION_FAILED")
+    finally:
+        state.frames.clear()
+        try:
+            for values in state.tracker.calib_data.values():
+                values.clear()
+        except Exception:
+            pass
+    return {"status": "adapted", "usableFrames": len(samples), "totalFrames": len(frames)}
 
 
 def finalize_candidate(session):
@@ -801,11 +907,16 @@ def serve(health):
                     body = read_json_body(self.read_body(MAX_TARGET_JSON_BYTES))
                 elif operation == ["candidate", "adapt"]:
                     self.read_body(MAX_JSON_BYTES, allow_empty=True)
+                elif operation == ["calibration", "click"]:
+                    body = read_json_body(self.read_body(MAX_TARGET_JSON_BYTES))
                 else:
                     self.close_connection = True
                     self.reply(404, {"status": "error", "error": "not_found"})
                     return
-                if not COMPUTE_LOCK.acquire(blocking=False):
+                # Live frames are pipelined (two in flight) and a click arrives while frames run, so both wait briefly for the GPU;
+                # calibration and session changes stay exclusive.
+                wait = FRAME_LOCK_WAIT_SECONDS if operation == ["frame"] else CLICK_LOCK_WAIT_SECONDS if operation == ["calibration", "click"] else 0
+                if not (COMPUTE_LOCK.acquire(timeout=wait) if wait else COMPUTE_LOCK.acquire(blocking=False)):
                     raise ServiceError(429, "GAZE_PROVIDER_BUSY")
                 try:
                     session = get_session(session_id)
@@ -823,6 +934,8 @@ def serve(health):
                         result = process_calibration_target(session, body)
                     elif operation == ["candidate", "adapt"]:
                         result = finalize_candidate(session)
+                    elif operation == ["calibration", "click"]:
+                        result = click_correction(session, body)
                 finally:
                     COMPUTE_LOCK.release()
                 self.reply(200, result)
@@ -1020,6 +1133,9 @@ def bootstrap():
             mediapipe_flm_model_fp=str(landmarker),
             screen_px_dimensions=screen_px,
             screen_cm_dimensions=screen_cm,
+            # The default Kalman filter (process 1e-5, measurement 1e-2) reaches only ~55% of a gaze jump after 8 frames.
+            # The browser already smooths the display, so the service returns the raw estimate.
+            kalman_config=kalman_disabled(WebEyeTrackConfig),
             verbose=False,
         )
         with tf.device("/GPU:0"):

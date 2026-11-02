@@ -10,7 +10,7 @@ import { validateNextGaze } from './src/runtime/next-gaze.js';
 import { createRecordingStore } from './server/recording-store.js';
 import { createCalibrationStageLog } from './server/calibration-stage-log.js';
 import { createConfiguredDepthProvider } from './server/depth-provider.js';
-import { createRemoteGazeProvider } from './server/gaze-provider.js';
+import { createRemoteGazeProvider, validScreenCm } from './server/gaze-provider.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const files = new Map([['/', ['index.html', 'text/html; charset=utf-8']], ['/style.css', ['style.css', 'text/css; charset=utf-8']]]);
@@ -99,12 +99,12 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
       try{
         let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>70*1024){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
         const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>!['screenPxDimensions','adapter'].includes(key))||(input.screenPxDimensions!==undefined&&(!Array.isArray(input.screenPxDimensions)||input.screenPxDimensions.length!==2||!input.screenPxDimensions.every(value=>Number.isInteger(value)&&value>0&&value<=10000)))){json(res,400,{error:'invalid_request'});return;}
+        if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(key=>!['screenPxDimensions','screenCmDimensions','adapter'].includes(key))||(input.screenCmDimensions!==undefined&&!validScreenCm(input.screenCmDimensions))||(input.screenPxDimensions!==undefined&&(!Array.isArray(input.screenPxDimensions)||input.screenPxDimensions.length!==2||!input.screenPxDimensions.every(value=>Number.isInteger(value)&&value>0&&value<=10000)))){json(res,400,{error:'invalid_request'});return;}
         json(res,201,await gazeProvider.createSession(input));
       }catch(error){const code=typeof error?.code==='string'&&/^GAZE_[A-Z_]+$/.test(error.code)?error.code:'GAZE_INVALID_REQUEST';const status=code==='GAZE_SESSION_UNAVAILABLE'?404:code==='GAZE_REMOTE_TIMEOUT'?504:code==='GAZE_INVALID_REQUEST'?400:code==='GAZE_ADAPTER_INCOMPATIBLE'?409:503;json(res,status,{error:'gaze_unavailable',code});}
       return;
     }
-    const gazeSession=/^\/api\/gaze\/sessions\/([A-Za-z0-9_-]{1,128})(?:\/(candidate\/start|candidate\/accept|candidate\/discard|candidate\/adapt|calibration\/sample|calibration\/target|frame))?$/.exec(pathname);
+    const gazeSession=/^\/api\/gaze\/sessions\/([A-Za-z0-9_-]{1,128})(?:\/(candidate\/start|candidate\/accept|candidate\/discard|candidate\/adapt|calibration\/sample|calibration\/target|calibration\/click|frame))?$/.exec(pathname);
     if(gazeSession){
       const [,sessionId,operation]=gazeSession;
       if(!localRequest(req)||computeProfile!=='cloud'){req.resume();json(res,403,{error:'forbidden'});return;}
@@ -130,6 +130,15 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
           let input;try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{json(res,400,{error:'invalid_request'});return;}
           if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).sort().join(',')!=='frames,phase,pointIndex,target'){json(res,400,{error:'invalid_request'});return;}
           json(res,200,await gazeProvider.calibrationTarget({sessionId,...input,signal:abort.signal}));}
+        catch(error){respondError(error);}return;
+      }
+      if(operation==='calibration/click'&&req.method==='POST'){
+        if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']??'')){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+        const abort=new AbortController();res.on('close',()=>{if(!res.writableEnded)abort.abort();});
+        try{let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxGazeTargetBody){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
+          let input;try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{json(res,400,{error:'invalid_request'});return;}
+          if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).sort().join(',')!=='frames,target'){json(res,400,{error:'invalid_request'});return;}
+          json(res,200,await gazeProvider.clickCorrection({sessionId,...input,signal:abort.signal}));}
         catch(error){respondError(error);}return;
       }
       if(['candidate/start','candidate/accept','candidate/discard'].includes(operation)&&req.method==='POST'){

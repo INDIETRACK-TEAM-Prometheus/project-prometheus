@@ -46,6 +46,11 @@ export function describeOpenEyeWait(sample) {
 
 const MAX_CONSECUTIVE_FRAME_FAILURES = 5;
 const NON_TRANSIENT_FRAME_CODES = new Set(['gaze_frame_too_large', 'gaze_session_unavailable', 'gaze_adapter_incompatible', 'gaze_remote_not_configured']);
+// Two frames may be in flight: the GPU works on one while the next crosses the tunnel, so results arrive at the
+// frame rate instead of once per round trip. Results older than the newest one are dropped.
+const MAX_IN_FLIGHT = 2;
+const CLICK_FRAME_COUNT = 2;
+const CLICK_SPAN_MS = 120;
 const BATCH_FRAME_COUNT = 5;
 const BATCH_SPAN_MS = 500;
 
@@ -76,7 +81,8 @@ function validNorm(value) {
 export function validateRemoteGazeAdapter(adapter, model = {}) {
   try {
     if (!adapter || typeof adapter !== 'object' || Array.isArray(adapter) || new TextEncoder().encode(JSON.stringify(adapter)).byteLength > 64*1024 ||
-        Object.keys(adapter).sort().join(',')!=='adapterId,modelId,modelSha256,schemaVersion,sourceCommit,weights' ||
+        !['adapterId,modelId,modelSha256,schemaVersion,sourceCommit,weights','adapterId,affine,modelId,modelSha256,schemaVersion,sourceCommit,weights'].includes(Object.keys(adapter).sort().join(',')) ||
+        ('affine' in adapter && !(Array.isArray(adapter.affine) && adapter.affine.length === 2 && adapter.affine.every(row => Array.isArray(row) && row.length === 3 && row.every(x => finite(x) && Math.abs(x) <= 100)))) ||
         adapter.schemaVersion !== 1 || adapter.adapterId !== 'webeyetrack-gaze-mlp-f32-v1' || adapter.modelId !== adapterModelId || adapter.sourceCommit !== adapterSourceCommit ||
         !/^[a-f0-9]{64}$/i.test(adapter.modelSha256 ?? '') || adapter.modelSha256 !== model.sha256 || !Array.isArray(adapter.weights) || adapter.weights.length !== adapterShapes.length) return false;
     return adapter.weights.every((weight,index)=>{
@@ -95,18 +101,22 @@ export function validateRemoteGazeAdapter(adapter, model = {}) {
 export function createRemoteWebcamGazeController({
   video, mediaDevices, onSample = () => {}, onEyePreview = () => {}, onError = () => {}, onDiagnostic = () => {},
   fetchImpl = fetch, createCanvas = () => document.createElement('canvas'), clockNow = () => performance.now(),
-  getViewport = () => ({width: innerWidth, height: innerHeight}), maxFrameHz = 8, maxDimension = 640, jpegQuality = .72, getAdapter = async () => null
+  getViewport = () => ({width: innerWidth, height: innerHeight}), maxFrameHz = 12, maxDimension = 640, jpegQuality = .72, getAdapter = async () => null,
+  getScreenCm = () => null
 }) {
   if (!video || !mediaDevices?.getUserMedia) throw new Error('video and mediaDevices required');
   if (!Number.isFinite(maxFrameHz) || maxFrameHz < 1 || maxFrameHz > 15 || !Number.isInteger(maxDimension) || maxDimension < 64 || maxDimension > 1024 || !finite(jpegQuality) || jpegQuality <= 0 || jpegQuality > 1) throw new TypeError('invalid remote gaze bounds');
 
   let stream = null, running = false, starting = false, paused = false, generation = 0, callbackId = null;
-  let sessionId = null, sessionAbort = null, pendingFrame = null, inFlight = null, captureCanvas = null, candidateDiscard = Promise.resolve();
+  let sessionId = null, pendingFrame = null, captureCanvas = null, candidateDiscard = Promise.resolve();
+  const inFlight = new Set(), sessionAborts = new Set();
+  const settleInFlight = () => Promise.allSettled([...inFlight]);
+  const abortInFlight = () => { for (const abort of sessionAborts) abort.abort(); };
   let lastSentAt = -Infinity, frameNumber = 0, latestSample = null, calibrated = false, candidate = false, calibrationPointIndex = 0;
   let timing = null, clockMonitor = null, lastTimestamp = -1, modelInfo = null, consecutiveFailures = 0;
   // Bounded per-frame transport timings (A12/G4-D): browser clock only, not optical display time.
   const TELEMETRY_SAMPLES = 256, telemetryRows = [];
-  const telemetryCounts = {captured:0, superseded:0, sent:0, received:0, published:0, staleDropped:0, busy:0, failed:0, oversized:0};
+  const telemetryCounts = {captured:0, superseded:0, sent:0, received:0, published:0, staleDropped:0, busy:0, failed:0, oversized:0, outOfOrder:0};
   function recordTelemetry(row) { telemetryRows.push(row); if (telemetryRows.length > TELEMETRY_SAMPLES) telemetryRows.shift(); }
 
   function diagnose(code) { try { onDiagnostic(code); } catch {} }
@@ -145,7 +155,7 @@ export function createRemoteWebcamGazeController({
     const captureTime = finite(metadata.captureTime) && metadata.captureTime >= 0 ? metadata.captureTime : now;
     telemetryCounts.captured++; if (pendingFrame) telemetryCounts.superseded++;
     pendingFrame = {captureTimestampMs:captureTime, callbackTimestampMs:now, timestampKind:finite(metadata.captureTime)?'browser_capture_estimate':'callback_time_not_capture'};
-    if (!inFlight && !candidate && now - lastSentAt >= 1000 / maxFrameHz) void sendLatest(token);
+    if (inFlight.size < MAX_IN_FLIGHT && !candidate && now - lastSentAt >= 1000 / maxFrameHz) void sendLatest(token);
     schedule(token);
   }
 
@@ -204,7 +214,7 @@ export function createRemoteWebcamGazeController({
   }
 
   async function sendLatest(token) {
-    if (inFlight || candidate || !running || paused || token !== generation || !pendingFrame || !sessionId) return;
+    if (inFlight.size >= MAX_IN_FLIGHT || candidate || !running || paused || token !== generation || !pendingFrame || !sessionId) return;
     const frame = pendingFrame;
     pendingFrame = null;
     const frameId = ++frameNumber;
@@ -213,7 +223,7 @@ export function createRemoteWebcamGazeController({
     if (now - lastSentAt < 1000 / maxFrameHz) { pendingFrame = frame; return; }
     lastSentAt = now;
     const abort = new AbortController();
-    sessionAbort = abort;
+    sessionAborts.add(abort);
     const job = (async () => {
       const encodeStartedAt = clockNow();
       const blob = await encodeLatest(frame);
@@ -234,18 +244,19 @@ export function createRemoteWebcamGazeController({
       consecutiveFailures = 0;
       if (running && !paused && token === generation) sampleFrom(result, request, receivedAt, sentAt);
     })();
-    inFlight = job;
+    inFlight.add(job);
     try { await job; }
     catch (error) {
       if (running && !paused && token === generation && error?.code !== 'GAZE_CANCELLED') {
         const transient = !NON_TRANSIENT_FRAME_CODES.has(error?.detail ?? error?.code) && error?.code !== 'gaze_frame_too_large';
         if (error?.code === 'gaze_provider_busy') { telemetryCounts.busy++; diagnose('gaze_provider_busy'); }
+        else if (error?.detail === 'gaze_frame_out_of_order') telemetryCounts.outOfOrder++;   // a newer pipelined frame got there first
         else if (transient && ++consecutiveFailures < MAX_CONSECUTIVE_FRAME_FAILURES) { telemetryCounts.failed++; diagnose('gaze_frame_retry'); }
         else { telemetryCounts.failed++; const safe=startupError(error?.code==='gaze_frame_too_large'?'gaze_frame_too_large':'gaze_remote_inference_failed');const reason=error?.detail??error?.code;if(typeof reason==='string'&&/^[a-z_]{3,48}$/.test(reason))safe.detail=reason;diagnose(safe.code);running=false;generation++;stopCamera();onError(safe); }
       }
     } finally {
-      if (sessionAbort === abort) sessionAbort = null;
-      if (inFlight === job) inFlight = null;
+      sessionAborts.delete(abort);
+      inFlight.delete(job);
       if (running && !paused && token === generation && pendingFrame && clockNow()-lastSentAt>=1000/maxFrameHz) void sendLatest(token);
     }
   }
@@ -274,7 +285,9 @@ export function createRemoteWebcamGazeController({
         diagnose('gaze_health_check_started');await checkReady();
         const adapter=await optionsAdapter();
         const viewport=getViewport();
-        const created=await jsonRequest('/api/gaze/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({screenPxDimensions:[Math.max(1,Math.round(viewport.width)),Math.max(1,Math.round(viewport.height))],...(adapter?{adapter}:{})})});
+        const screenCm=typeof getScreenCm==='function'?getScreenCm():null;
+        const screenCmDimensions=Array.isArray(screenCm)&&screenCm.length===2&&screenCm.every(x=>finite(x)&&x>0&&x<=200)?screenCm:null;
+        const created=await jsonRequest('/api/gaze/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({screenPxDimensions:[Math.max(1,Math.round(viewport.width)),Math.max(1,Math.round(viewport.height))],...(screenCmDimensions?{screenCmDimensions}:{}),...(adapter?{adapter}:{})})});
         if (!validSessionId(created.sessionId)) throw startupError('gaze_protocol_error');
         if(typeof created.calibrated!=='boolean'||created.calibrated!==!!adapter)throw startupError('gaze_protocol_error');
         calibrated=created.calibrated;
@@ -286,7 +299,7 @@ export function createRemoteWebcamGazeController({
         if(token!==generation){for(const track of acquired.getTracks())track.stop();throw startupError('camera_request_aborted');}
         stream=acquired;diagnose('camera_stream_acquired');
         video.srcObject=stream;diagnose('video_attached');await video.play();diagnose('video_playback_started');
-        running=true;paused=false;pendingFrame=null;inFlight=null;lastSentAt=-Infinity;latestSample=null;frameNumber=0;consecutiveFailures=0;
+        running=true;paused=false;pendingFrame=null;inFlight.clear();lastSentAt=-Infinity;latestSample=null;frameNumber=0;consecutiveFailures=0;
         schedule(token);diagnose('capture_started');
         const settings=stream.getVideoTracks()[0]?.getSettings?.()??{};
         return {width:settings.width??null,height:settings.height??null,frameRate:settings.frameRate??null};
@@ -301,7 +314,7 @@ export function createRemoteWebcamGazeController({
       candidate=true;pendingFrame=null;
       try{
         await candidateDiscard;
-        const pending=inFlight;if(pending)await pending.catch(()=>{});
+        await settleInFlight();
         const id=sessionId;
         await jsonRequest(`/api/gaze/sessions/${encodeURIComponent(id)}/candidate/start`,{method:'POST'});
       }catch(error){candidate=false;throw error;}
@@ -361,6 +374,23 @@ export function createRemoteWebcamGazeController({
       candidate=false;calibrated=true;calibrationPointIndex=0;return {adapter:accepted.adapter};
     },
     cancelCalibration() { return discardCandidate().catch(()=>{}); },
+    // Upstream click calibration on the accepted model: the user is looking at the point they clicked (viewport px).
+    async clickCorrection(point) {
+      if(!calibrated||candidate||!running||paused||!sessionId)throw new Error('click correction unavailable');
+      const viewport=getViewport();
+      if(!finite(point?.x)||!finite(point?.y)||!finite(viewport?.width)||!finite(viewport?.height)||viewport.width<=0||viewport.height<=0)throw new Error('invalid click point');
+      const target=[Math.min(.5,Math.max(-.5,point.x/viewport.width-.5)),Math.min(.5,Math.max(-.5,point.y/viewport.height-.5))];
+      const frames=[];
+      for(let i=0;i<CLICK_FRAME_COUNT;i++){
+        const startedAt=clockNow();const blob=await encodeLatest(null);
+        if(blob.size>512*1024)throw startupError('gaze_frame_too_large');
+        frames.push({frameId:++frameNumber,captureTimestampMs:startedAt,jpeg:bytesToBase64(new Uint8Array(await blob.arrayBuffer()))});
+        if(i<CLICK_FRAME_COUNT-1)await new Promise(resolve=>setTimeout(resolve,CLICK_SPAN_MS));
+      }
+      const result=await jsonRequest(`/api/gaze/sessions/${encodeURIComponent(sessionId)}/calibration/click`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({target,frames})});
+      if(!['adapted','insufficient'].includes(result?.status)||result.totalFrames!==frames.length||!Number.isInteger(result.usableFrames))throw startupError('gaze_protocol_error');
+      return {adapted:result.status==='adapted',usableFrames:result.usableFrames,totalFrames:result.totalFrames};
+    },
     setTimingCalibration(value) {
       if(value&&(value.status!=='measurement_record_validated'||!value.cameraClockModel||!value.displayModels))throw new Error('validated optical timing calibration required');
       timing=value;clockMonitor=value?new ClockDriftMonitor(value.cameraClockModel,value.cameraCallbackLagMs):null;lastTimestamp=-1;
@@ -369,7 +399,7 @@ export function createRemoteWebcamGazeController({
       if(!running||paused)return;
       paused=true;pendingFrame=null;
       if(callbackId!==null){try{video.cancelVideoFrameCallback(callbackId);}catch{}callbackId=null;}
-      sessionAbort?.abort();diagnose('remote_gaze_paused');
+      abortInFlight();diagnose('remote_gaze_paused');
     },
     resume() { if(!running||!paused)return;paused=false;pendingFrame=null;schedule(generation);diagnose('remote_gaze_resumed'); },
     telemetry() {
@@ -384,8 +414,8 @@ export function createRemoteWebcamGazeController({
     async stop() {
       generation++;starting=false;running=false;paused=false;pendingFrame=null;
       if(callbackId!==null){try{video.cancelVideoFrameCallback(callbackId);}catch{}callbackId=null;}
-      diagnose('camera_stop_requested');sessionAbort?.abort();stopCamera();
-      const pending=inFlight;if(pending)await pending.catch(()=>{});inFlight=null;sessionAbort=null;
+      diagnose('camera_stop_requested');abortInFlight();stopCamera();
+      await settleInFlight();inFlight.clear();sessionAborts.clear();
       const id=sessionId;sessionId=null;candidate=false;calibrated=false;latestSample=null;captureCanvas=null;timing=null;clockMonitor=null;lastTimestamp=-1;modelInfo=null;
       await removeSession(id);
     }
@@ -433,6 +463,7 @@ export function createProfiledWebcamGazeController(options) {
     restoreCalibration(...args){return selectController().then(c=>c.restoreCalibration(...args));},
     commitCalibration(...args){return selectController().then(c=>c.commitCalibration(...args));},
     cancelCalibration(...args){return controller?.cancelCalibration?.(...args);},
+    clickCorrection(...args){if(!remote||!controller?.clickCorrection)return Promise.reject(new Error('click correction unavailable'));return controller.clickCorrection(...args);},
     setTimingCalibration(value){timing=value;return controller?.setTimingCalibration(value);}
   };
 }

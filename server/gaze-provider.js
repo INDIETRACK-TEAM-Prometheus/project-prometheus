@@ -4,6 +4,8 @@ const ADAPTER_SHAPES = [[518,16],[16],[16,16],[16],[16,2],[2]];
 const ADAPTER_ID = 'webeyetrack-gaze-mlp-f32-v1';
 const MODEL_ID = 'webeyetrack-blazegaze-mpiifacegaze';
 const SOURCE_COMMIT = '75fbd2f5f784f2eb3a39675a8dcbf1b01c697f1c';
+const ADAPTER_KEYS = new Set(['schemaVersion', 'adapterId', 'modelId', 'sourceCommit', 'modelSha256', 'weights', 'affine']);
+const MAX_CLICK_FRAMES = 3;
 const fail = code => Object.assign(new Error(code), {code});
 const finite = Number.isFinite;
 
@@ -23,7 +25,8 @@ function validSessionId(value) {
 export function validateRemoteGazeAdapter(adapter, model = {}) {
   if (!adapter || typeof adapter !== 'object' || Array.isArray(adapter) || Buffer.byteLength(JSON.stringify(adapter)) > MAX_ADAPTER_BYTES ||
       adapter.schemaVersion !== 1 || adapter.adapterId !== ADAPTER_ID || adapter.modelId !== MODEL_ID || adapter.sourceCommit !== SOURCE_COMMIT ||
-      !/^[a-f0-9]{64}$/i.test(adapter.modelSha256 ?? '') || adapter.modelSha256 !== model.sha256 || !Array.isArray(adapter.weights) || adapter.weights.length !== ADAPTER_SHAPES.length) return false;
+      !/^[a-f0-9]{64}$/i.test(adapter.modelSha256 ?? '') || adapter.modelSha256 !== model.sha256 || !Array.isArray(adapter.weights) || adapter.weights.length !== ADAPTER_SHAPES.length ||
+      Object.keys(adapter).some(key => !ADAPTER_KEYS.has(key)) || ('affine' in adapter && !validAffine(adapter.affine))) return false;
   return adapter.weights.every((weight, index) => {
     const shape = ADAPTER_SHAPES[index];
     if (!weight || typeof weight !== 'object' || Array.isArray(weight) || weight.dtype !== 'float32-le' || JSON.stringify(weight.shape) !== JSON.stringify(shape) || typeof weight.data !== 'string' ||
@@ -33,6 +36,15 @@ export function validateRemoteGazeAdapter(adapter, model = {}) {
     for (let offset = 0; offset < bytes.length; offset += 4) if (!finite(bytes.readFloatLE(offset))) return false;
     return true;
   });
+}
+
+// The 2x3 calibration affine the GPU worker fits with the adapter (upstream WebEyeTrack applies it after the gaze MLP).
+export function validAffine(value) {
+  return Array.isArray(value) && value.length === 2 && value.every(row => Array.isArray(row) && row.length === 3 && row.every(x => finite(x) && Math.abs(x) <= 100));
+}
+
+export function validScreenCm(value) {
+  return Array.isArray(value) && value.length === 2 && value.every(x => finite(x) && x > 0 && x <= 200);
 }
 
 function validEar(value) {
@@ -145,10 +157,11 @@ export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs 
         return {ready: false, reason: 'remote_unavailable'};
       }
     },
-    async createSession({screenPxDimensions,adapter} = {}) {
+    async createSession({screenPxDimensions,screenCmDimensions,adapter} = {}) {
       if (screenPxDimensions !== undefined && (!Array.isArray(screenPxDimensions) || screenPxDimensions.length !== 2 || !screenPxDimensions.every(x => Number.isInteger(x) && x > 0 && x <= 10000))) throw fail('GAZE_INVALID_REQUEST');
+      if (screenCmDimensions !== undefined && !validScreenCm(screenCmDimensions)) throw fail('GAZE_INVALID_REQUEST');
       if(adapter!==undefined){const health=await this.health();if(!health.ready)throw fail('GAZE_REMOTE_UNAVAILABLE');if(!validateRemoteGazeAdapter(adapter,health.model))throw fail('GAZE_ADAPTER_INCOMPATIBLE');}
-      const body = {...(screenPxDimensions?{screenPxDimensions}:{}),...(adapter?{adapter}:{})};
+      const body = {...(screenPxDimensions?{screenPxDimensions}:{}),...(screenCmDimensions?{screenCmDimensions}:{}),...(adapter?{adapter}:{})};
       const info = await request('sessions', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
       if (info?.status !== 'ready' || !validSessionId(info.sessionId) || !Number.isFinite(info.expiresInSeconds) || info.expiresInSeconds <= 0) throw fail('GAZE_PROTOCOL_ERROR');
       sessions.add(info.sessionId);
@@ -176,6 +189,15 @@ export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs 
       const request = validateCalibrationTargetRequest({phase, pointIndex, target, frames});
       const info = await request_(`sessions/${id}/calibration/target`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(request), signal, timeout: 60000});
       return sanitizeTargetResult(info, request);
+    },
+    // Upstream click calibration: the user looked at the point they clicked; applies to this live session only.
+    async clickCorrection({sessionId, target, frames, signal} = {}) {
+      const id = requireSession(sessionId);
+      if (!Array.isArray(frames) || frames.length > MAX_CLICK_FRAMES) throw fail('GAZE_INVALID_REQUEST');
+      const checked = validateCalibrationTargetRequest({phase: 'train', pointIndex: 0, target, frames});
+      const info = await request_(`sessions/${id}/calibration/click`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({target: checked.target, frames: checked.frames}), signal, timeout: 30000});
+      if (!['adapted', 'insufficient'].includes(info?.status) || !count(info.usableFrames) || info.totalFrames !== checked.frames.length || info.usableFrames > info.totalFrames) throw fail('GAZE_PROTOCOL_ERROR');
+      return {status: info.status, usableFrames: info.usableFrames, totalFrames: info.totalFrames};
     },
     async finalizeCandidate(sessionId, signal) {
       const id = requireSession(sessionId);
