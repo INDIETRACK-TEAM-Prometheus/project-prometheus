@@ -196,3 +196,12 @@ test('click correction forwards at most three frames and checks the answer', asy
   const {provider: liar, sessionId: other} = await targetProvider(async () => json({status: 'adapted', usableFrames: 5, totalFrames: 1}));
   await assert.rejects(liar.clickCorrection({sessionId: other, target: [0, 0], frames: targetFrames([1])}), error => error.code === 'GAZE_PROTOCOL_ERROR');
 });
+
+test('gaze points slightly past the screen edge are clamped to the edge, far ones are rejected', async () => {
+  const {edgePog} = await import('../server/gaze-provider.js');
+  assert.deepEqual(edgePog([.62, -.55]), [.5, -.5]);
+  assert.deepEqual(edgePog([.1, -.2]), [.1, -.2]);
+  assert.equal(edgePog(null), null);
+  assert.equal(edgePog([1.5, 0]), undefined);
+  assert.equal(edgePog([NaN, 0]), undefined);
+});

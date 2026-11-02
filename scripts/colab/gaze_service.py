@@ -398,7 +398,8 @@ def _frame_result(state, session, frame_id, capture_timestamp_ms, jpeg, keep_fea
     try:
         values = NP.asarray(raw_norm, dtype=NP.float64).reshape(-1)
         if values.size == 2 and NP.isfinite(values).all():
-            norm = [float(values[0]), float(values[1])]
+            # The calibration affine may land slightly past the screen edge; report that as the edge.
+            norm = [float(min(0.5, max(-0.5, values[0]))), float(min(0.5, max(-0.5, values[1])))]
     except Exception:
         pass
     durations = {}

@@ -1,7 +1,7 @@
 import {createWorld} from './spatial/world.js';
 import {createLocalRecorder,listLocalRecordings,deleteLocalRecordings} from './gaze/local-recorder.js';
 import {GAZE_CALIBRATION_PROFILE_KEY,restoreLandmarkResidualCalibration,openGazeCalibrationProfileStore,loadGazeCalibrationProfile,createGazeCalibrationProfileAsync,saveGazeCalibrationProfile,fitAffineCalibration,identityAffineCalibration,selectAffineCalibrationCandidate} from './gaze/calibration-profile.js';
-import {createCausalDisplayFilter} from './gaze/display-filter.js';
+import {createCausalDisplayFilter,REMOTE_GAZE_DISPLAY_FILTER} from './gaze/display-filter.js';
 import {createAccuracyPlan} from './gaze/accuracy-protocol.js';
 import {createAccuracySession} from './gaze/accuracy-session.js';
 import {stableCalibrationWindow,calibrationSampleFreshnessMs,calibrationSampleStatus,calibrationWindowStatus,calibrationTargetTimedOut,CALIBRATION_RUN_TIMEOUT_MS,CALIBRATION_ADAPT_TIMEOUT_MS} from './gaze/calibration-window.js';
@@ -297,7 +297,7 @@ async function boot() {
   // WebEyeTrack exposes adaptation in memory but no official model persistence API.
   // Keep the legacy hand-built calibration key untouched; it is incompatible.
   let activeCalibration=null,activeAffine=null,capturedAdaptation=null,calibrationRunStart=null,calibrationAdaptStartedAt=null,calibrationAdaptStarted=false,calibrationAdaptFinished=false,calibrationSerializeStartedAt=null,calibrationSerializeFinished=false;const calibrationWindow=[];
-  const profileRuntime={webeyetrack:'0.0.2',protocol:'replay-v1'},profileStorage=openGazeCalibrationProfileStore().catch(()=>null),displayFilter=createCausalDisplayFilter();
+  const profileRuntime={webeyetrack:'0.0.2',protocol:'replay-v1'},profileStorage=openGazeCalibrationProfileStore().catch(()=>null),displayFilter=createCausalDisplayFilter(),remoteDisplayFilter=createCausalDisplayFilter(REMOTE_GAZE_DISPLAY_FILTER);
   const remoteGazeAdapterKey='prometheus.gaze-calibration.remote-adapter.v1';let remoteCalibrationProfile=null;
   const screenDiagonalKey='prometheus.screen-diagonal-inches.v1';
   function screenDiagonalInches(){try{const value=Number(localStorage.getItem(screenDiagonalKey));return Number.isFinite(value)&&value>=7&&value<=100?value:null;}catch{return null;}}
@@ -832,7 +832,7 @@ async function boot() {
       $('#worldGazeState').textContent=sample.valid?'시선 추정 · 정렬 미검증':sample.invalidReason==='calibration_required'?'교정 필요':`추적 보류 · ${sample.invalidReason}`;
       if(sample.valid)gazeStatus.textContent=viewportXY?(sample.sceneAssociationEligible?'월드 내 시선 추정 · 시간 정렬 확인 중':`월드 내 시선 추정 · 정렬 보류 (${sample.syncStatus})`):'진단 영역 / 월드 밖';
     }
-    const filteredMarker=displayFilter.update(markerXY,sample.processedMs,{valid:!!markerXY&&!calibrationStage});
+    const filteredMarker=(controller?.remote?remoteDisplayFilter:displayFilter).update(markerXY,sample.processedMs,{valid:!!markerXY&&!calibrationStage});
     showGazeMarker(filteredMarker.point,{active:!!session?.active,paused:!!session?.paused,calibrating:!!calibrationStage});
     const displayRegion=viewportXY?(viewportXY.y<1/3?'top':viewportXY.y<2/3?'middle':'bottom'):null;
     const frame=sample.sceneAssociationEligible ? history.at(sample.timestampMs,displayRegion) : null;
@@ -926,7 +926,7 @@ async function boot() {
   window.addEventListener('resize',()=>{sizeCanvas();handleCalibrationEnvironmentChange('화면 크기');});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)clearFrozenGazeDemo('페이지가 숨겨져 잠정 표본/마스크를 폐기하고 장면을 재개했습니다.',true);});
   window.addEventListener('pagehide',()=>{stopSession().then(async()=>{await (durableSession?durableSession.close():Promise.all([journal.close(),memory.close()]));await provisionalTrackingOpening?.catch(()=>{});await provisionalTrackingStore?.close();}).catch(()=>{});});
-  const points=(validationPhase)=>{let p=[];for(let repeat=0;repeat<3;repeat++)for(let y=0;y<3;y++)for(let x=0;x<3;x++)p.push({x:innerWidth*(validationPhase ? .20+.28*x : .12+.38*x),y:innerHeight*(validationPhase ? .20+.28*y : .12+.38*y)});return p;};
+  const points=(validationPhase)=>{let p=[];for(let repeat=0;repeat<3;repeat++)for(let y=0;y<3;y++)for(let x=0;x<3;x++)p.push({x:innerWidth*(validationPhase ? .20+.28*x : .05+.45*x),y:innerHeight*(validationPhase ? .20+.28*y : .05+.45*y)});return p;};
   function showTarget(index=sequence){const phase=calibrationStage==='training'?'WebEyeTrack 적응':'별도 표본', p=points(calibrationStage==='validation')[index], target=$('#target'), info=$('#calibrationInfo');target.style.left=p.x+'px';target.style.top=p.y+'px';calibrationTargetShownAt=performance.now();const keyed=controller?.remote===true,instruction=keyed?'눈을 뜨고 표적을 응시한 채 Enter 또는 Space를 누르세요 · 누른 뒤 약 0.5초 계속 응시 · Esc 취소':'표적을 0.5초 이상 응시한 뒤 클릭 또는 Enter/Space';target.setAttribute('aria-label',`${phase} 표적 ${index+1}/27 · ${instruction}`);info.setAttribute('role','status');info.setAttribute('aria-live','polite');info.textContent=`${phase} ${index+1}/27 · ${instruction}`;if(keyed)target.focus({preventScroll:true});}
   const metricModel=()=>({dimension:2,x:[0,innerWidth,0],y:[0,0,innerHeight],trainingIds:[]});
   let remoteBatch=null;

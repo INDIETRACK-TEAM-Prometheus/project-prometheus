@@ -77,11 +77,11 @@ function sanitizeTargetResult(info, request) {
   const validEarSummary = ear === null || (ear && finite(ear.min) && ear.min >= 0 && ear.min <= 2 && finite(ear.threshold) && ear.threshold >= 0 && ear.threshold <= 2);
   if (!TARGET_STATUSES.has(info?.status) || info.pointIndex !== request.pointIndex || info.phase !== request.phase || ![info.totalFrames, info.faceFrames, info.closedFrames, info.usableFrames, info.frameErrors, info.eyePatchFailures ?? 0].every(count) ||
       info.totalFrames !== request.frames.length || info.usableFrames > info.faceFrames || info.faceFrames > info.totalFrames || !validEarSummary ||
-      (info.status === 'measured') !== (request.phase === 'validate' && info.normPog !== undefined) || (info.status === 'measured' && !(Array.isArray(info.normPog) && info.normPog.length === 2 && info.normPog.every(x => finite(x) && x >= -.5 && x <= .5))) ||
+      (info.status === 'measured') !== (request.phase === 'validate' && info.normPog !== undefined) || (info.status === 'measured' && !Array.isArray(edgePog(info.normPog))) ||
       (info.status === 'measured' && request.phase !== 'validate') || (info.status === 'accepted' && request.phase !== 'train')) throw fail('GAZE_PROTOCOL_ERROR');
   return {status: info.status, phase: info.phase, pointIndex: info.pointIndex, totalFrames: info.totalFrames, faceFrames: info.faceFrames, closedFrames: info.closedFrames, usableFrames: info.usableFrames, frameErrors: info.frameErrors,
     eyePatchFailures: info.eyePatchFailures ?? 0, failureMessage: typeof info.failureMessage === 'string' && FAILURE_MESSAGE.test(info.failureMessage) ? info.failureMessage : null,
-    eyeAspectRatio: ear === null || ear === undefined ? null : {min: ear.min, threshold: ear.threshold}, ...(info.status === 'measured' ? {normPog: [...info.normPog]} : {}), ...(info.status === 'accepted' && count(info.collected) ? {collected: info.collected} : {})};
+    eyeAspectRatio: ear === null || ear === undefined ? null : {min: ear.min, threshold: ear.threshold}, ...(info.status === 'measured' ? {normPog: edgePog(info.normPog)} : {}), ...(info.status === 'accepted' && count(info.collected) ? {collected: info.collected} : {})};
 }
 
 const FAILURE_MESSAGE = /^[A-Za-z0-9 _.,:()\[\]/=?-]{1,160}$/;
@@ -92,8 +92,12 @@ function validTrackingFailure(value) {
   return {stage: value.stage, message};
 }
 
-function validPog(value) {
-  return value === null || (Array.isArray(value) && value.length === 2 && value.every(x => finite(x) && x >= -.5 && x <= .5));
+// The calibration affine can place a gaze point slightly past the screen edge; that is a point at the edge, not a
+// protocol error. Values far outside the screen (beyond one screen width/height from the centre) are still rejected.
+export function edgePog(value) {
+  if (value === null) return null;
+  if (!Array.isArray(value) || value.length !== 2 || !value.every(x => finite(x) && x >= -1 && x <= 1)) return undefined;
+  return value.map(x => Math.min(.5, Math.max(-.5, x)));
 }
 
 export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs = 15000, healthTimeoutMs = 2500} = {}) {
@@ -174,8 +178,8 @@ export function createRemoteGazeProvider({baseUrl, fetchImpl = fetch, timeoutMs 
       const result = await request(`sessions/${id}/frame`, {
         method: 'POST', headers: {'content-type': 'image/jpeg', 'x-frame-id': String(frameId), 'x-capture-timestamp-ms': String(captureTimestampMs)}, body: bytes, signal
       });
-      if (result?.status !== 'ok' || result.frameId !== frameId || result.captureTimestampMs !== captureTimestampMs || typeof result.faceDetected !== 'boolean' || !['open', 'closed', 'unknown'].includes(result.gazeState) || !validPog(result.normPog) || !result.durations || !Object.values(result.durations).every(x => finite(x) && x >= 0)) throw fail('GAZE_PROTOCOL_ERROR');
-      return {frameId, captureTimestampMs, faceDetected: result.faceDetected, gazeState: result.gazeState, normPog: result.normPog, eyeAspectRatio: validEar(result.eyeAspectRatio), trackingFailure: validTrackingFailure(result.trackingFailure), durations: result.durations};
+      if (result?.status !== 'ok' || result.frameId !== frameId || result.captureTimestampMs !== captureTimestampMs || typeof result.faceDetected !== 'boolean' || !['open', 'closed', 'unknown'].includes(result.gazeState) || edgePog(result.normPog) === undefined || !result.durations || !Object.values(result.durations).every(x => finite(x) && x >= 0)) throw fail('GAZE_PROTOCOL_ERROR');
+      return {frameId, captureTimestampMs, faceDetected: result.faceDetected, gazeState: result.gazeState, normPog: edgePog(result.normPog), eyeAspectRatio: validEar(result.eyeAspectRatio), trackingFailure: validTrackingFailure(result.trackingFailure), durations: result.durations};
     },
     async startCandidate(sessionId, signal) {
       const id = requireSession(sessionId);

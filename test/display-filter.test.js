@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createCausalDisplayFilter} from '../src/gaze/display-filter.js';
+import {createCausalDisplayFilter,REMOTE_GAZE_DISPLAY_FILTER} from '../src/gaze/display-filter.js';
 
 function createPreviousFilter() {
   const alpha=(cutoff,dt)=>1/(1+1/(2*Math.PI*cutoff)/dt);
@@ -89,4 +89,18 @@ test('synthetic normalized jitter and step lag benchmark is reproducible',()=>{
   assert.equal(selected.stepLagMs,133.33333333333334);
   assert.ok(selected.jitterRms<=previous.jitterRms*1.01);
   assert.ok(selected.stepLagMs<previous.stepLagMs*.5);
+});
+
+test('the remote preset smooths noisy 10 Hz gaze more than the default without adding step lag',()=>{
+  const bench=opts=>{
+    let seed=7;const r=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return (seed>>>0)/4294967296;};
+    const jitter=createCausalDisplayFilter(opts),errors=[];let t=0;
+    for(let i=0;i<300;i++){t+=100*(.7+.6*r());const p=jitter.update({x:.5+(r()-.5)*.06,y:.5+(r()-.5)*.06},t);if(i>20)errors.push(p.point.x-.5);}
+    const step=createCausalDisplayFilter(opts);t=0;for(let i=0;i<20;i++){t+=100;step.update({x:.25,y:.5},t);}
+    let lag=null;const t0=t;for(let i=0;i<60;i++){t+=100;if(step.update({x:.75,y:.5},t).point.x>=.70){lag=t-t0;break;}}
+    return {rms:Math.sqrt(errors.reduce((sum,e)=>sum+e*e,0)/errors.length),lag};
+  };
+  const base=bench(),remote=bench(REMOTE_GAZE_DISPLAY_FILTER);
+  assert.ok(remote.rms<base.rms*.8,`${remote.rms} vs ${base.rms}`);
+  assert.ok(remote.lag<=base.lag,`${remote.lag} vs ${base.lag}`);
 });

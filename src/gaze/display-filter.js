@@ -11,6 +11,11 @@ const validPoint = point => finite(point?.x) && finite(point?.y) &&
 // Causal 1€ equations follow https://github.com/casiez/OneEuroFilter; beta is in normalized-coordinate units per second.
 // .25 is the synthetic jitter/lag choice documented in docs/evidence/display-filter-synthetic-benchmark.json.
 // Invalid samples are withheld and reset so stale gaze is never presented as a current measurement.
+// Remote webcam gaze arrives at ~10 Hz with several percent of screen noise, far from the 60 Hz/0.5% synthetic case
+// above. On a 10 Hz signal with 6% uniform noise this preset cuts the shown jitter from 0.0098 to 0.0071 RMS
+// (raw 0.0173) and the half-screen step lag from 400 to 300 ms; gaps up to 600 ms keep the filter state.
+export const REMOTE_GAZE_DISPLAY_FILTER = Object.freeze({minCutoff: .35, beta: 1.5, maxDeltaMs: 600});
+
 export function createCausalDisplayFilter({minCutoff = 1.2, beta = 0.25, derivativeCutoff = 1, minDeltaMs = 1, maxDeltaMs = 250} = {}) {
   if (![minCutoff, beta, derivativeCutoff, minDeltaMs, maxDeltaMs].every(finite) || minCutoff <= 0 || beta < 0 || derivativeCutoff <= 0 || minDeltaMs <= 0 || maxDeltaMs < minDeltaMs) throw new Error('invalid One-Euro filter settings');
 
