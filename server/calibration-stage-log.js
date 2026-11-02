@@ -7,7 +7,8 @@ const events=new Set([
   'profile_save_start','profile_save_complete','profile_save_error',
   'calibration_verdict'
 ]);
-const verdictKeys=['passed','validCount','attempts','p95Bp'];
+const verdictKeys=['passed','validCount','attempts','p95Bp','p50Bp','gainXBp','gainYBp','biasXBp','biasYBp'];
+const signedBp=value=>Number.isSafeInteger(value)&&value>=-100000&&value<=100000;
 const sessionPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function sanitizeCalibrationStageEvent(value){
@@ -21,8 +22,10 @@ export function sanitizeCalibrationStageEvent(value){
     // Aggregate outcome only: whether the independent check passed, how many of the 27 targets were usable, and p95 in basis points of the screen diagonal.
     if(typeof value.passed!=='boolean'||!Number.isSafeInteger(value.validCount)||value.validCount<0||value.validCount>27||!Number.isSafeInteger(value.attempts)||value.attempts<1||value.attempts>27||value.validCount>value.attempts)return null;
     if(Object.hasOwn(value,'p95Bp')&&(!Number.isSafeInteger(value.p95Bp)||value.p95Bp<0||value.p95Bp>100000))return null;
+    if(Object.hasOwn(value,'p50Bp')&&(!Number.isSafeInteger(value.p50Bp)||value.p50Bp<0||value.p50Bp>100000))return null;
+    for(const key of ['gainXBp','gainYBp','biasXBp','biasYBp'])if(Object.hasOwn(value,key)&&!signedBp(value[key]))return null;
   }
-  return {event:value.event,sessionId:value.sessionId,...(isVerdict?{passed:value.passed,validCount:value.validCount,attempts:value.attempts,...(Object.hasOwn(value,'p95Bp')?{p95Bp:value.p95Bp}:{})}:{}),...(Object.hasOwn(value,'durationMs')?{durationMs:value.durationMs}:{}),...(Object.hasOwn(value,'count')?{count:value.count}:{})};
+  return {event:value.event,sessionId:value.sessionId,...(isVerdict?{passed:value.passed,validCount:value.validCount,attempts:value.attempts,...Object.fromEntries(['p95Bp','p50Bp','gainXBp','gainYBp','biasXBp','biasYBp'].filter(key=>Object.hasOwn(value,key)).map(key=>[key,value[key]]))}:{}),...(Object.hasOwn(value,'durationMs')?{durationMs:value.durationMs}:{}),...(Object.hasOwn(value,'count')?{count:value.count}:{})};
 }
 
 export function createCalibrationStageLog({root,maxBytes=256*1024,now=()=>new Date()}={}){

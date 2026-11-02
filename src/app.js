@@ -10,7 +10,7 @@ import {createBackgroundBrowserWork} from './runtime/background-browser.js';
 import {LiveTracking} from './runtime/live-tracking.js';
 import {createProfiledWebcamGazeController,describeCalibrationTarget,describeOpenEyeWait} from './gaze/remote-webcam.js';
 import {gazeViewportPoint,gazeMarkerPosition} from './gaze/overlay.js';
-import {withinCalibrationBounds,predictCalibration,calibrationMetrics,fitLandmarkResidualCalibration,landmarkResidualMetrics,landmarkResidualPassesSelection,LANDMARK_RESIDUAL_FIT_ATTEMPTS,predictLandmarkResidual} from './gaze/index.js';
+import {withinCalibrationBounds,predictCalibration,calibrationMetrics,calibrationReach,fitLandmarkResidualCalibration,landmarkResidualMetrics,landmarkResidualPassesSelection,LANDMARK_RESIDUAL_FIT_ATTEMPTS,predictLandmarkResidual} from './gaze/index.js';
 import {MemoryService,EphemeralStorage} from './memory/index.js';
 import {ProviderJournal,providerOperationId} from './runtime/provider-journal.js';
 import {RuntimeFacade} from './runtime/facade.js';
@@ -926,7 +926,12 @@ async function boot() {
   window.addEventListener('resize',()=>{sizeCanvas();handleCalibrationEnvironmentChange('화면 크기');});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)clearFrozenGazeDemo('페이지가 숨겨져 잠정 표본/마스크를 폐기하고 장면을 재개했습니다.',true);});
   window.addEventListener('pagehide',()=>{stopSession().then(async()=>{await (durableSession?durableSession.close():Promise.all([journal.close(),memory.close()]));await provisionalTrackingOpening?.catch(()=>{});await provisionalTrackingStore?.close();}).catch(()=>{});});
-  const points=(validationPhase)=>{let p=[];for(let repeat=0;repeat<3;repeat++)for(let y=0;y<3;y++)for(let x=0;x<3;x++)p.push({x:innerWidth*(validationPhase ? .20+.28*x : .05+.45*x),y:innerHeight*(validationPhase ? .20+.28*y : .05+.45*y)});return p;};
+  // Adaptation targets: a 5x5 grid over 5-95% of the screen plus two extra centre samples (27 in all, as the worker requires).
+  // Validation targets stay on a separate inner 3x3 grid, three times, so they are never the same points the model was fitted on.
+  const points=(validationPhase)=>{let p=[];
+    if(validationPhase){for(let repeat=0;repeat<3;repeat++)for(let y=0;y<3;y++)for(let x=0;x<3;x++)p.push({x:innerWidth*(.20+.28*x),y:innerHeight*(.20+.28*y)});return p;}
+    for(let y=0;y<5;y++)for(let x=0;x<5;x++)p.push({x:innerWidth*(.05+.225*x),y:innerHeight*(.05+.225*y)});
+    p.push({x:innerWidth*.5,y:innerHeight*.5},{x:innerWidth*.5,y:innerHeight*.5});return p;};
   function showTarget(index=sequence){const phase=calibrationStage==='training'?'WebEyeTrack 적응':'별도 표본', p=points(calibrationStage==='validation')[index], target=$('#target'), info=$('#calibrationInfo');target.style.left=p.x+'px';target.style.top=p.y+'px';calibrationTargetShownAt=performance.now();const keyed=controller?.remote===true,instruction=keyed?'눈을 뜨고 표적을 응시한 채 Enter 또는 Space를 누르세요 · 누른 뒤 약 0.5초 계속 응시 · Esc 취소':'표적을 0.5초 이상 응시한 뒤 클릭 또는 Enter/Space';target.setAttribute('aria-label',`${phase} 표적 ${index+1}/27 · ${instruction}`);info.setAttribute('role','status');info.setAttribute('aria-live','polite');info.textContent=`${phase} ${index+1}/27 · ${instruction}`;if(keyed)target.focus({preventScroll:true});}
   const metricModel=()=>({dimension:2,x:[0,innerWidth,0],y:[0,0,innerHeight],trainingIds:[]});
   let remoteBatch=null;
@@ -1098,7 +1103,9 @@ async function boot() {
         const residualSelected=!affineSelection?.selected&&landmarkResidualPassesSelection(passed,residualModel,baselineHoldout,residualHoldout);
         const residualSummary={status:residualSelected?'selected_on_third_repeat_selection_set':residualModel?'not_selected':'unavailable',fitAttempts:LANDMARK_RESIDUAL_FIT_ATTEMPTS,holdoutAttempts:holdout.length,correctedCount:residualHoldout?.correctedCount??0,baselineHoldoutP95:baselineHoldout.p95,candidateHoldoutP95:residualHoldout?.p95??null};
         let commitFailed=false,committedAdapter=null;if(passed){try{const committed=await controller.commitCalibration();committedAdapter=committed?.adapter??null;if(controller.remote&&!committedAdapter)throw Error('remote adapter missing');}catch{passed=false;commitFailed=true;}}
-        logCalibrationStage('calibration_verdict',{count:validation.length,verdict:{passed,validCount:metrics.validCount,attempts:metrics.attempts,...(Number.isFinite(metrics.p95)?{p95Bp:Math.min(100000,Math.round(metrics.p95*10000))}:{})}});
+        let reach=null;try{reach=calibrationReach(candidate,validation,validationScreen);}catch{}
+        const bp=value=>Number.isFinite(value)?Math.max(-100000,Math.min(100000,Math.round(value*10000))):null;
+        logCalibrationStage('calibration_verdict',{count:validation.length,verdict:{passed,validCount:metrics.validCount,attempts:metrics.attempts,...(Number.isFinite(metrics.p95)?{p95Bp:Math.min(100000,Math.round(metrics.p95*10000))}:{}),...(Number.isFinite(metrics.p50)?{p50Bp:Math.min(100000,Math.round(metrics.p50*10000))}:{}),...Object.fromEntries(Object.entries({gainXBp:bp(reach?.gainX),gainYBp:bp(reach?.gainY),biasXBp:bp(reach?.biasX),biasYBp:bp(reach?.biasY)}).filter(([,value])=>value!==null))}});
         if(pilot)pilot.calibration={...pilot.calibration,...metrics,landmarkResidual:residualSummary,passed,status:commitFailed?'failed':'completed',...(commitFailed?{failureReason:'calibration_commit_failed'}:{}),trainingAttempts:training.length,validationAttempts:validation.length,screenSize:{...screenSize},completedAtUtc:new Date().toISOString(),environmentChanged:false,method:residualSelected?'WebEyeTrack.adapt+landmark-residual-candidate':'WebEyeTrack.adapt',persistence:controller.remote?'local_model_adapter':'local_adaptation_replay'};
         if(passed){activeAffine=affineSelection?.selected?affineModel:null;activeLandmarkResidual=!activeAffine&&residualSelected?residualModel:null;activeCalibration={calibration:pilot.calibration,environment:gazeEnvironment(pilot.cameraSettings),environmentChanged:false};}
         else {
@@ -1108,7 +1115,7 @@ async function boot() {
           else if(pilot)pilot.calibration={...pilot.calibration,...metrics,landmarkResidual:residualSummary,passed:false,status:commitFailed?'failed':'completed',...(commitFailed?{failureReason:'calibration_commit_failed'}:{}),method:'WebEyeTrack.adapt',persistence:controller.remote?'local_model_adapter':'local_adaptation_replay'};
           stopRemote();$('#worldGazeState').textContent=activeCalibration?'이전 현재 세션 적응 유지 · 정확도 미보장':'교정 실패 · 시선 분석 보류';
           // The verdict text lives in a hidden element, so state the outcome and the numbers where the user can see them.
-          const pct=value=>`${(value*100).toFixed(1)}%`,measured=`유효 ${pct(metrics.validRate)} (기준 80% 이상) · p95 ${metrics.p95===null?'산출 불가':pct(metrics.p95)} (기준 5% 이하, 화면 대각선 대비)`;
+          const pct=value=>`${(value*100).toFixed(1)}%`,measured=`유효 ${pct(metrics.validRate)} (기준 80% 이상) · p95 ${metrics.p95===null?'산출 불가':pct(metrics.p95)} (기준 5% 이하, 화면 대각선 대비)${reach&&Number.isFinite(reach.gainX)&&Number.isFinite(reach.gainY)?` · 시선 이동 범위 가로 ${Math.round(reach.gainX*100)}% 세로 ${Math.round(reach.gainY*100)}% (100%=표적까지 도달) · 치우침 가로 ${(reach.biasX*100).toFixed(1)}% 세로 ${(reach.biasY*100).toFixed(1)}% (+는 오른쪽·아래)`:''}`;
           gazeStatus.textContent=commitFailed?'교정 확정 실패 · 서버 어댑터를 받지 못했습니다 · 시선 분석 보류':`${activeCalibration?'새 교정 미통과 · 이전 교정 유지':'교정 검증 미통과 · 시선 분석 보류'} · ${measured}`;
         }
         calibrationRunStart=null;

@@ -99,3 +99,18 @@ test('injected provider cannot receive frames before explicit start or after sto
   session.start({userInitiated:true,cameraConsent:true}); assert.equal(await session.detect({},{}),1);
   session.stop(); await assert.rejects(session.detect({},{}),/not started/); assert.equal(count,1);
 });
+
+test('calibration reach reports how far the measured gaze travels and its bias per axis', async () => {
+  const {calibrationReach} = await import('../src/gaze/index.js');
+  const screen = {x:0, y:0, width:1000, height:500};
+  const identity = {dimension:2, x:[0,1000,0], y:[0,0,500], trainingIds:[], featureBounds:[]};
+  const targets = [.1,.5,.9].flatMap(x => [.1,.5,.9].map(y => ({x:x*1000, y:y*500})));
+  // measured travels 60% of the distance from the centre horizontally and 100% vertically, 5% of the width to the right
+  const attempts = targets.map((target, i) => ({id:`v${i}`, target, features:[.5+(target.x/1000-.5)*.6+.05, target.y/500]}));
+  const reach = calibrationReach(identity, attempts, screen);
+  assert.equal(reach.count, 9);
+  assert.ok(Math.abs(reach.gainX-.6)<1e-9 && Math.abs(reach.gainY-1)<1e-9);
+  assert.ok(Math.abs(reach.biasX-.05)<1e-9 && Math.abs(reach.biasY)<1e-9);
+  assert.equal(calibrationReach(identity, attempts.slice(0,2), screen), null);
+  assert.equal(calibrationReach(identity, attempts.map(a => ({...a, valid:false})), screen), null);
+});

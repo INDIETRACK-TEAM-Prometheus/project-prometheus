@@ -136,6 +136,29 @@ export function calibrationMetrics(model, attempts, screen, {independent = true}
   return {attempts:attempts.length, validCount:errors.length, validRate:errors.length / attempts.length, p50:percentile(errors, .5), p95:percentile(errors, .95), unit:'screen_diagonal_fraction'};
 }
 
+// Reach of the measured gaze against the validation targets, per axis, in screen fractions. gain is the least-squares
+// slope of the measured position on the target position: 1 reaches every target, .6 covers only 60% of the distance
+// from the screen centre. bias is the mean signed error (positive = measured right of / below the target).
+export function calibrationReach(model, attempts, screen) {
+  if (!rect(screen) || !Array.isArray(attempts)) throw new Error('screen and attempts required');
+  const rows = [];
+  for (const s of attempts) {
+    if (s.valid === false || !point(s.target)) continue;
+    const p = predictCalibration(model, s.features);
+    rows.push({tx:(s.target.x-screen.x)/screen.width, ty:(s.target.y-screen.y)/screen.height, mx:(p.x-screen.x)/screen.width, my:(p.y-screen.y)/screen.height});
+  }
+  if (rows.length < 3) return null;
+  const mean = key => rows.reduce((sum, row) => sum + row[key], 0) / rows.length;
+  const axis = (t, m) => {
+    const tm = mean(t), mm = mean(m);
+    let cov = 0, variance = 0;
+    for (const row of rows) { cov += (row[t]-tm)*(row[m]-mm); variance += (row[t]-tm)**2; }
+    return {gain:variance > 1e-9 ? cov/variance : null, bias:mm-tm};
+  };
+  const x = axis('tx','mx'), y = axis('ty','my');
+  return {count:rows.length, gainX:x.gain, gainY:y.gain, biasX:x.bias, biasY:y.bias};
+}
+
 // All rectangles and points use the same unmirrored CSS-pixel screen space.
 export function mapCoordinates(screenPoint, screen, app, worldInApp) {
   if (!point(screenPoint) || !rect(screen) || !rect(app) || !rect(worldInApp)) throw new Error('invalid geometry');

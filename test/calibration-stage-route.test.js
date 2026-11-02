@@ -51,6 +51,10 @@ test('calibration verdict event carries only aggregate outcome numbers',async()=
  const {sanitizeCalibrationStageEvent}=await import('../server/calibration-stage-log.js');
  const sessionId=randomUUID(),base={event:'calibration_verdict',sessionId,count:27};
  assert.deepEqual(sanitizeCalibrationStageEvent({...base,passed:false,validCount:26,attempts:27,p95Bp:742}),{event:'calibration_verdict',sessionId,count:27,passed:false,validCount:26,attempts:27,p95Bp:742});
+ const reach={p50Bp:420,gainXBp:6100,gainYBp:9300,biasXBp:-250,biasYBp:480};
+ assert.deepEqual(sanitizeCalibrationStageEvent({...base,passed:false,validCount:27,attempts:27,p95Bp:1980,...reach}),{event:'calibration_verdict',sessionId,count:27,passed:false,validCount:27,attempts:27,p95Bp:1980,...reach});
+ for(const bad of [{gainXBp:1.5},{biasYBp:200000},{p50Bp:-1},{gainXBp:'1'}])assert.equal(sanitizeCalibrationStageEvent({...base,passed:false,validCount:27,attempts:27,...bad}),null);
+ assert.equal(sanitizeCalibrationStageEvent({event:'calibration_adapt_start',sessionId,gainXBp:5000}),null);
  assert.deepEqual(sanitizeCalibrationStageEvent({...base,passed:true,validCount:0,attempts:27}),{event:'calibration_verdict',sessionId,count:27,passed:true,validCount:0,attempts:27});
  for(const invalid of [
    {...base},                                                             // outcome missing
