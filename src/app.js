@@ -1,4 +1,5 @@
 import {createWorld} from './spatial/world.js';
+import {createVideoScene} from './spatial/video-scene.js';
 import {createLocalRecorder,listLocalRecordings,deleteLocalRecordings} from './gaze/local-recorder.js';
 import {GAZE_CALIBRATION_PROFILE_KEY,restoreLandmarkResidualCalibration,openGazeCalibrationProfileStore,loadGazeCalibrationProfile,createGazeCalibrationProfileAsync,saveGazeCalibrationProfile,fitAffineCalibration,identityAffineCalibration,selectAffineCalibrationCandidate} from './gaze/calibration-profile.js';
 import {createCausalDisplayFilter,REMOTE_GAZE_DISPLAY_FILTER} from './gaze/display-filter.js';
@@ -308,7 +309,7 @@ async function boot() {
   // WebEyeTrack scales its calibration loss by the screen size in cm; the viewport share of the physical screen is what the targets span.
   function viewportScreenCm(){const inches=screenDiagonalInches(),diagonalPx=Math.hypot(screen.width,screen.height);if(!inches||!(diagonalPx>0))return null;const cmPerPx=inches*2.54/diagonalPx;return [Math.round(innerWidth*cmPerPx*10)/10,Math.round(innerHeight*cmPerPx*10)/10];}
   function showScreenDiagonal(){const inches=screenDiagonalInches(),cm=viewportScreenCm();$('#screenDiagonal').value=inches??'';$('#screenDiagonalStatus').textContent=cm?`${inches}인치 · 현재 창 ${cm[0]}×${cm[1]} cm · 다음 카메라 시작부터 적용`:'미입력 · 모델 기본값(24인치 16:9) 사용';}
-  let clickCorrections=0,clickCorrectionBusy=false,lastClickCorrectionAt=-Infinity;
+  let clickCorrections=0,clickCorrectionBusy=false,lastClickCorrectionAt=-Infinity,syntheticWorld=null,videoScene=null,videoObjectUrl=null;
   const fixation=createFixationBuffer();
   let activeLandmarkResidual=null;
   const calibrationStatus=$('#calibrationStatus');
@@ -447,7 +448,7 @@ async function boot() {
   });
   const sizeCanvas=()=>{const r=canvas.getBoundingClientRect(), d=window.devicePixelRatio||1;canvas.width=Math.max(1,Math.round(r.width*d));canvas.height=Math.max(1,Math.round(r.height*d));};
   sizeCanvas();
-  try { world=createWorld(canvas);
+  try { world=createWorld(canvas);syntheticWorld=world;
     const draw=ts=>{
       if(!sceneFrozen)world.render(ts);history.trim(ts);
       const current=world.getFrame();
@@ -810,6 +811,49 @@ async function boot() {
   const modelDepthStatus=document.createElement('span');modelDepthStatus.id='modelDepthState';modelDepthStatus.setAttribute('role','status');canvas.parentElement.append(modelDepthStatus);
 
   const backgroundStatus=document.createElement('span');backgroundStatus.id='backgroundAttentionState';backgroundStatus.setAttribute('role','status');canvas.parentElement.append(backgroundStatus);
+  // ---- Scene source: the synthetic world or a recorded video in the same canvas (same frame interface downstream).
+  const sceneVideo=$('#sceneVideo'),sceneSource=$('#sceneSource'),sceneVideoFile=$('#sceneVideoFile');
+  function useScene(kind){
+    // Object identities do not carry over between scenes.
+    liveTracker=null;clearGazeTarget();
+    if(kind==='video'&&videoScene){world=videoScene;void sceneVideo.play().catch(()=>{});$('#sceneLabel').textContent='VIDEO SCENE';$('#sceneNote').textContent='녹화 영상 · 시선 → SAM 3.1 → 깊이 → Muse Spark';}
+    else{sceneVideo.pause();world=syntheticWorld;sceneSource.value='synthetic';$('#sceneLabel').textContent='LIVE WORLD';$('#sceneNote').textContent='가상 장면은 시선으로 조작되지 않습니다';}
+  }
+  sceneSource.addEventListener('change',()=>{if(sceneSource.value==='video')sceneVideoFile.click();else useScene('synthetic');});
+  sceneVideoFile.addEventListener('cancel',()=>{if(world!==videoScene)sceneSource.value='synthetic';});
+  sceneVideoFile.addEventListener('change',()=>{
+    const file=sceneVideoFile.files?.[0];sceneVideoFile.value='';
+    if(!file){if(world!==videoScene)sceneSource.value='synthetic';return;}
+    if(videoObjectUrl)URL.revokeObjectURL(videoObjectUrl);
+    videoObjectUrl=URL.createObjectURL(file);sceneVideo.src=videoObjectUrl;
+    try{videoScene??=createVideoScene(canvas,sceneVideo);}catch{message.textContent='이 브라우저에서 동영상 장면을 표시할 수 없습니다.';useScene('synthetic');return;}
+    sceneSource.value='video';useScene('video');message.textContent=`동영상 장면: ${file.name} (이 기기에서만 재생, 분석 프레임은 SAM·깊이·Spark로 전송)`;
+  });
+  // ---- Gaze target overlay: the box of the object nearest the fixation, and the fixation itself.
+  const gazeTargetOverlay=$('#gazeTargetOverlay');let gazeTargetTimer=null;
+  function clearGazeTarget(){clearTimeout(gazeTargetTimer);const ctx=gazeTargetOverlay.getContext('2d');ctx.clearRect(0,0,gazeTargetOverlay.width,gazeTargetOverlay.height);}
+  function drawGazeTarget(view,target){
+    const r=gazeTargetOverlay.getBoundingClientRect(),d=window.devicePixelRatio||1;
+    gazeTargetOverlay.width=Math.max(1,Math.round(r.width*d));gazeTargetOverlay.height=Math.max(1,Math.round(r.height*d));
+    clearGazeTarget();if(!view?.frameWidth||!view?.frameHeight)return;
+    const ctx=gazeTargetOverlay.getContext('2d'),sx=gazeTargetOverlay.width/view.frameWidth,sy=gazeTargetOverlay.height/view.frameHeight;
+    if(view.targetBounds){const b=view.targetBounds,x=b.left*sx,y=b.top*sy,w=(b.right-b.left)*sx,h=(b.bottom-b.top)*sy;
+      ctx.lineWidth=3*d;ctx.strokeStyle='#41d7a2';ctx.fillStyle='#41d7a222';ctx.fillRect(x,y,w,h);ctx.strokeRect(x,y,w,h);
+      ctx.font=`${12*d}px Inter,system-ui,sans-serif`;const label=`시선 대상 ${target?.objectId??''}`;ctx.fillStyle='#05090bcc';ctx.fillRect(x,Math.max(0,y-18*d),ctx.measureText(label).width+10*d,18*d);ctx.fillStyle='#e8eeef';ctx.fillText(label,x+5*d,Math.max(13*d,y-5*d));}
+    if(view.gaze){const x=view.gaze.x*gazeTargetOverlay.width,y=view.gaze.y*gazeTargetOverlay.height;ctx.lineWidth=2*d;ctx.strokeStyle='#fff';ctx.beginPath();ctx.arc(x,y,9*d,0,Math.PI*2);ctx.moveTo(x-14*d,y);ctx.lineTo(x+14*d,y);ctx.moveTo(x,y-14*d);ctx.lineTo(x,y+14*d);ctx.stroke();}
+    // The box belongs to an analysed frame; on moving footage it goes stale, so it fades out.
+    gazeTargetTimer=setTimeout(clearGazeTarget,4000);
+  }
+  // ---- Muse Spark background reasoning timeline: the evidence each analysis used and what Spark returned.
+  function addSparkTimeline(result){
+    const list=$('#sparkTimeline'),item=document.createElement('li'),add=(cls,text)=>{const span=document.createElement('span');span.className=cls;span.textContent=text;item.append(span,document.createElement('br'));};
+    add('time',`${new Date().toLocaleTimeString()} · 근거 ${Math.round(result.sourceAgeMs??0)}ms 전 · ${world===videoScene?'동영상':'가상 장면'}`);
+    add('step',`① 시선(0.8초 중앙값) → ${result.gazeTarget?`대상 ${result.gazeTarget.objectId} (거리 ${(result.gazeTarget.distance*100).toFixed(1)}%)`:'반경 안 물체 없음'}`);
+    add('step',`② SAM 3.1 → 마스크 ${result.view?.maskCount??0}개 · 추적 물체 ${result.candidateSpace?.candidates?.length??0}개`);
+    add('step',`③ 깊이 → ${result.depth?.status==='ok'?`물체 ${result.depth.objectCount}개 깊이 반영`:result.depth?`보류 (${result.depth.reason})`:'요청 안 함'}`);
+    add('step',`④ Muse Spark → ${result.scenarios.length?result.scenarios.map(scenario=>scenario.possible_next_action).join(' / '):'시나리오 없음'}${result.nextGaze?.rankedTargetIds?.length?` · 다음 응시 ${result.nextGaze.rankedTargetIds.join(', ')}`:''}`);
+    list.prepend(item);while(list.children.length>8)list.lastElementChild.remove();
+  }
   function backgroundSnapshot(){
     // Paid SAM/Spark calls run only with the start consent in place and a visible tab.
     // Not during the click-calibration guide either: the gaze is on calibration dots, not on the scene.
@@ -834,7 +878,7 @@ async function boot() {
       sam:async(frame,{signal,gaze})=>{const segment=async prompt=>{const response=await fetch('/api/sam/segment',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({frame:{frameId:frame.frameId,observedAt:frame.observedAt},imageDataUrl:frame.imageData,prompt}),signal});if(!response.ok)throw new Error('background_sam_failed');return response.json();};let result=await segment(SCENE_OBJECTS_PROMPT),mode='objects';if(!result.masks?.length&&gaze){result=await segment(gazeSamPrompt(frame,gaze));mode='gaze point';}$('#worldSceneState').textContent=`백그라운드 SAM · ${mode} · ${result.masks?.length??0} 마스크`;return result;},
       reason:async(input,{signal})=>sendProvisionalSparkRequest({consent:$('#provisionalSparkConsent').checked,frame:input.frame,imageDataUrl:input.frame.imageData,gazePoint:input.gaze,gazeTiming:{sampleAtMs:input.gaze.observedAt,processedAtMs:input.gaze.processedAt,timestampKind:input.gaze.timestampKind,estimateStatus:input.gaze.estimateStatus},masks:input.masks,candidates:input.candidates,gazeTarget:input.gazeTarget,depth:input.depth,issuedAtMs:performance.now(),signal})});
     backgroundAttention=new BackgroundAttentionCoordinator({work,snapshot:backgroundSnapshot,intervalMs:1000,minIntervalMs:1000,timeoutMs:110000,retryIntervalMs:5000,
-      publish:result=>{const list=$('#provisionalSparkScenarios');list.replaceChildren();for(const scenario of result.scenarios){const item=document.createElement('li');item.textContent=scenario.possible_next_action;list.append(item);}if(result.nextGaze) {const item=document.createElement('li');item.textContent='다음 응시 후보: '+result.nextGaze.rankedTargetIds.join(', ');list.append(item);}backgroundStatus.textContent=`백그라운드 가설 · 근거 ${Math.round(result.sourceAgeMs)}ms 전 · 시간 정렬 미검증`;$('#worldGazeState').textContent=result.gazeTarget?`시선 대상 ${result.gazeTarget.objectId} · 거리 ${(result.gazeTarget.distance*100).toFixed(1)}%`:'시선 대상 없음 (반경 밖)';},
+      publish:result=>{drawGazeTarget(result.view,result.gazeTarget);addSparkTimeline(result);const list=$('#provisionalSparkScenarios');list.replaceChildren();for(const scenario of result.scenarios){const item=document.createElement('li');item.textContent=scenario.possible_next_action;list.append(item);}if(result.nextGaze) {const item=document.createElement('li');item.textContent='다음 응시 후보: '+result.nextGaze.rankedTargetIds.join(', ');list.append(item);}backgroundStatus.textContent=`백그라운드 가설 · 근거 ${Math.round(result.sourceAgeMs)}ms 전 · 시간 정렬 미검증`;$('#worldGazeState').textContent=result.gazeTarget?`시선 대상 ${result.gazeTarget.objectId} · 거리 ${(result.gazeTarget.distance*100).toFixed(1)}%`:'시선 대상 없음 (반경 밖)';},
       onStatus:status=>{if(['work_failed','invalid_result','timeout','processing_failed','snapshot_failed'].includes(status.event))backgroundStatus.textContent='백그라운드 추론 요청 실패 · 재시도 대기';}});
     backgroundAttention.start(cameraSessionId??crypto.randomUUID());backgroundStatus.textContent='백그라운드 attention 분석 중';
   }

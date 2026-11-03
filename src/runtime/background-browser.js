@@ -111,6 +111,8 @@ export function createBackgroundBrowserWork({capture, sam, reason, tracker, dept
     requireResponseFrame(hypotheses, frame);
     if (!Array.isArray(hypotheses.scenarios)) throw new TypeError('hypotheses required');
     const candidateSpace = candidates.length ? {frameId:frame.frameId, observedAt:frame.observedAt, candidates:linked.map(track=>({objectId:track.objectId, bounds:structuredClone(track.bounds), maskDigest:track.maskDigest, identityStatus:'linked', area:track.area})), provenance:{...provenance, samModel:provenance.samModel ?? null, samRequestId:provenance.samRequestId ?? null}} : null;
-    return {scenarios:structuredClone(hypotheses.scenarios), ...(Object.hasOwn(hypotheses, 'nextGaze') ? {nextGaze:structuredClone(hypotheses.nextGaze)} : {}), ...(candidateSpace ? {candidateSpace} : {}), ...(depthPending ? {depth:structuredClone(depthStatus)} : {}), objectDependencies:{objectIds:linked.map(track=>track.objectId), objectVersions:Object.fromEntries(linked.map(track=>[track.objectId, track.maskDigest]))}, gazeTarget:structuredClone(gazeTarget)};
+    return {scenarios:structuredClone(hypotheses.scenarios), ...(Object.hasOwn(hypotheses, 'nextGaze') ? {nextGaze:structuredClone(hypotheses.nextGaze)} : {}), ...(candidateSpace ? {candidateSpace} : {}), ...(depthPending ? {depth:structuredClone(depthStatus)} : {}), objectDependencies:{objectIds:linked.map(track=>track.objectId), objectVersions:Object.fromEntries(linked.map(track=>[track.objectId, track.maskDigest]))}, gazeTarget:structuredClone(gazeTarget),
+      // For display only (scene overlay and timeline): sizes in this frame's pixels.
+      view:{frameWidth:frame.width, frameHeight:frame.height, maskCount:masks.masks.length, gaze:gaze ? {x:gaze.x, y:gaze.y} : null, targetBounds:gazeTarget ? structuredClone(linked.find(track=>track.objectId===gazeTarget.objectId)?.bounds ?? null) : null}};
   };
 }

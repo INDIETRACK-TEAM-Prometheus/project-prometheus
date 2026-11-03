@@ -22,7 +22,7 @@ test('browser work captures, segments, tracks, then reasons; first frame withhol
   const result = await work(snapshot, {signal: new AbortController().signal, mark: name => marks.push(name)});
   assert.deepEqual(calls, ['capture', 'sam', 'reason']);
   assert.deepEqual(marks, ['samDone', 'reasonFirstByte']);
-  assert.deepEqual(result, {scenarios: [], objectDependencies: {objectIds: [], objectVersions: {}}, gazeTarget: null});
+  assert.deepEqual(result, {scenarios: [], objectDependencies: {objectIds: [], objectVersions: {}}, gazeTarget: null, view: {frameWidth: 16, frameHeight: 16, maskCount: 1, gaze: {x: .25, y: .75}, targetBounds: null}});
 });
 
 test('later frames reuse persistent IDs with digests, provenance and tracker-driven invalidations', async () => {
@@ -157,4 +157,6 @@ test('linked objects are ranked by distance from the fixation and the nearest be
   assert.equal(seen[1].gazeTarget.distance, 0);
   assert.deepEqual(seen[1].gazeTarget.rankedObjectIds, [nearId]);
   assert.equal(second.gazeTarget.objectId, nearId);
+  assert.deepEqual(second.view.targetBounds, {left: 2, top: 10, right: 6, bottom: 14});
+  assert.equal(second.view.maskCount, 2);
 });
