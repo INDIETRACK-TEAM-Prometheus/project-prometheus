@@ -15,5 +15,11 @@ data/calibration/
 data/models/
 .venv-depth/
 .depth-runtime/
-data/demo/
+data/demo/*
+# the demo playlist and its four Project Aria (AEA loc2) clips are versioned
+!data/demo/playlist.json
+!data/demo/aria_loc2_script3_seq1_rec1.*
+!data/demo/aria_loc2_script2_seq6_rec1.*
+!data/demo/aria_loc2_script5_seq2_rec1.*
+!data/demo/aria_loc2_script3_seq1_rec2.*
 ui/dist/
