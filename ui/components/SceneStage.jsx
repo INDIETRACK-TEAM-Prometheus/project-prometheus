@@ -1,6 +1,7 @@
 import {useEffect, useRef} from 'react';
 import {gazeAt} from '../../src/gaze/gaze-replay.js';
 import {contentRect, maskCanvas} from '../lib/frames.js';
+import {visionName} from '../hooks/usePerception.js';
 
 // The glasses video, fitted whole into the stage (object-fit: contain), and a canvas over exactly the video content:
 // YOLO boxes with names and distances, the SAM 3.1 segment at the gaze point, and the live gaze point itself.
@@ -44,7 +45,9 @@ export default function SceneStage({videoRef, track, live, onEnded, onTimeUpdate
           ctx.lineWidth = 1.5 * d; ctx.strokeStyle = 'rgba(233,236,238,.75)';
           ctx.strokeRect(x, y, (b.right - b.left) * sx, (b.bottom - b.top) * sy);
           const meters = item.depthM;
-          drawLabel(ctx, `${item.label}${meters ? ` · ${meters.toFixed(1)} m` : ''}`, x, y, d);
+          // the vision model's name when it has seen this box, else the YOLO class
+          const name = visionName(item, det.frame, state.named, now) ?? item.label;
+          drawLabel(ctx, `${name}${meters ? ` · ${meters.toFixed(1)} m` : ''}`, x, y, d);
         }
         ctx.globalAlpha = 1;
       }

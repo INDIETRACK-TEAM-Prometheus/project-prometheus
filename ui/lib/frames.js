@@ -40,3 +40,31 @@ export function maskCanvas(mask, color) {
   ctx.putImageData(image, 0, 0);
   return canvas;
 }
+
+const images = new Map();
+function loadImage(src) {
+  if (!images.has(src)) {
+    images.set(src, new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = src; }));
+    while (images.size > 8) images.delete(images.keys().next().value);
+  }
+  return images.get(src);
+}
+
+// Numbered crops in one grid image for the vision model: each crop keeps its aspect ratio with some context around it.
+export async function cropGrid(entries, {tile = 200, columns = 3, margin = .15} = {}) {
+  const cols = Math.min(columns, entries.length), rows = Math.ceil(entries.length / cols);
+  const canvas = document.createElement('canvas');
+  canvas.width = cols * tile; canvas.height = rows * tile;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#202020'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (const [index, entry] of entries.entries()) {
+    const image = await loadImage(entry.src), b = entry.bounds;
+    const w = b.right - b.left, h = b.bottom - b.top, side = Math.max(w, h) * (1 + 2 * margin);
+    const cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2, sx = image.naturalWidth / entry.width, sy = image.naturalHeight / entry.height;
+    const x = (index % cols) * tile, y = Math.floor(index / cols) * tile;
+    ctx.drawImage(image, (cx - side / 2) * sx, (cy - side / 2) * sy, side * sx, side * sy, x, y, tile, tile);
+    ctx.fillStyle = '#000'; ctx.fillRect(x, y, 30, 28);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.fillText(String(index + 1), x + 8, y + 21);
+  }
+  return canvas.toDataURL('image/jpeg', .85);
+}

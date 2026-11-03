@@ -109,6 +109,12 @@ export function createObjectMemory({mergeDistanceM = .6, maxObjects = 60} = {}) 
       if (objects.length > maxObjects) objects.splice(objects.indexOf(objects.reduce((a, b) => a.lastT <= b.lastT ? a : b)), 1);
       return object;
     },
+    // A name from the vision model replaces the detector's class for this object.
+    rename(id, label) {
+      const object = objects.find(item => item.id === id);
+      if (!object || typeof label !== 'string' || !label) return false;
+      object.label = label; return true;
+    },
     list() { return objects.map(object => ({...object, position:[...object.position]})); },
     clear() { objects.length = 0; }
   };

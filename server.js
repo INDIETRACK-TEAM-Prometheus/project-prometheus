@@ -11,6 +11,8 @@ import { createRecordingStore } from './server/recording-store.js';
 import { createCalibrationStageLog } from './server/calibration-stage-log.js';
 import { createConfiguredDepthProvider } from './server/depth-provider.js';
 import { createDetectProvider } from './server/detect-provider.js';
+import { nameObjects } from './server/object-namer.js';
+import { predictNext } from './server/predictor.js';
 import { createRemoteGazeProvider, validScreenCm } from './server/gaze-provider.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -109,10 +111,11 @@ function validDepthEvidence(depth,frame,issuedAtMs,candidates){
   }
   return new Set(depth.objects.map(o=>o.objectId)).size===depth.objects.length && depth.relations.every(r=>exactKeys(r,['nearObjectId','farObjectId']) && ok.has(r.nearObjectId) && ok.has(r.farObjectId) && r.nearObjectId!==r.farObjectId);
 }
-export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),calibrationStageLog=createCalibrationStageLog({root:path.join(root,'data','diagnostics')}),depthProvider=createConfiguredDepthProvider(),computeProfile=process.env.PROMETHEUS_COMPUTE_PROFILE??'cloud',detectProvider=createDetectProvider(),gazeProvider:configuredGazeProvider,gazeRemoteUrl=process.env.PROMETHEUS_GAZE_REMOTE_URL} = {}) {
+export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),calibrationStageLog=createCalibrationStageLog({root:path.join(root,'data','diagnostics')}),depthProvider=createConfiguredDepthProvider(),computeProfile=process.env.PROMETHEUS_COMPUTE_PROFILE??'cloud',detectProvider=createDetectProvider(),namer=nameObjects,predictor=predictNext,preloadModels=false,gazeProvider:configuredGazeProvider,gazeRemoteUrl=process.env.PROMETHEUS_GAZE_REMOTE_URL} = {}) {
   if (!['cloud','local'].includes(computeProfile)) throw new TypeError('PROMETHEUS_COMPUTE_PROFILE must be cloud or local');
   const gazeProvider=configuredGazeProvider??(computeProfile==='cloud'?createRemoteGazeProvider({baseUrl:gazeRemoteUrl}):null);
-  detectProvider.warm?.();
+  // Preload the local models for a real server run (tests create servers without needing them).
+  if(preloadModels){detectProvider.warm?.();depthProvider.warm?.();}
   const configuredDepthProvider=depthProvider;
   if(computeProfile==='cloud'&&depthProvider.kind==='local_depth_provider')depthProvider={kind:'cloud_depth_unavailable',async infer(){throw Object.assign(new Error('remote depth worker required by cloud profile'),{code:'DEPTH_CLOUD_GPU_REQUIRED'});},async close(){}};
   let inFlight = 0;
@@ -217,6 +220,34 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
         const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
         const result=await detectProvider.detect({...input,signal:abort.signal});json(res,200,result);
       }catch(error){const code=typeof error?.code==='string'&&/^DETECT_[A-Z_]+$/.test(error.code)?error.code:'DETECT_INVALID_REQUEST';json(res,code==='DETECT_PROVIDER_BUSY'?429:code==='DETECT_INVALID_REQUEST'?400:503,{error:'detect_unavailable',code});}
+      return;
+    }
+    // Muse Spark names the objects YOLO and SAM 3.1 cut out (one grid image of numbered crops).
+    if(pathname==='/api/name-objects'){
+      if(req.method!=='POST'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
+      if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']??'')){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+      const abort=new AbortController();res.on('close',()=>{if(!res.writableEnded)abort.abort();});
+      try{let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxBody){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
+        const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if(!input||typeof input!=='object'||Object.keys(input).sort().join(',')!=='imageDataUrl,tiles'){json(res,400,{error:'invalid_request'});return;}
+        json(res,200,await namer({...input,signal:abort.signal}));
+      }catch(error){const code=typeof error?.code==='string'?error.code:'NAMER_UPSTREAM_ERROR';json(res,code==='NAMER_INVALID_INPUT'?400:['PROVIDER_BUSY','PROVIDER_MIN_INTERVAL','PROVIDER_BUDGET_EXCEEDED','PROVIDER_RATE_LIMITED','PROVIDER_CIRCUIT_OPEN'].includes(code)?429:502,{error:'namer_unavailable',code});}
+      return;
+    }
+    // Fast next-action prediction: frame + gaze point + typed scene objects and 3D memory (see server/predictor.js).
+    if(pathname==='/api/predict'){
+      if(req.method!=='POST'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
+      if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']??'')){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+      const abort=new AbortController();res.on('close',()=>{if(!res.writableEnded)abort.abort();});
+      try{let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxBody){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
+        const input=JSON.parse(Buffer.concat(chunks).toString('utf8')),frame=input?.frame,gaze=input?.gazePoint;
+        const valid=input&&typeof input==='object'&&Object.keys(input).sort().join(',')==='frame,gazePoint,imageDataUrl,sceneObjects'&&frame&&Object.keys(frame).sort().join(',')==='height,width'&&Number.isInteger(frame.width)&&Number.isInteger(frame.height)&&frame.width>0&&frame.height>0&&frame.width*frame.height<=1048576
+          &&gaze&&Object.keys(gaze).sort().join(',')==='x,y'&&Number.isFinite(gaze.x)&&Number.isFinite(gaze.y)&&gaze.x>=0&&gaze.x<1&&gaze.y>=0&&gaze.y<1&&validSceneObjects(input.sceneObjects,frame);
+        if(!valid){json(res,400,{error:'invalid_request'});return;}
+        const {gazeObject,objects,memory}=input.sceneObjects;
+        json(res,200,await predictor({imageDataUrl:input.imageDataUrl,signal:abort.signal,evidence:{gazePoint:{x:Math.round(gaze.x*1000)/1000,y:Math.round(gaze.y*1000)/1000},gazeObject:gazeObject?{name:gazeObject.label,depthM:gazeObject.depthM}:null,objects:objects.map(o=>({name:o.label,depthM:o.depthM})),memory:memory.map(m=>({name:m.label,distanceM:m.distanceM,bearing:m.bearing,secondsAgo:m.secondsAgo})),
+          note:'names come from a vision model looking at YOLO and SAM 3.1 crops; depths are monocular estimates scaled by SLAM points; memory objects were looked at earlier and are kept in 3D with the glasses pose'}}));
+      }catch(error){const code=typeof error?.code==='string'?error.code:'PREDICT_UPSTREAM_ERROR';json(res,code==='PREDICT_INVALID_INPUT'?400:['PROVIDER_BUSY','PROVIDER_MIN_INTERVAL','PROVIDER_BUDGET_EXCEEDED','PROVIDER_RATE_LIMITED','PROVIDER_CIRCUIT_OPEN'].includes(code)?429:502,{error:'predict_unavailable',code});}
       return;
     }
     if(pathname==='/api/diagnostics/calibration-stage'){
@@ -381,7 +412,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const keyPath = process.env.PROMETHEUS_HTTPS_KEY;
   if (Boolean(certPath) !== Boolean(keyPath)) throw new Error('Set both PROMETHEUS_HTTPS_CERT and PROMETHEUS_HTTPS_KEY to enable HTTPS.');
   const httpsOptions = certPath ? {cert: await readFile(certPath), key: await readFile(keyPath)} : undefined;
-  const server = createLocalServer({httpsOptions});
+  const server = createLocalServer({httpsOptions, preloadModels:true});
   const url = httpsOptions ? 'https://127.0.0.1:4173' : 'http://127.0.0.1:4173';
   server.listen(4173, '127.0.0.1', () => console.log(`Prometheus: ${url}`));
 }

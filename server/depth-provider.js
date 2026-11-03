@@ -298,7 +298,10 @@ export function createDepthProvider({
     return { available: !!worker, inFlight: !!pending, closed, model: worker ? { id: worker.model.id, sha256: worker.model.sha256, device: worker.model.device } : null };
   }
 
-  return { kind: 'local_depth_provider', infer, close, status };
+  // Loads the model before the first frame (the cold start is tens of seconds on CPU).
+  function warm() { void ensureWorker().catch(() => {}); }
+
+  return { kind: 'local_depth_provider', infer, close, status, warm };
 }
 
 function roundMs(value) { return Math.round(value * 1000) / 1000; }

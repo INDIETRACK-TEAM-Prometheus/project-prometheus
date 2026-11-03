@@ -50,7 +50,7 @@ export default function App() {
   }, [live]);
 
   const seconds = ms => ms == null ? '–' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
-  const stages = [['YOLO', 'yolo'], ['SAM 3.1', 'sam'], ['Depth', 'depth'], ['Muse Spark', 'spark']];
+  const stages = [['YOLO', 'yolo'], ['SAM 3.1', 'sam'], ['Depth', 'depth'], ['Spark naming', 'naming'], ['Muse Spark', 'spark']];
 
   return (
     <div className="app">

@@ -64,3 +64,11 @@ test('SLAM anchors set the metric scale of a monocular depth map', async () => {
   assert.equal(depthScale(anchors, depth), .5);
   assert.equal(depthScale(anchors.slice(0, 3), depth), null);
 });
+
+test('a vision-model name replaces the detector class in memory', () => {
+  const memory = createObjectMemory();
+  const object = memory.observe({label:null, point:[0, 0, 0], t:0});
+  assert.equal(memory.rename(object.id, 'gray suitcase'), true);
+  assert.equal(memory.list()[0].label, 'gray suitcase');
+  assert.equal(memory.rename('missing', 'x'), false);
+});

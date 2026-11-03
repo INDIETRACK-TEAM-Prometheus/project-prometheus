@@ -29,3 +29,6 @@ export async function estimateDepth(frame, signal) {
 }
 
 export const reason = (body, signal) => post('/api/reason-provisional', body, signal);
+
+export const nameObjects = (imageDataUrl, tiles, signal) => post('/api/name-objects', {imageDataUrl, tiles}, signal);
+export const predict = (body, signal) => post('/api/predict', body, signal);

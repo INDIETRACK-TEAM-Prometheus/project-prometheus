@@ -1,17 +1,33 @@
 import {useEffect, useRef} from 'react';
-import {detect, segment, samPointPrompt, estimateDepth, reason} from '../lib/api.js';
-import {captureVideo, boxIou, scaleBounds} from '../lib/frames.js';
+import {detect, segment, samPointPrompt, estimateDepth, predict, nameObjects} from '../lib/api.js';
+import {captureVideo, boxIou, scaleBounds, cropGrid} from '../lib/frames.js';
 import {gazeAt, poseAt, rayAt, anchorsAt} from '../../src/gaze/gaze-replay.js';
 import {worldPoint, maskCentroid, maskDepthMedian, boxDepthMedian, relativeTo, depthScale} from '../../src/spatial/object-memory.js';
 
 // Three loops over the playing glasses video, each as fast as its model allows and none waiting for another:
 //   YOLO (local CPU, ~0.15 s)      class names and boxes for the whole frame
-//   SAM 3.1 + depth (~1 s)         the object at the gaze point, its depth, and its place in the 3D memory
-//   Muse Spark (~5-8 s)            next-action predictions from the latest gaze result and the memory
+//   depth (~1-2 s, local CPU)     a metric depth map (scaled by SLAM points) for distances and the 3D memory
+//   SAM 3.1 (~0.5 s)               the object at the gaze point, published at once, placed in the 3D memory
+//   Muse Spark naming (~5 s)       looks at the crops YOLO and SAM cut out and names them ("gray suitcase")
+//   Muse Spark (~1.5 s)            next-action predictions from the latest gaze result and the memory
 // Results live in a ref (read every animation frame by the overlay), not in React state.
 
 const sleep = (ms, signal) => new Promise(resolve => { const timer = setTimeout(resolve, ms); signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, {once:true}); });
-const LABEL_IOU = .25;
+const LABEL_IOU = .25, NAME_TTL_MS = 8000, NAME_IOU = .3;
+const clean = label => typeof label === 'string' ? label.replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 40) || null : null;
+
+// The vision model's name for a YOLO box: a box it named recently with the same class that overlaps this one.
+export function visionName(item, frame, named, now) {
+  if (!named?.list?.length || now - named.at > NAME_TTL_MS) return null;
+  const sx = frame.width / named.frame.width, sy = frame.height / named.frame.height;
+  let best = null, bestIou = NAME_IOU;
+  for (const entry of named.list) {
+    if (!entry.name || entry.yolo !== item.label) continue;
+    const iou = boxIou(scaleBounds(entry.bounds, sx, sy), item.bounds);
+    if (iou > bestIou) { best = entry; bestIou = iou; }
+  }
+  return best?.name ?? null;
+}
 
 export function emptyLive() {
   return {detections:null, segment:null, depth:null, spark:null, timings:{}, errors:{}, busy:{}};
@@ -67,32 +83,70 @@ export function usePerception({videoRef, track, running, memory, onMemory}) {
       }
     }
 
-    async function gazeLoop() {
+    // Depth runs on its own: SAM never waits for it. Each SAM result uses the newest depth map (at most a few seconds old).
+    async function depthLoop() {
       while (!signal.aborted) {
         if (!playing()) { await sleep(150, signal); continue; }
-        const frame = captureVideo(video(), 640), small = captureVideo(video(), 320);
+        const small = captureVideo(video(), 320);
+        if (!small) { await sleep(150, signal); continue; }
+        const started = performance.now();
+        state.busy.depth = true;
+        try {
+          const map = metric(await estimateDepth(small, signal), small.videoTime);
+          state.depth = {map, frame:small, at:performance.now()};
+          state.timings.depth = performance.now() - started; delete state.errors.depth;
+        } catch (error) { if (signal.aborted) return; state.errors.depth = error.message; await sleep(1000, signal); }
+        finally { state.busy.depth = false; }
+      }
+    }
+
+    // SAM 3.1 at the gaze point, published as soon as it answers: Spark naming and prediction start from it at once.
+    async function gazeLoop() {
+      while (!signal.aborted) {
+        if (!playing()) { await sleep(100, signal); continue; }
+        const frame = captureVideo(video(), 640), preview = captureVideo(video(), 448, {quality:.8});
         const gaze = frame && gazeAt(track, frame.videoTime);
-        if (!frame || !small || !gaze || gaze.x >= 1 || gaze.y >= 1) { await sleep(150, signal); continue; }
+        if (!frame || !gaze || gaze.x >= 1 || gaze.y >= 1) { await sleep(100, signal); continue; }
         const pose = poseAt(track, frame.videoTime), started = performance.now();
-        state.busy.sam = state.busy.depth = true;
-        const depthJob = estimateDepth({...small, frameId:`${frame.frameId}d`}, signal).then(map => { state.timings.depth = performance.now() - started; delete state.errors.depth; return metric(map, small.videoTime); },
-          error => { state.errors.depth = error.message; return null; }).finally(() => { state.busy.depth = false; });
+        state.busy.sam = true;
         let masks = [];
         try { masks = (await segment(frame, samPointPrompt(frame, gaze), signal)).masks ?? []; state.timings.sam = performance.now() - started; delete state.errors.sam; }
-        catch (error) { if (signal.aborted) return; state.errors.sam = error.message; }
+        catch (error) { if (signal.aborted) return; state.errors.sam = error.message; await sleep(500, signal); continue; }
         finally { state.busy.sam = false; }
-        const depth = await depthJob;
-        if (signal.aborted) return;
-        if (depth) state.depth = {map:depth, frame:small, at:performance.now()};
         const mask = masks[0] ?? null;
         const named = nameMask(mask?.bounds ?? null, gaze, state.detections, frame);
+        const depth = state.depth && performance.now() - state.depth.at < 4000 ? state.depth.map : null;
         const depthM = mask && depth ? maskDepthMedian(mask, frame, depth) : named && depth ? boxDepthMedian(named.bounds, frame, depth) : null;
         const centroid = mask ? maskCentroid(mask, frame) : null;
         const point = centroid && pose && depthM ? worldPoint(pose, rayAt(track, centroid.x, centroid.y), depthM) : null;
-        const remembered = point ? memory.observe({label:named?.label ?? null, point, t:frame.videoTime, depthM}) : null;
+        // the memory keeps the vision model's names only; until one arrives the object stays unnamed there
+        const remembered = point ? memory.observe({label:null, point, t:frame.videoTime, depthM}) : null;
         if (remembered) onMemory();
-        state.segment = {frame, gaze, pose, mask, label:named?.label ?? null, score:named?.score ?? null, depthM, memoryId:remembered?.id ?? null, at:performance.now()};
-        if (!mask) await sleep(300, signal);
+        state.segment = {frame, preview, gaze, pose, mask, label:remembered?.label ?? named?.label ?? null, visionNamed:!!remembered?.label, yoloLabel:named?.label ?? null, score:named?.score ?? null, depthM, memoryId:remembered?.id ?? null, at:performance.now()};
+        if (!mask) await sleep(200, signal);
+      }
+    }
+
+    async function namingLoop() {
+      let lastFrameId = null;
+      while (!signal.aborted) {
+        const seg = state.segment, det = state.detections;
+        if (!seg?.mask || seg.frame.frameId === lastFrameId || !playing()) { await sleep(250, signal); continue; }
+        lastFrameId = seg.frame.frameId;
+        const boxes = (det?.list ?? []).filter(item => item.score >= .35).slice(0, 5);
+        const entries = [{src:seg.frame.dataUrl, width:seg.frame.width, height:seg.frame.height, bounds:seg.mask.bounds},
+          ...boxes.map(item => ({src:det.frame.dataUrl, width:det.frame.width, height:det.frame.height, bounds:item.bounds}))];
+        const started = performance.now();
+        state.busy.naming = true;
+        try {
+          const grid = await cropGrid(entries);
+          const {names} = await nameObjects(grid, entries.length, signal);
+          state.timings.naming = performance.now() - started; delete state.errors.naming;
+          if (names[0] && seg.memoryId && memory.rename(seg.memoryId, names[0])) onMemory();
+          if (names[0] && state.segment?.memoryId === seg.memoryId) Object.assign(state.segment, {label:names[0], visionNamed:true});
+          state.named = {frame:det?.frame ?? seg.frame, at:performance.now(), list:boxes.map((item, i) => ({bounds:item.bounds, yolo:item.label, name:names[i + 1] ?? null}))};
+        } catch (error) { if (signal.aborted) return; state.errors.naming = error.message; await sleep(2000, signal); }
+        finally { state.busy.naming = false; }
       }
     }
 
@@ -107,27 +161,26 @@ export function usePerception({videoRef, track, running, memory, onMemory}) {
         const objects = (detections?.list ?? []).slice(0, 8).map(item => {
           const bounds = scaleBounds(item.bounds, frame.width / detections.frame.width, frame.height / detections.frame.height);
           const d = depth && sx ? boxDepthMedian(bounds, frame, depth) : null;
-          return {label:item.label.replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 40) || 'object', score:item.score, depthM:d ? Math.round(d * 100) / 100 : null, bounds};
+          return {label:clean(visionName({...item, bounds}, frame, state.named, performance.now()) ?? item.label) ?? 'object', score:item.score, depthM:d ? Math.round(d * 100) / 100 : null, bounds};
         }).filter(o => o.bounds.right > o.bounds.left && o.bounds.bottom > o.bounds.top);
         const memoryNow = seg.pose ? memory.list().filter(o => o.label && o.id !== seg.memoryId).sort((a, b) => b.lastT - a.lastT).slice(0, 8)
-          .map(o => ({label:o.label, ...relativeTo(seg.pose, o.position), secondsAgo:Math.max(0, Math.round((frame.videoTime - o.lastT) * 10) / 10)}))
+          .map(o => ({label:clean(o.label) ?? 'object', ...relativeTo(seg.pose, o.position), secondsAgo:Math.max(0, Math.round((frame.videoTime - o.lastT) * 10) / 10)}))
           .filter(o => Number.isFinite(o.distanceM)) : [];
-        const body = {consentScope:'provisional_spark', timingStatus:'provisional', frame:{frameId:frame.frameId, observedAt:frame.observedAt, width:frame.width, height:frame.height}, imageDataUrl:frame.dataUrl,
-          gazePoint:{x:seg.gaze.x, y:seg.gaze.y, sampleAtMs:frame.observedAt, processedAtMs:frame.observedAt, timestampKind:'browser_capture_estimate', estimateStatus:'validated_calibration_estimate'},
-          issuedAtMs:performance.now(), masks:seg.mask ? [seg.mask.bounds] : [],
-          sceneObjects:{gazeObject:seg.mask ? {label:seg.label, depthM:seg.depthM ? Math.round(seg.depthM * 100) / 100 : null, bounds:seg.mask.bounds} : null, objects, memory:memoryNow}};
+        // the prediction sees a smaller copy of the same frame (fewer image tokens, same view)
+        const body = {frame:{width:frame.width, height:frame.height}, imageDataUrl:seg.preview?.dataUrl ?? frame.dataUrl, gazePoint:{x:seg.gaze.x, y:seg.gaze.y},
+          sceneObjects:{gazeObject:seg.mask ? {label:clean(seg.label), depthM:seg.depthM ? Math.round(seg.depthM * 100) / 100 : null, bounds:seg.mask.bounds} : null, objects, memory:memoryNow}};
         const started = performance.now();
         state.busy.spark = true;
         try {
-          const result = await reason(body, signal);
-          state.spark = {scenarios:result.scenarios.map(s => s.possible_next_action).filter(Boolean), label:seg.label, frameId:frame.frameId, videoTime:frame.videoTime, at:performance.now()};
+          const result = await predict(body, signal);
+          state.spark = {scenarios:result.predictions, label:seg.label, frameId:frame.frameId, videoTime:frame.videoTime, at:performance.now()};
           state.timings.spark = performance.now() - started; delete state.errors.spark;
         } catch (error) { if (signal.aborted) return; state.errors.spark = error.message; await sleep(3000, signal); }
         finally { state.busy.spark = false; }
       }
     }
 
-    void yoloLoop(); void gazeLoop(); void sparkLoop();
+    void yoloLoop(); void depthLoop(); void gazeLoop(); void namingLoop(); void sparkLoop();
     return () => controller.abort();
   }, [running, track, videoRef, memory, onMemory]);
 

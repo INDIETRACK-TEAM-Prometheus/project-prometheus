@@ -8,7 +8,9 @@ import { createInterface } from 'node:readline';
 // that names objects and follows them in real time. One request at a time; a busy worker answers DETECT_PROVIDER_BUSY.
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultPython = path.join(projectRoot, '.asset-tmp', 'depth-runtime', 'venv312', 'Scripts', 'python.exe');
-const defaultWeights = path.join(projectRoot, '.asset-tmp', 'yolo', 'yolo11n.pt');
+// YOLO26s (Ultralytics 8.4): light and NMS-free, about 0.5 s a frame on this CPU next to depth. It only finds boxes;
+// the names come from Muse Spark looking at the crops (object-namer.js), so a larger detector buys little here.
+const defaultWeights = path.join(projectRoot, '.asset-tmp', 'yolo', 'yolo26s.pt');
 const workerPath = path.join(projectRoot, 'scripts', 'yolo', 'worker.py');
 const fail = code => Object.assign(new Error(code), {code});
 const codes = new Set(['DETECT_INVALID_REQUEST','DETECT_INVALID_FRAME','DETECT_INVALID_IMAGE','DETECT_INFERENCE_FAILED','DETECT_RUNTIME_UNAVAILABLE','DETECT_PROVIDER_BUSY','DETECT_PROVIDER_TIMEOUT','DETECT_PROVIDER_CLOSED','DETECT_CANCELLED']);
