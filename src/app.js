@@ -812,7 +812,8 @@ async function boot() {
   const backgroundStatus=document.createElement('span');backgroundStatus.id='backgroundAttentionState';backgroundStatus.setAttribute('role','status');canvas.parentElement.append(backgroundStatus);
   function backgroundSnapshot(){
     // Paid SAM/Spark calls run only with the start consent in place and a visible tab.
-    if(!$('#localConsent').checked||document.hidden||accuracySession||!coordinator?.status().active||coordinator.status().paused||calibrationStage||!latest?.faceDetected||!latest.rawScreenXY||performance.now()-latest.processedMs>500||!world)return null;
+    // Not during the click-calibration guide either: the gaze is on calibration dots, not on the scene.
+    if(!$('#localConsent').checked||document.hidden||accuracySession||clickGuide||!coordinator?.status().active||coordinator.status().paused||calibrationStage||!latest?.faceDetected||!latest.rawScreenXY||performance.now()-latest.processedMs>500||!world)return null;
     const source=world.getFrame(),r=canvas.getBoundingClientRect();if(!source||r.width<=0||r.height<=0)return null;
     // The median of the last 0.8 s of gaze, not the single latest sample (falls back to it with fewer than 3 samples).
     const fix=fixation.estimate(performance.now(),{minSamples:3})??latest.rawScreenXY;
