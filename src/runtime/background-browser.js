@@ -1,5 +1,6 @@
 import {buildDepthArtifact} from '../spatial/depth-artifact.js';
 import {maskDigest} from './live-tracking.js';
+import {rankGazeTargets} from '../spatial/gaze-target.js';
 
 const text = value => typeof value === 'string' && value.trim().length > 0;
 const time = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -70,7 +71,12 @@ export function createBackgroundBrowserWork({capture, sam, reason, tracker, dept
     if (typeof invalidate === 'function') for (const change of tracked.changes) invalidate({type:change.type, objectId:change.objectId});
     const tracks = tracked.tracks.map(track=>({objectId:track.objectId, identityStatus:track.identityStatus, maskDigest:track.maskDigest, area:track.area, bounds:structuredClone(track.bounds), candidateObjectIds:[...track.candidateObjectIds], firstSeenFrameId:track.firstSeenFrameId, observations:track.observations}));
     const linked = tracks.filter(track=>track.identityStatus === 'linked').slice(0,10);
-    const candidates = linked.map(track=>({objectId:track.objectId, bounds:structuredClone(track.bounds)}));
+    // Objects near the fixation first; the nearest within the radius is the gaze target handed to Spark.
+    const ranked = gaze ? rankGazeTargets(gaze, linked, frame) : [];
+    const rank = new Map(ranked.map((entry, index) => [entry.objectId, index]));
+    const candidates = linked.map(track=>({objectId:track.objectId, bounds:structuredClone(track.bounds)}))
+      .sort((a, b) => (rank.get(a.objectId) ?? Infinity) - (rank.get(b.objectId) ?? Infinity));
+    const gazeTarget = ranked.length ? {objectId:ranked[0].objectId, distance:ranked[0].distance, rankedObjectIds:ranked.slice(0,3).map(entry=>entry.objectId)} : null;
     const provenance = {frameId:frame.frameId, observedAt:frame.observedAt, samModel:tracked.provenance.samModel, samRequestId:tracked.provenance.samRequestId};
 
     let depthInput = null, depthStatus = {status:'not_requested', reason:null};
@@ -98,13 +104,13 @@ export function createBackgroundBrowserWork({capture, sam, reason, tracker, dept
       mark?.('depthDone');
     }
 
-    const input = {frame:{frameId:frame.frameId, observedAt:frame.observedAt, processedAt:frame.processedAt, width:frame.width, height:frame.height, imageData:frame.imageData}, gaze, masks:boxes.map(bounds=>({bounds:structuredClone(bounds)})), observedUntil:snapshot.observedUntil, dependencies:structuredClone(snapshot.dependencies), candidates:structuredClone(candidates), tracks:structuredClone(tracks), provenance:structuredClone(provenance), events:structuredClone(snapshot.events ?? []), context:structuredClone(snapshot.context ?? {memory:[]}), depth:depthInput, depthStatus:structuredClone(depthStatus)};
+    const input = {frame:{frameId:frame.frameId, observedAt:frame.observedAt, processedAt:frame.processedAt, width:frame.width, height:frame.height, imageData:frame.imageData}, gaze, masks:boxes.map(bounds=>({bounds:structuredClone(bounds)})), observedUntil:snapshot.observedUntil, dependencies:structuredClone(snapshot.dependencies), candidates:structuredClone(candidates), tracks:structuredClone(tracks), provenance:structuredClone(provenance), events:structuredClone(snapshot.events ?? []), context:structuredClone(snapshot.context ?? {memory:[]}), depth:depthInput, depthStatus:structuredClone(depthStatus), gazeTarget:structuredClone(gazeTarget)};
     const rawHypotheses = await reason(input, {signal, firstByte:()=>mark?.('reasonFirstByte')});
     if (signal?.aborted) throw new Error('background work cancelled');
     const hypotheses = unwrap(rawHypotheses);
     requireResponseFrame(hypotheses, frame);
     if (!Array.isArray(hypotheses.scenarios)) throw new TypeError('hypotheses required');
     const candidateSpace = candidates.length ? {frameId:frame.frameId, observedAt:frame.observedAt, candidates:linked.map(track=>({objectId:track.objectId, bounds:structuredClone(track.bounds), maskDigest:track.maskDigest, identityStatus:'linked', area:track.area})), provenance:{...provenance, samModel:provenance.samModel ?? null, samRequestId:provenance.samRequestId ?? null}} : null;
-    return {scenarios:structuredClone(hypotheses.scenarios), ...(Object.hasOwn(hypotheses, 'nextGaze') ? {nextGaze:structuredClone(hypotheses.nextGaze)} : {}), ...(candidateSpace ? {candidateSpace} : {}), ...(depthPending ? {depth:structuredClone(depthStatus)} : {}), objectDependencies:{objectIds:linked.map(track=>track.objectId), objectVersions:Object.fromEntries(linked.map(track=>[track.objectId, track.maskDigest]))}};
+    return {scenarios:structuredClone(hypotheses.scenarios), ...(Object.hasOwn(hypotheses, 'nextGaze') ? {nextGaze:structuredClone(hypotheses.nextGaze)} : {}), ...(candidateSpace ? {candidateSpace} : {}), ...(depthPending ? {depth:structuredClone(depthStatus)} : {}), objectDependencies:{objectIds:linked.map(track=>track.objectId), objectVersions:Object.fromEntries(linked.map(track=>[track.objectId, track.maskDigest]))}, gazeTarget:structuredClone(gazeTarget)};
   };
 }

@@ -10,6 +10,7 @@ import {createBackgroundBrowserWork} from './runtime/background-browser.js';
 import {LiveTracking} from './runtime/live-tracking.js';
 import {createProfiledWebcamGazeController,describeCalibrationTarget,describeOpenEyeWait} from './gaze/remote-webcam.js';
 import {NON_GAZE_CLICK_TARGETS} from './gaze/official-webeyetrack.js';
+import {createFixationBuffer} from './gaze/fixation.js';
 import {gazeViewportPoint,gazeMarkerPosition} from './gaze/overlay.js';
 import {withinCalibrationBounds,predictCalibration,calibrationMetrics,calibrationReach,fitLandmarkResidualCalibration,landmarkResidualMetrics,landmarkResidualPassesSelection,LANDMARK_RESIDUAL_FIT_ATTEMPTS,predictLandmarkResidual} from './gaze/index.js';
 import {MemoryService,EphemeralStorage} from './memory/index.js';
@@ -88,12 +89,14 @@ function provisionalSparkFailureReason(response,body){
   if(response.status===400||body?.error==='invalid_request')return 'request_rejected';
   return 'provider_failed';
 }
-export async function sendProvisionalSparkRequest({consent,frame,imageDataUrl,gazePoint,gazeTiming,masks,candidates,depth=null,issuedAtMs,signal,fetchImpl=fetch}={}) {
+export const SCENE_OBJECTS_PROMPT='objects';
+export async function sendProvisionalSparkRequest({consent,frame,imageDataUrl,gazePoint,gazeTiming,masks,candidates,gazeTarget=null,depth=null,issuedAtMs,signal,fetchImpl=fetch}={}) {
   if(consent!==true)return {status:'withheld',reason:'consent_required'};
   if(!frame?.frameId||!Number.isFinite(frame.observedAt)||!Number.isInteger(frame.width)||!Number.isInteger(frame.height)||frame.width<1||frame.height<1||frame.width*frame.height>1048576||typeof imageDataUrl!=='string'||!Array.isArray(masks)||!Number.isFinite(gazePoint?.x)||gazePoint.x<0||gazePoint.x>=1||!Number.isFinite(gazePoint?.y)||gazePoint.y<0||gazePoint.y>=1||!Number.isFinite(gazeTiming?.sampleAtMs)||gazeTiming.sampleAtMs<0||!Number.isFinite(gazeTiming?.processedAtMs)||gazeTiming.processedAtMs<gazeTiming.sampleAtMs||!['browser_capture_estimate','callback_time_not_capture'].includes(gazeTiming.timestampKind)||!['uncalibrated_estimate','validated_calibration_estimate'].includes(gazeTiming.estimateStatus)||(gazeTiming.timestampKind==='callback_time_not_capture'&&gazeTiming.estimateStatus!=='uncalibrated_estimate')||!Number.isFinite(issuedAtMs)||issuedAtMs<Math.max(frame.observedAt,gazeTiming.processedAtMs)||typeof fetchImpl!=='function')return {status:'failed'};
   if(signal?.aborted)return {status:'cancelled'};
   const body={consentScope:'provisional_spark',timingStatus:'provisional',frame:{frameId:frame.frameId,observedAt:frame.observedAt,width:frame.width,height:frame.height},imageDataUrl,gazePoint:{x:gazePoint.x,y:gazePoint.y,sampleAtMs:gazeTiming.sampleAtMs,processedAtMs:gazeTiming.processedAtMs,timestampKind:gazeTiming.timestampKind,estimateStatus:gazeTiming.estimateStatus},issuedAtMs,masks:masks.slice(0,10).map(mask=>mask?.bounds)};
   if(candidates?.length)body.candidates=candidates;
+  if(gazeTarget&&candidates?.some(candidate=>candidate.objectId===gazeTarget.objectId))body.gazeTarget=gazeTarget;
   if(depth)body.depth=depth;
   try {
     const response=await fetchImpl('/api/reason-provisional',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal});
@@ -306,6 +309,7 @@ async function boot() {
   function viewportScreenCm(){const inches=screenDiagonalInches(),diagonalPx=Math.hypot(screen.width,screen.height);if(!inches||!(diagonalPx>0))return null;const cmPerPx=inches*2.54/diagonalPx;return [Math.round(innerWidth*cmPerPx*10)/10,Math.round(innerHeight*cmPerPx*10)/10];}
   function showScreenDiagonal(){const inches=screenDiagonalInches(),cm=viewportScreenCm();$('#screenDiagonal').value=inches??'';$('#screenDiagonalStatus').textContent=cm?`${inches}인치 · 현재 창 ${cm[0]}×${cm[1]} cm · 다음 카메라 시작부터 적용`:'미입력 · 모델 기본값(24인치 16:9) 사용';}
   let clickCorrections=0,clickCorrectionBusy=false,lastClickCorrectionAt=-Infinity;
+  const fixation=createFixationBuffer();
   let activeLandmarkResidual=null;
   const calibrationStatus=$('#calibrationStatus');
   calibrationStatus.id='gazeCalibrationStatus';calibrationStatus.className='row';calibrationStatus.setAttribute('aria-live','polite');gazeStatus.parentElement.after(calibrationStatus);
@@ -810,7 +814,9 @@ async function boot() {
     // Paid SAM/Spark calls run only with the start consent in place and a visible tab.
     if(!$('#localConsent').checked||document.hidden||accuracySession||!coordinator?.status().active||coordinator.status().paused||calibrationStage||!latest?.faceDetected||!latest.rawScreenXY||performance.now()-latest.processedMs>500||!world)return null;
     const source=world.getFrame(),r=canvas.getBoundingClientRect();if(!source||r.width<=0||r.height<=0)return null;
-    const x=(latest.rawScreenXY.x-r.left)/r.width,y=(latest.rawScreenXY.y-r.top)/r.height;if(x<0||y<0||x>=1||y>=1)return null;
+    // The median of the last 0.8 s of gaze, not the single latest sample (falls back to it with fewer than 3 samples).
+    const fix=fixation.estimate(performance.now(),{minSamples:3})??latest.rawScreenXY;
+    const x=(fix.x-r.left)/r.width,y=(fix.y-r.top)/r.height;if(x<0||y<0||x>=1||y>=1)return null;
     const copy=document.createElement('canvas'),scale=Math.min(1,640/canvas.width,480/canvas.height);copy.width=Math.max(1,Math.round(canvas.width*scale));copy.height=Math.max(1,Math.round(canvas.height*scale));copy.getContext('2d').drawImage(canvas,0,0,copy.width,copy.height);
     const at=performance.now();
     return {frame:{frameId:source.frameId,observedAt:source.renderTsMs,processedAt:at,width:copy.width,height:copy.height,imageData:copy.toDataURL('image/png')},gaze:{frameId:source.frameId,x,y,observedAt:latest.timestampMs,processedAt:latest.processedMs,timestampKind:latest.timestampKind,estimateStatus:latest.valid&&latest.timestampKind==='browser_capture_estimate'?'validated_calibration_estimate':'uncalibrated_estimate'},dependencies:{mapId:'synthetic-world',mapVersion:1,objectIds:[],evidenceIds:[source.frameId],expiresAt:at+120000},timingStatus:'provisional_browser_association',stateKey:source.frameId};
@@ -823,10 +829,11 @@ async function boot() {
     const work=createBackgroundBrowserWork({tracker:liveTracker.tracker,capture:async snapshot=>({frame:snapshot.frame}),
       // Depth runs on the same frame in parallel with SAM; mask-level statistics reach Spark only if it arrives in time.
       depth:async(frame,{signal})=>{modelDepthStatus.textContent='Depth Anything 분석 중';const response=await fetch('/api/depth/estimate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({frame:{frameId:frame.frameId,observedAt:frame.observedAt,width:frame.width,height:frame.height},imageDataUrl:frame.imageData}),signal});const result=await response.json();if(!response.ok){modelDepthStatus.textContent='Depth Anything 요청 실패';throw Object.assign(new Error('depth_unavailable'),{code:result?.code??'depth_unavailable'});}modelDepthStatus.textContent=`Depth Anything · ${result.model?.device??'?'} · ${Math.round(result.timing?.requestRoundTripMs??result.timing?.totalMs??0)}ms · 원본 프레임 기준`;return result;},
-      sam:async(frame,{signal,gaze})=>{const response=await fetch('/api/sam/segment',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({frame:{frameId:frame.frameId,observedAt:frame.observedAt},imageDataUrl:frame.imageData,prompt:gazeSamPrompt(frame,gaze)}),signal});if(!response.ok)throw new Error('background_sam_failed');const result=await response.json();$('#worldSceneState').textContent=`백그라운드 SAM · ${result.masks?.length??0} 마스크`;return result;},
-      reason:async(input,{signal})=>sendProvisionalSparkRequest({consent:$('#provisionalSparkConsent').checked,frame:input.frame,imageDataUrl:input.frame.imageData,gazePoint:input.gaze,gazeTiming:{sampleAtMs:input.gaze.observedAt,processedAtMs:input.gaze.processedAt,timestampKind:input.gaze.timestampKind,estimateStatus:input.gaze.estimateStatus},masks:input.masks,candidates:input.candidates,depth:input.depth,issuedAtMs:performance.now(),signal})});
+      // Segment every object, then pick the gaze target by distance (gaze-target.js); the gaze point alone is only a fallback.
+      sam:async(frame,{signal,gaze})=>{const segment=async prompt=>{const response=await fetch('/api/sam/segment',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({frame:{frameId:frame.frameId,observedAt:frame.observedAt},imageDataUrl:frame.imageData,prompt}),signal});if(!response.ok)throw new Error('background_sam_failed');return response.json();};let result=await segment(SCENE_OBJECTS_PROMPT),mode='objects';if(!result.masks?.length&&gaze){result=await segment(gazeSamPrompt(frame,gaze));mode='gaze point';}$('#worldSceneState').textContent=`백그라운드 SAM · ${mode} · ${result.masks?.length??0} 마스크`;return result;},
+      reason:async(input,{signal})=>sendProvisionalSparkRequest({consent:$('#provisionalSparkConsent').checked,frame:input.frame,imageDataUrl:input.frame.imageData,gazePoint:input.gaze,gazeTiming:{sampleAtMs:input.gaze.observedAt,processedAtMs:input.gaze.processedAt,timestampKind:input.gaze.timestampKind,estimateStatus:input.gaze.estimateStatus},masks:input.masks,candidates:input.candidates,gazeTarget:input.gazeTarget,depth:input.depth,issuedAtMs:performance.now(),signal})});
     backgroundAttention=new BackgroundAttentionCoordinator({work,snapshot:backgroundSnapshot,intervalMs:1000,minIntervalMs:1000,timeoutMs:110000,retryIntervalMs:5000,
-      publish:result=>{const list=$('#provisionalSparkScenarios');list.replaceChildren();for(const scenario of result.scenarios){const item=document.createElement('li');item.textContent=scenario.possible_next_action;list.append(item);}if(result.nextGaze) {const item=document.createElement('li');item.textContent='다음 응시 후보: '+result.nextGaze.rankedTargetIds.join(', ');list.append(item);}backgroundStatus.textContent=`백그라운드 가설 · 근거 ${Math.round(result.sourceAgeMs)}ms 전 · 시간 정렬 미검증`;},
+      publish:result=>{const list=$('#provisionalSparkScenarios');list.replaceChildren();for(const scenario of result.scenarios){const item=document.createElement('li');item.textContent=scenario.possible_next_action;list.append(item);}if(result.nextGaze) {const item=document.createElement('li');item.textContent='다음 응시 후보: '+result.nextGaze.rankedTargetIds.join(', ');list.append(item);}backgroundStatus.textContent=`백그라운드 가설 · 근거 ${Math.round(result.sourceAgeMs)}ms 전 · 시간 정렬 미검증`;$('#worldGazeState').textContent=result.gazeTarget?`시선 대상 ${result.gazeTarget.objectId} · 거리 ${(result.gazeTarget.distance*100).toFixed(1)}%`:'시선 대상 없음 (반경 밖)';},
       onStatus:status=>{if(['work_failed','invalid_result','timeout','processing_failed','snapshot_failed'].includes(status.event))backgroundStatus.textContent='백그라운드 추론 요청 실패 · 재시도 대기';}});
     backgroundAttention.start(cameraSessionId??crypto.randomUUID());backgroundStatus.textContent='백그라운드 attention 분석 중';
   }
@@ -856,6 +863,7 @@ async function boot() {
       pilot.lastTimestamp=sample.timestampMs;pilot.lastTimestampKind=kind;
       if(Number.isFinite(sample.inferenceMs)&&sample.inferenceMs>=0){pilot.inferenceCount++;pilot.inferenceSum+=sample.inferenceMs;pilot.inferenceMax=Math.max(pilot.inferenceMax,sample.inferenceMs);}
     }
+    if(sample.valid&&sample.rawScreenXY)fixation.add(sample.rawScreenXY,sample.processedMs);else if(!sample.faceDetected)fixation.clear();
     accuracySession?.record({valid:sample.valid===true,invalidReason:sample.invalidReason,timestampMs:sample.timestampMs,baseScreenXY:baseRawScreenXY,calibratedScreenXY:sample.rawScreenXY,screen:{width:innerWidth,height:innerHeight}});
     latest=sample;
     const uncalibratedEstimate={status:baseRawScreenXY?'uncalibrated_estimate':'unavailable',calibrationStatus:'uncalibrated',method:'WebEyeTrack base model without user adaptation',eyesUsed:sample.faceDetected?['left','right']:[],point:baseRawScreenXY?{x:baseRawScreenXY.x/innerWidth,y:baseRawScreenXY.y/innerHeight}:null};

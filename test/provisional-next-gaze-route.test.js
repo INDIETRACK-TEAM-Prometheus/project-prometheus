@@ -99,3 +99,17 @@ test('provisional route rejects depth for non-candidates, late availability or m
     assert.equal(calls, 0);
   });
 });
+
+test('provisional route passes a gaze target that is one of the candidates and rejects any other',async()=>{
+  let received;
+  await withServer(async input=>{received=input;return {scenarios:[scenario],nextGaze:{rankedTargetIds:['f:mask:0']}};},async base=>{
+    const gazeTarget={objectId:'f:mask:0',distance:.03,rankedObjectIds:['f:mask:0']};
+    assert.equal((await post(base,{...baseRequest(),candidates:[candidate],gazeTarget})).status,200);
+    const scene=JSON.parse(received.evidence.find(item=>item.kind==='scene').text);
+    assert.equal(scene.gazeTarget.objectId,'f:mask:0');
+    assert.equal(scene.gazeTarget.distanceFractionOfDiagonal,.03);
+    for(const bad of [{...gazeTarget,objectId:'other',rankedObjectIds:['other']},{...gazeTarget,distance:2},{...gazeTarget,rankedObjectIds:['other']},{...gazeTarget,extra:1}])
+      assert.equal((await post(base,{...baseRequest(),candidates:[candidate],gazeTarget:bad})).status,400);
+    assert.equal((await post(base,{...baseRequest(),gazeTarget})).status,400);
+  });
+});

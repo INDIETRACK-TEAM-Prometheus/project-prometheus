@@ -22,7 +22,7 @@ test('browser work captures, segments, tracks, then reasons; first frame withhol
   const result = await work(snapshot, {signal: new AbortController().signal, mark: name => marks.push(name)});
   assert.deepEqual(calls, ['capture', 'sam', 'reason']);
   assert.deepEqual(marks, ['samDone', 'reasonFirstByte']);
-  assert.deepEqual(result, {scenarios: [], objectDependencies: {objectIds: [], objectVersions: {}}});
+  assert.deepEqual(result, {scenarios: [], objectDependencies: {objectIds: [], objectVersions: {}}, gazeTarget: null});
 });
 
 test('later frames reuse persistent IDs with digests, provenance and tracker-driven invalidations', async () => {
@@ -140,4 +140,21 @@ test('late, failed or mismatched depth is withheld while reasoning still runs', 
     assert.equal(inputs[0].depth, null);
     assert.deepEqual(result.depth, {status: 'withheld', reason});
   }
+});
+
+test('linked objects are ranked by distance from the fixation and the nearest becomes the gaze target', async () => {
+  const live = tracker(), seen = [];
+  // gaze (.25,.75) on 16x16 = pixel (4,12): inside "near", far from "far"
+  const masks = [mask(10, 0, 14, 4, {objectId: 'far'}), mask(2, 10, 6, 14, {objectId: 'near'})];
+  const work = createBackgroundBrowserWork({now: () => 100, tracker: live, capture: async s => ({frame: s.frame}),
+    sam: async value => samResult(value, masks.map(m => ({...m}))),
+    reason: async input => { seen.push(input); return {frame: {frameId: input.frame.frameId, observedAt: input.frame.observedAt}, scenarios: [], nextGaze: input.candidates.length ? {rankedTargetIds: [input.candidates[0].objectId]} : null}; }});
+  await work(snapshotOf(1, 10));
+  const second = await work(snapshotOf(2, 20));
+  const nearId = seen[1].tracks.find(track => track.bounds.left === 2).objectId;
+  assert.equal(seen[1].candidates[0].objectId, nearId);
+  assert.equal(seen[1].gazeTarget.objectId, nearId);
+  assert.equal(seen[1].gazeTarget.distance, 0);
+  assert.deepEqual(seen[1].gazeTarget.rankedObjectIds, [nearId]);
+  assert.equal(second.gazeTarget.objectId, nearId);
 });
