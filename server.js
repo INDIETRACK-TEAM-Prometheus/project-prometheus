@@ -13,6 +13,7 @@ import { createConfiguredDepthProvider } from './server/depth-provider.js';
 import { createDetectProvider } from './server/detect-provider.js';
 import { nameObjects } from './server/object-namer.js';
 import { predictNext } from './server/predictor.js';
+import { comparePlaces } from './server/place-compare.js';
 import { createRemoteGazeProvider, validScreenCm } from './server/gaze-provider.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -51,8 +52,11 @@ export function validSceneObjects(value, frame) {
   if (!exact(value, ['gazeObject','objects','memory'])) return false;
   if (value.gazeObject !== null && !(exact(value.gazeObject, ['label','depthM','bounds']) && label(value.gazeObject.label) && depth(value.gazeObject.depthM) && bounds(value.gazeObject.bounds))) return false;
   if (!Array.isArray(value.objects) || value.objects.length > 20 || !value.objects.every(o => exact(o, ['label','score','depthM','bounds']) && label(o.label) && o.label !== null && Number.isFinite(o.score) && o.score >= 0 && o.score <= 1 && depth(o.depthM) && bounds(o.bounds))) return false;
-  return Array.isArray(value.memory) && value.memory.length <= 12 && value.memory.every(m => exact(m, ['label','distanceM','bearing','secondsAgo']) && label(m.label) && Number.isFinite(m.distanceM) && m.distanceM >= 0 && m.distanceM <= 100 && ['ahead','left','right','behind'].includes(m.bearing) && Number.isFinite(m.secondsAgo) && m.secondsAgo >= 0 && m.secondsAgo <= 3600);
+  return Array.isArray(value.memory) && value.memory.length <= 12 && value.memory.every(m => exact(m, ['label','distanceM','bearing','secondsAgo','earlierVisit']) && typeof m.earlierVisit === 'boolean' && label(m.label) && Number.isFinite(m.distanceM) && m.distanceM >= 0 && m.distanceM <= 100 && ['ahead','left','right','behind'].includes(m.bearing) && Number.isFinite(m.secondsAgo) && m.secondsAgo >= 0 && m.secondsAgo <= 3600);
 }
+
+// Box as [left, top, right, bottom] in 0-1 image coordinates, two decimals (compact for the prompt).
+function normBox(b,frame){return [b.left/frame.width,b.top/frame.height,b.right/frame.width,b.bottom/frame.height].map(v=>Math.round(v*100)/100);}
 
 function staticType(name) {
   return ({html:'text/html; charset=utf-8', js:'text/javascript; charset=utf-8', css:'text/css; charset=utf-8', svg:'image/svg+xml', png:'image/png', woff2:'font/woff2'})[name.split('.').pop()] ?? 'application/octet-stream';
@@ -64,7 +68,8 @@ export async function listDemoClips(dir) {
   let order = [];
   try { order = JSON.parse(await readFile(path.join(dir, 'playlist.json'), 'utf8')).clips ?? []; } catch {}
   const rank = name => { const index = order.findIndex(item => item.name === name); return index < 0 ? Infinity : index; };
-  return names.filter(name => present.has(`${name}.mp4`)).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).map(name => {
+  // with a playlist, only its clips play (the demo is cut to length there); without one, every exported clip
+  return names.filter(name => present.has(`${name}.mp4`) && (!order.length || rank(name) < Infinity)).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).map(name => {
     const meta = order.find(item => item.name === name) ?? {};
     return {name, title:typeof meta.title === 'string' ? meta.title.slice(0, 80) : name, video:`/demo-media/${name}.mp4`, gaze:`/demo-media/${name}.gaze.json`,
       eyes:present.has(`${name}.eyes.mp4`) ? `/demo-media/${name}.eyes.mp4` : null, ...(Number.isFinite(meta.start) ? {start:meta.start} : {}), ...(Number.isFinite(meta.end) ? {end:meta.end} : {})};
@@ -111,7 +116,7 @@ function validDepthEvidence(depth,frame,issuedAtMs,candidates){
   }
   return new Set(depth.objects.map(o=>o.objectId)).size===depth.objects.length && depth.relations.every(r=>exactKeys(r,['nearObjectId','farObjectId']) && ok.has(r.nearObjectId) && ok.has(r.farObjectId) && r.nearObjectId!==r.farObjectId);
 }
-export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),calibrationStageLog=createCalibrationStageLog({root:path.join(root,'data','diagnostics')}),depthProvider=createConfiguredDepthProvider(),computeProfile=process.env.PROMETHEUS_COMPUTE_PROFILE??'cloud',detectProvider=createDetectProvider(),namer=nameObjects,predictor=predictNext,preloadModels=false,gazeProvider:configuredGazeProvider,gazeRemoteUrl=process.env.PROMETHEUS_GAZE_REMOTE_URL} = {}) {
+export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),calibrationStageLog=createCalibrationStageLog({root:path.join(root,'data','diagnostics')}),depthProvider=createConfiguredDepthProvider(),computeProfile=process.env.PROMETHEUS_COMPUTE_PROFILE??'cloud',detectProvider=createDetectProvider(),namer=nameObjects,predictor=predictNext,placeComparer=comparePlaces,preloadModels=false,gazeProvider:configuredGazeProvider,gazeRemoteUrl=process.env.PROMETHEUS_GAZE_REMOTE_URL} = {}) {
   if (!['cloud','local'].includes(computeProfile)) throw new TypeError('PROMETHEUS_COMPUTE_PROFILE must be cloud or local');
   const gazeProvider=configuredGazeProvider??(computeProfile==='cloud'?createRemoteGazeProvider({baseUrl:gazeRemoteUrl}):null);
   // Preload the local models for a real server run (tests create servers without needing them).
@@ -207,7 +212,9 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
       try{let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxBody){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
         const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
         if(!input||Object.keys(input).sort().join(',')!=='frame,imageDataUrl'){json(res,400,{error:'invalid_request'});return;}
-        const result=await depthProvider.infer({...input,signal:abort.signal});json(res,200,result);
+        // not cancelled when the browser goes away: a cancelled job restarts the depth worker (a cold start of tens of
+        // seconds), and the next request would wait for it
+        const result=await depthProvider.infer({...input});json(res,200,result);
       }catch(error){const code=typeof error?.code==='string'&&/^DEPTH_[A-Z_]+$/.test(error.code)?error.code:'DEPTH_INVALID_REQUEST';json(res,code==='DEPTH_PROVIDER_BUSY'?429:503,{error:'depth_unavailable',code});}
       return;
     }
@@ -245,9 +252,21 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
           &&gaze&&Object.keys(gaze).sort().join(',')==='x,y'&&Number.isFinite(gaze.x)&&Number.isFinite(gaze.y)&&gaze.x>=0&&gaze.x<1&&gaze.y>=0&&gaze.y<1&&validSceneObjects(input.sceneObjects,frame);
         if(!valid){json(res,400,{error:'invalid_request'});return;}
         const {gazeObject,objects,memory}=input.sceneObjects;
-        json(res,200,await predictor({imageDataUrl:input.imageDataUrl,signal:abort.signal,evidence:{gazePoint:{x:Math.round(gaze.x*1000)/1000,y:Math.round(gaze.y*1000)/1000},gazeObject:gazeObject?{name:gazeObject.label,depthM:gazeObject.depthM}:null,objects:objects.map(o=>({name:o.label,depthM:o.depthM})),memory:memory.map(m=>({name:m.label,distanceM:m.distanceM,bearing:m.bearing,secondsAgo:m.secondsAgo})),
+        json(res,200,await predictor({imageDataUrl:input.imageDataUrl,signal:abort.signal,evidence:{gazePoint:{x:Math.round(gaze.x*1000)/1000,y:Math.round(gaze.y*1000)/1000},gazeObject:gazeObject?{tag:'G',source:'SAM 3.1 segment at the gaze point',name:gazeObject.label,depthM:gazeObject.depthM,box:normBox(gazeObject.bounds,frame)}:null,objects:objects.map((o,i)=>({tag:i+1,source:'YOLO',name:o.label,confidence:Math.round(o.score*100)/100,depthM:o.depthM,box:normBox(o.bounds,frame)})),memory:memory.map(m=>({name:m.label,distanceM:m.distanceM,bearing:m.bearing,...(m.earlierVisit?{seen:'on an earlier visit to this place'}:{secondsAgo:m.secondsAgo})})),
           note:'names come from a vision model looking at YOLO and SAM 3.1 crops; depths are monocular estimates scaled by SLAM points; memory objects were looked at earlier and are kept in 3D with the glasses pose'}}));
       }catch(error){const code=typeof error?.code==='string'?error.code:'PREDICT_UPSTREAM_ERROR';json(res,code==='PREDICT_INVALID_INPUT'?400:['PROVIDER_BUSY','PROVIDER_MIN_INTERVAL','PROVIDER_BUDGET_EXCEEDED','PROVIDER_RATE_LIMITED','PROVIDER_CIRCUIT_OPEN'].includes(code)?429:502,{error:'predict_unavailable',code});}
+      return;
+    }
+    // Place memory: is the current recording in a remembered place? (keyframe grid, see server/place-compare.js)
+    if(pathname==='/api/compare-places'){
+      if(req.method!=='POST'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
+      if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']??'')){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+      const abort=new AbortController();res.on('close',()=>{if(!res.writableEnded)abort.abort();});
+      try{let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxBody){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
+        const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if(!input||typeof input!=='object'||Object.keys(input).join(',')!=='imageDataUrl'){json(res,400,{error:'invalid_request'});return;}
+        json(res,200,await placeComparer({imageDataUrl:input.imageDataUrl,signal:abort.signal}));
+      }catch(error){const code=typeof error?.code==='string'?error.code:'PLACE_UPSTREAM_ERROR';json(res,code==='PLACE_INVALID_INPUT'?400:['PROVIDER_BUSY','PROVIDER_MIN_INTERVAL','PROVIDER_BUDGET_EXCEEDED','PROVIDER_RATE_LIMITED','PROVIDER_CIRCUIT_OPEN'].includes(code)?429:502,{error:'place_unavailable',code});}
       return;
     }
     if(pathname==='/api/diagnostics/calibration-stage'){
@@ -386,7 +405,8 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
       catch { res.writeHead(404); res.end('Not found'); }
       return;
     }
-    // The Aria demo clips in data/demo: <name>.mp4 + <name>.gaze.json (+ <name>.eyes.mp4), in data/demo/playlist.json order.
+    // The Aria demo clips in data/demo: <name>.mp4 + <name>.gaze.json (+ <name>.eyes.mp4); data/demo/playlist.json picks
+    // and orders them and may cut each to start/end seconds.
     if (pathname === '/api/demo/clips') {
       if (req.method !== 'GET' || !localRequest(req)) { req.resume(); json(res,403,{error:'forbidden'}); return; }
       try { json(res,200,{clips:await listDemoClips(path.join(root,'data','demo'))}); } catch { json(res,200,{clips:[]}); }

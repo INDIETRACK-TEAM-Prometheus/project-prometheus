@@ -98,6 +98,12 @@ def run_worker(home: Path):
     except Exception:
         send({"type": "ready", "status": "error", "error": "DEPTH_RUNTIME_UNAVAILABLE"})
         return 2
+    try:
+        # The first inference is many times slower than the rest (allocator and kernel warm-up); do it before
+        # reporting ready, at the size the live app sends (320 x 320).
+        infer_bgr(model, np.zeros((320, 320, 3), dtype=np.uint8))
+    except Exception:
+        pass
     send({
         "type": "ready",
         "status": "ready",

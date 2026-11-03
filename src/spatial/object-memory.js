@@ -102,12 +102,27 @@ export function createObjectMemory({mergeDistanceM = .6, maxObjects = 60} = {}) 
         // running mean, so a single bad depth does not move a well-seen object far
         best.position = best.position.map((value, i) => (value * best.count + point[i]) / (best.count + 1));
         best.count++; best.lastT = t; best.label ??= label; best.depthM = depthM;
+        if (best.recalled) best.seenAgain = true;
         return best;
       }
       const object = {id:`obj-${++serial}`, label, position:[...point], count:1, firstT:t, lastT:t, depthM};
       objects.push(object);
       if (objects.length > maxObjects) objects.splice(objects.indexOf(objects.reduce((a, b) => a.lastT <= b.lastT ? a : b)), 1);
       return object;
+    },
+    // Objects recalled from a remembered place (same world frame): they keep their position and name, and count as
+    // seen again once a new sighting merges into them.
+    seed(recalled, from) {
+      for (const object of recalled ?? []) {
+        if (!Array.isArray(object?.position) || object.position.length !== 3 || !object.position.every(finite)) continue;
+        objects.push({id:`obj-${++serial}`, label:object.label ?? null, position:[...object.position], count:object.count ?? 1, firstT:-1, lastT:-1, depthM:null, recalled:true, seenAgain:false, from:from ?? null});
+      }
+      while (objects.length > maxObjects) objects.shift();
+    },
+    forget(id) {
+      const index = objects.findIndex(item => item.id === id);
+      if (index < 0) return false;
+      objects.splice(index, 1); return true;
     },
     // A name from the vision model replaces the detector's class for this object.
     rename(id, label) {

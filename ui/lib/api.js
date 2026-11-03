@@ -32,3 +32,4 @@ export const reason = (body, signal) => post('/api/reason-provisional', body, si
 
 export const nameObjects = (imageDataUrl, tiles, signal) => post('/api/name-objects', {imageDataUrl, tiles}, signal);
 export const predict = (body, signal) => post('/api/predict', body, signal);
+export const comparePlaces = (imageDataUrl, signal) => post('/api/compare-places', {imageDataUrl}, signal);

@@ -72,3 +72,14 @@ test('a vision-model name replaces the detector class in memory', () => {
   assert.equal(memory.list()[0].label, 'gray suitcase');
   assert.equal(memory.rename('missing', 'x'), false);
 });
+
+test('recalled objects keep their place and count as seen again when a sighting merges', () => {
+  const memory = createObjectMemory();
+  memory.seed([{label:'gray sofa', position:[1, 2, 0], count:3}], 'Walking through the house');
+  assert.equal(memory.list()[0].recalled, true);
+  assert.equal(memory.list()[0].seenAgain, false);
+  memory.observe({label:null, point:[1.1, 2, 0], t:5});
+  assert.equal(memory.list().length, 1);
+  assert.equal(memory.list()[0].seenAgain, true);
+  assert.equal(memory.list()[0].count, 4);
+});

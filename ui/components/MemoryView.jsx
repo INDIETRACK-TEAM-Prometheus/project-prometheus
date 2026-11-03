@@ -9,7 +9,7 @@ import {poseAt} from '../../src/gaze/gaze-replay.js';
 
 const ACCENT = 0x41d7a2;
 
-export default function MemoryView({track, sceneRef, objects}) {
+export default function MemoryView({track, sceneRef, objects, recalledCloud}) {
   const hostRef = useRef(null), apiRef = useRef(null);
 
   useEffect(() => {
@@ -33,7 +33,9 @@ export default function MemoryView({track, sceneRef, objects}) {
     const objectGroup = new THREE.Group();
     // the room itself: MPS SLAM semi-dense points, coloured by height
     const cloud = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({size:.025, vertexColors:true, transparent:true, opacity:.55}));
-    scene.add(cloud, path, wearer, sight, objectGroup);
+    // room points remembered from earlier recordings of the same place
+    const earlier = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({size:.02, color:0x6f8da3, transparent:true, opacity:.35}));
+    scene.add(earlier, cloud, path, wearer, sight, objectGroup);
     let frame = 0, followed = false;
     const target = new THREE.Vector3();
     const resize = () => {
@@ -62,7 +64,7 @@ export default function MemoryView({track, sceneRef, objects}) {
       renderer.render(scene, camera); labels.render(scene, camera);
     };
     frame = requestAnimationFrame(draw);
-    apiRef.current = {...apiRef.current, path, objectGroup, cloud};
+    apiRef.current = {...apiRef.current, path, objectGroup, cloud, earlier};
     return () => {
       cancelAnimationFrame(frame); observer.disconnect(); controls.dispose(); renderer.dispose();
       renderer.domElement.remove(); labels.domElement.remove();
@@ -89,18 +91,25 @@ export default function MemoryView({track, sceneRef, objects}) {
   }, [track, sceneRef]);
 
   useEffect(() => {
+    const earlier = apiRef.current?.earlier;
+    if (!earlier) return;
+    earlier.geometry.dispose(); earlier.geometry = new THREE.BufferGeometry();
+    if (recalledCloud?.length) earlier.geometry.setAttribute('position', new THREE.BufferAttribute(recalledCloud, 3));
+  }, [recalledCloud]);
+
+  useEffect(() => {
     const group = apiRef.current?.objectGroup;
     apiRef.current = {...apiRef.current, lastObject:objects.reduce((a, b) => !a || b.lastT > a.lastT ? b : a, null)};
     if (!group) return;
     for (const child of [...group.children]) { child.traverse(node => { if (node.isCSS2DObject) node.element.remove(); }); group.remove(child); }
     const latest = apiRef.current.lastObject;
     for (const object of objects) {
-      const fresh = object === latest;
-      const dot = new THREE.Mesh(new THREE.SphereGeometry(fresh ? .1 : .07, 16, 12), new THREE.MeshBasicMaterial({color:fresh ? ACCENT : 0xe9ecee}));
+      const fresh = object === latest, earlierOnly = object.recalled && !object.seenAgain;
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(fresh ? .1 : .07, 16, 12), new THREE.MeshBasicMaterial({color:fresh ? ACCENT : earlierOnly ? 0x6f8da3 : 0xe9ecee}));
       dot.position.set(...object.position);
       const tag = document.createElement('span');
-      tag.className = fresh ? 'memory-tag fresh' : 'memory-tag';
-      tag.textContent = `${object.label ?? 'object'}${object.count > 1 ? ` ×${object.count}` : ''}`;
+      tag.className = fresh ? 'memory-tag fresh' : earlierOnly ? 'memory-tag recalled' : 'memory-tag';
+      tag.textContent = `${object.label ?? 'object'}${object.count > 1 ? ` ×${object.count}` : ''}${earlierOnly ? ' · earlier' : object.recalled ? ' · found again' : ''}`;
       const label = new CSS2DObject(tag); label.position.set(0, 0, .18); dot.add(label);
       group.add(dot);
     }

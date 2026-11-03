@@ -68,3 +68,41 @@ export async function cropGrid(entries, {tile = 200, columns = 3, margin = .15} 
   }
   return canvas.toDataURL('image/jpeg', .85);
 }
+
+// The frame Muse Spark predicts from, with what the detectors found drawn on it: the SAM 3.1 segment at the gaze
+// (green, tag G), the gaze point, and every YOLO box (white, numbered like the objects list it gets as text).
+export async function annotateFrame(frame, {gaze, gazeBounds, boxes}) {
+  const image = await loadImage(frame.dataUrl), canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+  const ctx = canvas.getContext('2d'), sx = canvas.width / frame.sourceWidth, sy = canvas.height / frame.sourceHeight;
+  ctx.drawImage(image, 0, 0);
+  const tag = (text, x, y, color) => {
+    ctx.font = 'bold 13px sans-serif';
+    const w = ctx.measureText(text).width + 8;
+    ctx.fillStyle = color; ctx.fillRect(x, Math.max(0, y - 16), w, 16);
+    ctx.fillStyle = '#000'; ctx.fillText(text, x + 4, Math.max(12, y - 4));
+  };
+  boxes.forEach((b, i) => {
+    ctx.lineWidth = 2; ctx.strokeStyle = '#ffffff';
+    ctx.strokeRect(b.left * sx, b.top * sy, (b.right - b.left) * sx, (b.bottom - b.top) * sy);
+    tag(String(i + 1), b.left * sx, b.top * sy, '#ffffff');
+  });
+  if (gazeBounds) {
+    ctx.lineWidth = 3; ctx.strokeStyle = '#41d7a2';
+    ctx.strokeRect(gazeBounds.left * sx, gazeBounds.top * sy, (gazeBounds.right - gazeBounds.left) * sx, (gazeBounds.bottom - gazeBounds.top) * sy);
+    tag('G', gazeBounds.left * sx, gazeBounds.top * sy, '#41d7a2');
+  }
+  if (gaze) { ctx.fillStyle = '#41d7a2'; ctx.beginPath(); ctx.arc(gaze.x * canvas.width, gaze.y * canvas.height, 6, 0, Math.PI * 2); ctx.fill(); }
+  return canvas.toDataURL('image/jpeg', .8);
+}
+
+// Two rows of keyframes for place comparison: the remembered place on top, the current recording below.
+export async function keyframeGrid(top, bottom, {tile = 256} = {}) {
+  const cols = Math.max(top.length, bottom.length), canvas = document.createElement('canvas');
+  canvas.width = cols * tile; canvas.height = 2 * tile;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#202020'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (const [row, frames] of [top, bottom].entries()) for (const [col, src] of frames.entries()) ctx.drawImage(await loadImage(src), col * tile, row * tile, tile, tile);
+  ctx.fillStyle = '#41d7a2'; ctx.fillRect(0, tile - 2, canvas.width, 4);
+  return canvas.toDataURL('image/jpeg', .8);
+}
