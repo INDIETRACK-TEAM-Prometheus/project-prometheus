@@ -54,3 +54,73 @@ footer.session-panel.open{display:block;position:fixed;z-index:6;top:64px;left:1
 #sparkTimeline{list-style:none;margin:0;padding:0;max-height:340px;overflow:auto;display:flex;flex-direction:column;gap:6px}
 #sparkTimeline li{border-left:3px solid #41d7a2;padding:4px 8px;background:#0f191c;border-radius:4px;font-size:12px;line-height:1.45}
 #sparkTimeline li .step{color:#9bb5aa}#sparkTimeline li .time{color:#6f8a83;font-size:11px}
+
+/* ---- Demo skin (Taste skill, app-screen rules): true neutral darks, one grotesk, one accent on the data only,
+   opaque surfaces one tone step from the ground, no eyebrows, pills, glows or accent bars. ---- */
+:root{--ground:#000;--surface:#111;--raised:#1a1a1a;--border:#2e2e2e;--control:#444;--text:#fff;--muted:#b4b4b4;--faint:#949494;--accent:#41d7a2;
+  --font:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;font-family:var(--font);color:var(--text);background:var(--ground)}
+body{font-family:var(--font);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+button,select,input{font-family:inherit}
+
+/* Floating controls: one white primary, quiet outlined secondaries, tight radius. */
+.world>.primary-controls{gap:6px}
+.primary-controls button,#sceneSource{height:34px;padding:0 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px;font-weight:500}
+.primary-controls button:hover:not(:disabled),#sceneSource:hover{border-color:var(--control)}
+.primary-controls button:focus-visible,#sceneSource:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+.primary-controls #start{background:var(--text);color:#000;border-color:var(--text);min-width:56px}
+.primary-controls #pause,.primary-controls #stop{min-width:44px}
+.primary-controls #start,.primary-controls #pause,.primary-controls #stop{font-size:13px;font-weight:600}
+
+/* Results panel: an opaque sheet that names the product and states what it is doing. */
+aside{width:min(360px,34vw);gap:0}
+.eyes{display:none}
+.card.reasoning{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;box-shadow:0 12px 28px rgba(0,0,0,.35)}
+.reasoning .cardhead{align-items:flex-start;margin-bottom:12px}
+.reasoning h2{font-size:18px;font-weight:600;letter-spacing:-.01em;margin:0}
+.reasoning .subtitle{margin:4px 0 0;font-size:12px;color:var(--muted)}
+.reasoning .status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);letter-spacing:0;white-space:nowrap}
+.reasoning .status i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--faint)}
+.reasoning .row{padding:12px 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted)}
+.reasoning .row strong{color:var(--text);font-weight:500}
+#provisionalSparkStatus{font-size:12px;color:var(--muted);margin:12px 0 0}
+#provisionalSparkScenarios{display:none}
+
+/* Muse Spark background reasoning: newest first, a label / value list per analysis. */
+.spark-timeline{margin-top:16px}
+.spark-timeline h3{font-size:14px;font-weight:600;margin:0 0 4px}
+.spark-timeline>p{font-size:12px;line-height:1.5;color:var(--muted);margin:0 0 8px}
+#sparkTimeline{gap:0;max-height:calc(100vh - 260px)}
+#sparkTimeline li{border:0;border-top:1px solid var(--border);border-radius:0;background:none;padding:12px 0;font-size:13px}
+#sparkTimeline li:first-child{border-top:0}
+#sparkTimeline .when{font-size:12px;color:var(--faint);margin-bottom:6px}
+#sparkTimeline dl{display:grid;grid-template-columns:84px 1fr;gap:4px 12px;margin:0}
+#sparkTimeline dt{font-size:12px;color:var(--muted)}
+#sparkTimeline dd{margin:0;color:var(--text);overflow-wrap:anywhere}
+#sparkTimeline dd.lead{font-size:14px;line-height:1.45}
+#sparkTimeline li:not(:first-child){opacity:.62}
+
+/* Scene: the gaze point in the data accent with a dark keyline for contrast on bright footage, no glow. */
+.gaze-marker{width:20px;height:20px;border:2px solid #fff;background:color-mix(in srgb,var(--accent) 70%,transparent);box-shadow:0 0 0 1px #000}
+.world>.viewport{background:var(--ground)}
+.world .worldlabel{display:block;top:auto;bottom:12px;left:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:13px;letter-spacing:0;text-shadow:none;color:var(--text)}
+.world .worldlabel #sceneLabel{font-weight:600}
+.world .worldlabel span{display:inline;margin:0}
+.world .worldlabel #sceneNote{color:var(--muted);margin-left:6px}
+
+/* Click-calibration guide and the data panel follow the same palette. */
+.click-guide{background:rgba(0,0,0,.86)}
+.click-guide-dot{background:var(--accent);box-shadow:none}
+.click-guide-dot.waiting{background:var(--faint)}
+.click-guide-info{color:var(--text);font-size:15px}
+footer.session-panel.open{background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--muted)}
+@media(max-width:600px){aside{width:min(260px,60vw)}#sparkTimeline dl{grid-template-columns:70px 1fr}}
+
+/* Glasses eye camera in the eye panels (only while a recorded eye video is loaded). */
+body.glasses-eyes .eyes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:8px}
+body.glasses-eyes .eye{min-width:0}
+body.glasses-eyes .eyeplaceholder canvas{max-width:100%}
+body.glasses-eyes .eye{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;min-height:0}
+.eye-title{font-size:12px;font-weight:500;color:var(--muted);margin:0 0 6px}
+body.glasses-eyes .eyeplaceholder{height:auto;margin:0;background:#000;border-radius:4px;color:var(--faint)}
+body.glasses-eyes .eyeplaceholder canvas{width:100%;height:auto;aspect-ratio:4/3;object-fit:cover}
+body.glasses-eyes .eyeplaceholder small{font-size:11px;color:var(--faint);padding:6px 0 2px}

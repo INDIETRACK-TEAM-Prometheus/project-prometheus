@@ -306,6 +306,13 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
       } finally { clearTimeout(timer); inFlight--; }
       return;
     }
+    // Demo media (data/demo: scene videos and gaze tracks) for loading into the video scene; local requests only.
+    const demoMedia = /^\/demo-media\/([A-Za-z0-9][A-Za-z0-9._-]{0,119}\.(mp4|webm|json))$/.exec(pathname);
+    if (demoMedia && req.method === 'GET' && localRequest(req)) {
+      try { const data = await readFile(path.join(root, 'data', 'demo', demoMedia[1])); res.writeHead(200, {'Content-Type': demoMedia[2] === 'json' ? 'application/json; charset=utf-8' : `video/${demoMedia[2]}`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}); res.end(data); }
+      catch { res.writeHead(404); res.end('Not found'); }
+      return;
+    }
     const entry = files.get(pathname);
     if (req.method !== 'GET' || !entry) { res.writeHead(404); res.end('Not found'); return; }
     try { const data = await readFile(path.join(root, entry[0])); res.writeHead(200, {'Content-Type': entry[1], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}); res.end(data); }

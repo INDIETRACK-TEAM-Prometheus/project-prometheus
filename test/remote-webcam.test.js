@@ -106,7 +106,7 @@ test('cancelling calibration resumes the live stream and an insufficient target 
   const frames=await h.controller.captureCalibrationFrames({count:3,spanMs:0});
   const result=await h.controller.uploadCalibrationTarget({phase:'train',pointIndex:0,target:{x:10,y:10},frames});
   assert.equal(result.status,'insufficient');
-  assert.match(describeCalibrationTarget(result),/눈 감김 판정 \(EAR 최소 0\.17, 기준 0\.20 미만이면 감김\)/);
+  assert.match(describeCalibrationTarget(result),/Eyes judged closed \(EAR min 0\.17; closed under 0\.20\)/);
   await assert.rejects(h.controller.uploadCalibrationTarget({phase:'train',pointIndex:27,target:{x:10,y:10},frames}),/invalid calibration target/);
   await h.controller.cancelCalibration();
   h.video.emit(2000);await h.flush();assert.equal(h.counts().frameCalls,1);
@@ -115,12 +115,12 @@ test('cancelling calibration resumes the live stream and an insufficient target 
 
 test('target descriptions name no face, closed eyes, frame errors and missing frames',()=>{
   const base={status:'insufficient',totalFrames:5,faceFrames:5,closedFrames:0,usableFrames:0,frameErrors:0,eyeAspectRatio:null};
-  assert.equal(describeCalibrationTarget(null),'결과 없음');
-  assert.equal(describeCalibrationTarget({...base,status:'accepted',usableFrames:4}),'사용 가능한 프레임 4/5');
-  assert.equal(describeCalibrationTarget({...base,faceFrames:0}),'얼굴 미검출 (프레임 5장)');
-  assert.equal(describeCalibrationTarget({...base,closedFrames:5}),'눈 감김 판정');
-  assert.equal(describeCalibrationTarget({...base,frameErrors:2,usableFrames:1}),'프레임 처리 오류 2건');
-  assert.equal(describeCalibrationTarget({...base,usableFrames:1}),'사용 가능한 프레임 부족 (1/5)');
+  assert.equal(describeCalibrationTarget(null),'No result');
+  assert.equal(describeCalibrationTarget({...base,status:'accepted',usableFrames:4}),'Usable frames 4/5');
+  assert.equal(describeCalibrationTarget({...base,faceFrames:0}),'No face detected (5 frames)');
+  assert.equal(describeCalibrationTarget({...base,closedFrames:5}),'Eyes judged closed');
+  assert.equal(describeCalibrationTarget({...base,frameErrors:2,usableFrames:1}),'2 frame processing errors');
+  assert.equal(describeCalibrationTarget({...base,usableFrames:1}),'Not enough usable frames (1/5)');
 });
 
 test('remote uploader records bounded per-frame transport telemetry on the browser clock',async()=>{
@@ -178,19 +178,19 @@ test('closed-eye responses carry their eye aspect ratios and the wait message na
   const sample=h.samples[0];
   assert.equal(sample.features,null);
   assert.deepEqual(sample.eyeAspectRatio,{left:.18,right:.26,threshold:.2});
-  assert.match(describeOpenEyeWait(sample),/눈 감김 판정 \(EAR 왼쪽 0\.18 · 오른쪽 0\.26, 한쪽이라도 0\.20 미만이면 감김\)/);
+  assert.match(describeOpenEyeWait(sample),/eyes judged closed \(EAR left 0\.18 · right 0\.26; closed if either is under 0\.20\)/);
   const bad=harness({frameFields:{gazeState:'closed',normPog:[0,0],eyeAspectRatio:{left:'x',right:.26,threshold:.2}}});
   await bad.controller.start({userInitiated:true,cameraConsent:true});
   bad.video.emit(1010);await bad.flush();
   assert.equal(bad.samples[0].eyeAspectRatio,null);
-  assert.equal(describeOpenEyeWait(bad.samples[0]),'서버 응답: 눈 감김 판정');
+  assert.equal(describeOpenEyeWait(bad.samples[0]),'Server response: eyes judged closed');
 });
 
 test('open-eye wait descriptions distinguish no response, no face, closed eyes and missing gaze points',()=>{
-  assert.equal(describeOpenEyeWait(null),'아직 서버 응답이 없습니다');
-  assert.equal(describeOpenEyeWait({faceDetected:false}),'서버 응답: 얼굴 미검출');
-  assert.equal(describeOpenEyeWait({faceDetected:true,gazeState:'open',features:null}),'서버 응답: 시선 좌표 없음');
-  assert.equal(describeOpenEyeWait({faceDetected:true,gazeState:'open',features:[.5,.5]}),'서버 응답: 열린 눈 확인');
+  assert.equal(describeOpenEyeWait(null),'No server response yet');
+  assert.equal(describeOpenEyeWait({faceDetected:false}),'Server response: no face detected');
+  assert.equal(describeOpenEyeWait({faceDetected:true,gazeState:'open',features:null}),'Server response: no gaze coordinates');
+  assert.equal(describeOpenEyeWait({faceDetected:true,gazeState:'open',features:[.5,.5]}),'Server response: open eyes confirmed');
 });
 
 test('a server that found no face names whether landmarks or the eye patch failed', async () => {
@@ -198,15 +198,15 @@ test('a server that found no face names whether landmarks or the eye patch faile
   await eyePatch.controller.start({userInitiated: true, cameraConsent: true});
   eyePatch.video.emit(1010); await eyePatch.flush();
   assert.deepEqual(eyePatch.samples[0].trackingFailure, {stage: 'eye_patch', message: 'shape mismatch'});
-  assert.equal(describeOpenEyeWait(eyePatch.samples[0]), '서버 응답: 얼굴은 찾았지만 눈 영역 추출 실패 (shape mismatch)');
+  assert.equal(describeOpenEyeWait(eyePatch.samples[0]), 'Server response: face found but the eye region could not be extracted (shape mismatch)');
   const landmarks = harness({frameFields: {faceDetected: false, gazeState: 'unknown', normPog: null, trackingFailure: {stage: 'landmarks', message: null}}});
   await landmarks.controller.start({userInitiated: true, cameraConsent: true});
   landmarks.video.emit(1010); await landmarks.flush();
-  assert.equal(describeOpenEyeWait(landmarks.samples[0]), '서버 응답: 얼굴 미검출');
-  assert.equal(describeOpenEyeWait({faceDetected: false}), '서버 응답: 얼굴 미검출');
+  assert.equal(describeOpenEyeWait(landmarks.samples[0]), 'Server response: no face detected');
+  assert.equal(describeOpenEyeWait({faceDetected: false}), 'Server response: no face detected');
   const base = {status: 'insufficient', totalFrames: 5, faceFrames: 0, closedFrames: 0, usableFrames: 0, frameErrors: 0, eyeAspectRatio: null};
-  assert.equal(describeCalibrationTarget({...base, eyePatchFailures: 5, failureMessage: 'shape mismatch'}), '얼굴은 찾았지만 눈 영역 추출 실패 5/5장 (shape mismatch)');
-  assert.equal(describeCalibrationTarget({...base, eyePatchFailures: 0}), '얼굴 미검출 (프레임 5장)');
+  assert.equal(describeCalibrationTarget({...base, eyePatchFailures: 5, failureMessage: 'shape mismatch'}), 'Face found but eye region extraction failed in 5/5 frames (shape mismatch)');
+  assert.equal(describeCalibrationTarget({...base, eyePatchFailures: 0}), 'No face detected (5 frames)');
 });
 
 test('two live frames are pipelined so a result does not wait a full round trip for the next request',async()=>{

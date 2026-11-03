@@ -347,3 +347,27 @@ test('constructor snapshot option drives polling without observe calls and stops
   await new Promise(resolve => setTimeout(resolve, 30));
   assert.equal(polls, after);
 });
+
+test('results may cite the depth artifact the work attached and keep their display context', async () => {
+  const depthId = 'depth-0123456789abcdef', published = [], statuses = [];
+  const withDepth = {scenarios:[{scenario_id:'d',possible_next_action:'Step toward the nearer chair',horizon_ms:1000,grounding_refs:['f1',depthId],assumptions:[],status:'active'}],
+    groundingEvidenceIds:[depthId], gazeTarget:{objectId:'trk:1',distance:0,rankedObjectIds:['trk:1']}, view:{frameWidth:640,frameHeight:400,maskCount:2,gaze:{x:.5,y:.5},targetBounds:{left:1,top:2,right:3,bottom:4}}, depth:{status:'ok',objectCount:2}};
+  let next = withDepth;
+  const coordinator = new BackgroundAttentionCoordinator({work:async () => structuredClone(next), publish:value => published.push(value), onStatus:status => statuses.push(status.event), now:() => 12, minIntervalMs:0, timeoutMs:1000});
+  coordinator.start('s');
+  coordinator.observe(snapshot({frameId:'f1', key:'one'}));
+  await flush(); await flush();
+  assert.equal(published.length, 1);
+  assert.equal(published[0].scenarios[0].scenario_id, 'd');
+  assert.deepEqual(published[0].gazeTarget, withDepth.gazeTarget);
+  assert.equal(published[0].view.maskCount, 2);
+  assert.deepEqual(published[0].depth, {status:'ok', objectCount:2});
+  // The same citation without the attached artifact is rejected.
+  next = {...withDepth, groundingEvidenceIds:undefined};
+  coordinator.observe(snapshot({frameId:'f2', key:'two', evidenceIds:['f2']}));
+  next.scenarios = [{...withDepth.scenarios[0], grounding_refs:['f2', depthId]}];
+  await flush(); await flush();
+  assert.equal(published.length, 1);
+  assert.ok(statuses.includes('invalid_result'));
+  coordinator.stop();
+});

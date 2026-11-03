@@ -28,6 +28,6 @@ test('full-screen page exposes the data panel and discloses local recording',asy
  const server=createLocalServer();server.listen(0,'127.0.0.1');await once(server,'listening');
  try{const page=await (await fetch(`http://127.0.0.1:${server.address().port}/`)).text();
    assert.match(page,/<button id="dataPanel" aria-controls="sessionPanel"/);assert.match(page,/<footer id="sessionPanel"/);
-   assert.match(page,/class="demo-disclosure">[^<]*data\/recordings에만 로컬 녹화/);assert.match(page,/id="deleteRecordings"/);
+   assert.match(page,/class="demo-disclosure">[^<]*recorded only to data\/recordings on this device/);assert.match(page,/id="deleteRecordings"/);
  }finally{await new Promise(resolve=>server.close(resolve));}
 });

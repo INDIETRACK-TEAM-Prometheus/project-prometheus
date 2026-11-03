@@ -71,8 +71,9 @@ export function createBackgroundBrowserWork({capture, sam, reason, tracker, dept
     if (typeof invalidate === 'function') for (const change of tracked.changes) invalidate({type:change.type, objectId:change.objectId});
     const tracks = tracked.tracks.map(track=>({objectId:track.objectId, identityStatus:track.identityStatus, maskDigest:track.maskDigest, area:track.area, bounds:structuredClone(track.bounds), candidateObjectIds:[...track.candidateObjectIds], firstSeenFrameId:track.firstSeenFrameId, observations:track.observations}));
     const linked = tracks.filter(track=>track.identityStatus === 'linked').slice(0,10);
-    // Objects near the fixation first; the nearest within the radius is the gaze target handed to Spark.
-    const ranked = gaze ? rankGazeTargets(gaze, linked, frame) : [];
+    // Objects near the fixation first. The target is chosen among every object in this frame (on moving footage most are
+    // seen once and never become linked); Spark only receives it when it is also one of the linked candidates.
+    const ranked = gaze ? rankGazeTargets(gaze, tracks, frame) : [];
     const rank = new Map(ranked.map((entry, index) => [entry.objectId, index]));
     const candidates = linked.map(track=>({objectId:track.objectId, bounds:structuredClone(track.bounds)}))
       .sort((a, b) => (rank.get(a.objectId) ?? Infinity) - (rank.get(b.objectId) ?? Infinity));
@@ -112,7 +113,9 @@ export function createBackgroundBrowserWork({capture, sam, reason, tracker, dept
     if (!Array.isArray(hypotheses.scenarios)) throw new TypeError('hypotheses required');
     const candidateSpace = candidates.length ? {frameId:frame.frameId, observedAt:frame.observedAt, candidates:linked.map(track=>({objectId:track.objectId, bounds:structuredClone(track.bounds), maskDigest:track.maskDigest, identityStatus:'linked', area:track.area})), provenance:{...provenance, samModel:provenance.samModel ?? null, samRequestId:provenance.samRequestId ?? null}} : null;
     return {scenarios:structuredClone(hypotheses.scenarios), ...(Object.hasOwn(hypotheses, 'nextGaze') ? {nextGaze:structuredClone(hypotheses.nextGaze)} : {}), ...(candidateSpace ? {candidateSpace} : {}), ...(depthPending ? {depth:structuredClone(depthStatus)} : {}), objectDependencies:{objectIds:linked.map(track=>track.objectId), objectVersions:Object.fromEntries(linked.map(track=>[track.objectId, track.maskDigest]))}, gazeTarget:structuredClone(gazeTarget),
+      // Spark may cite the depth artifact it was given; the coordinator accepts that ID only from here.
+      ...(depthInput ? {groundingEvidenceIds:[`depth-${depthInput.artifactSha256.slice(0,16)}`]} : {}),
       // For display only (scene overlay and timeline): sizes in this frame's pixels.
-      view:{frameWidth:frame.width, frameHeight:frame.height, maskCount:masks.masks.length, gaze:gaze ? {x:gaze.x, y:gaze.y} : null, targetBounds:gazeTarget ? structuredClone(linked.find(track=>track.objectId===gazeTarget.objectId)?.bounds ?? null) : null}};
+      view:{frameWidth:frame.width, frameHeight:frame.height, maskCount:masks.masks.length, gaze:gaze ? {x:gaze.x, y:gaze.y} : null, targetBounds:gazeTarget ? structuredClone(tracks.find(track=>track.objectId===gazeTarget.objectId)?.bounds ?? null) : null}};
   };
 }

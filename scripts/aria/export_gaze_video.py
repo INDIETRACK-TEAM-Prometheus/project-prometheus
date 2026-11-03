@@ -5,6 +5,7 @@ general eye gaze, and the device calibration to re-project each gaze ray into th
 
   <out>.mp4         H.264, upright, playable in the browser (needs ffmpeg on PATH)
   <out>.gaze.json   {"version":1, "source":..., "width":..., "height":..., "fps":..., "samples":[{"t":s, "x":0-1, "y":0-1}]}
+  <out>.eyes.mp4    the eye-tracking camera (both eyes side by side) at the same frame times, so it plays in step
 
 x/y are normalised to the upright video frame; t is seconds from the first exported frame (matches video.currentTime).
 
@@ -33,11 +34,13 @@ def main(argv=None):
     parser.add_argument("--seconds", type=float, default=60.0, help="length to export")
     parser.add_argument("--size", type=int, default=1024, help="output width/height (Aria RGB is square)")
     parser.add_argument("--default-depth", type=float, default=1.0, help="metres, when the gaze has no depth estimate")
+    parser.add_argument("--no-eyes", action="store_true", help="skip the eye-tracking camera video")
     args = parser.parse_args(argv)
 
     import numpy as np
     from projectaria_tools.core import data_provider, mps
     from projectaria_tools.core.mps.utils import get_gaze_vector_reprojection, get_nearest_eye_gaze
+    from projectaria_tools.core.sensor_data import TimeDomain, TimeQueryOptions
 
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
@@ -65,6 +68,12 @@ def main(argv=None):
     encoder = subprocess.Popen([ffmpeg, "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{args.size}x{args.size}",
                                 "-r", str(fps), "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out_video)],
                                stdin=subprocess.PIPE)
+    eyes_stream = None if args.no_eyes else provider.get_stream_id_from_label("camera-et")
+    eyes_encoder = None
+    if eyes_stream is not None and provider.get_num_data(eyes_stream) > 0:
+        eh, ew = provider.get_image_data_by_index(eyes_stream, 0)[0].to_numpy_array().shape[:2]
+        eyes_encoder = subprocess.Popen([ffmpeg, "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{ew}x{eh}", "-r", str(fps), "-i", "-",
+                                         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(args.out.with_suffix(".eyes.mp4"))], stdin=subprocess.PIPE)
     samples = []
     import cv2
     for index, stamp in zip(indices, stamps):
@@ -73,6 +82,10 @@ def main(argv=None):
         upright = np.ascontiguousarray(np.rot90(image, k=3))
         frame = cv2.resize(upright, (args.size, args.size), interpolation=cv2.INTER_AREA)
         encoder.stdin.write(frame[:, :, :3].astype(np.uint8).tobytes())
+        if eyes_encoder:
+            # The eye camera runs slower than the RGB camera; repeat its nearest frame so both videos share frame times.
+            eyes = provider.get_image_data_by_time_ns(eyes_stream, stamp, TimeDomain.DEVICE_TIME, TimeQueryOptions.CLOSEST)[0].to_numpy_array()
+            eyes_encoder.stdin.write(np.ascontiguousarray(eyes[:, :, 0] if eyes.ndim == 3 else eyes).astype(np.uint8).tobytes())
         sample = {"t": round((stamp - stamps[0]) / 1e9, 4)}
         eye = get_nearest_eye_gaze(gaze, stamp)
         point = None
@@ -89,6 +102,10 @@ def main(argv=None):
     encoder.stdin.close()
     if encoder.wait() != 0:
         raise SystemExit("ffmpeg failed to write the video")
+    if eyes_encoder:
+        eyes_encoder.stdin.close()
+        if eyes_encoder.wait() != 0:
+            raise SystemExit("ffmpeg failed to write the eye video")
     out_gaze.write_text(json.dumps({"version": 1, "source": "project-aria-mps-eye-gaze", "sequence": args.vrs.parent.name,
                                     "width": args.size, "height": args.size, "fps": fps, "samples": samples}, separators=(",", ":")), "utf-8")
     valid = sum(1 for sample in samples if "x" in sample)

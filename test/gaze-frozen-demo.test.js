@@ -21,7 +21,7 @@ test('cancelled Spark persistence cannot republish a discarded result and histor
  const pending=publishProvisionalSparkIfCurrent({persist:()=>new Promise(resolve=>{finishPersist=resolve;}),isCurrent:()=>current,discard:async()=>{discarded++;},publish:value=>{shown=value;}});
  current=false;finishPersist(['stale scenario']);assert.equal(await pending,false);assert.equal(shown,null);assert.equal(discarded,1);
  const scope=provisionalSparkValidityScope({frame:{frameId:'frozen-42',observedAt:1200},gaze:{x:.25,y:.75,sampleAtMs:1230}});
- assert.match(scope,/frozen-42/);assert.match(scope,/현재 장면\/시선 재사용 불가/);assert.match(scope,/물리적 시간 정렬 미검증/);
+ assert.match(scope,/frozen-42/);assert.match(scope,/not reusable for the current scene or gaze/);assert.match(scope,/physical time alignment not verified/);
 });
 
 test('provisional gaze selector admits only a fresh post-freeze capture estimate inside the canvas',()=>{
@@ -77,7 +77,7 @@ test('provisional Spark follow-up sends the same frame, estimated point and boun
  let calls=0;const withheld=await sendProvisionalSparkRequest({consent:false,fetchImpl:async()=>{calls++;}});assert.deepEqual(withheld,{status:'withheld',reason:'consent_required'});assert.equal(calls,0);
  const mismatched=await sendProvisionalSparkRequest({consent:true,frame,imageDataUrl:'png',gazePoint:{x:.5,y:.25},gazeTiming:{sampleAtMs:1600,processedAtMs:1650,timestampKind:'browser_capture_estimate',estimateStatus:'uncalibrated_estimate'},masks:[],issuedAtMs:1700,fetchImpl:async()=>({ok:true,json:async()=>({timingStatus:'provisional',frame:{frameId:'other',observedAt:frame.observedAt},scenarios:[]})})});assert.equal(mismatched.status,'failed');
  const limited=await sendProvisionalSparkRequest({consent:true,frame,imageDataUrl:'png',gazePoint:selectedPoint(),gazeTiming:{sampleAtMs:1600,processedAtMs:1650,timestampKind:'browser_capture_estimate',estimateStatus:'uncalibrated_estimate'},masks:[],issuedAtMs:1700,fetchImpl:async()=>({ok:false,status:429,json:async()=>({error:'provider_limited',providerCode:'PROVIDER_BUDGET_EXCEEDED',secret:'never display'})})});assert.deepEqual(limited,{status:'failed',reason:'budget_exceeded'});
- assert.equal(provisionalGazeFailureReason({reason:'visible_eye_iris_landmarks_required'},'uncalibrated_iris_estimate_required'),'유효한 눈 홍채 랜드마크 없음');
+ assert.equal(provisionalGazeFailureReason({reason:'visible_eye_iris_landmarks_required'},'uncalibrated_iris_estimate_required'),'No valid iris landmarks');
  const controller=new AbortController();controller.abort();const aborted=await sendProvisionalSparkRequest({consent:true,frame,imageDataUrl:'png',gazePoint:{x:.5,y:.25},gazeTiming:{sampleAtMs:1600,processedAtMs:1650,timestampKind:'browser_capture_estimate',estimateStatus:'uncalibrated_estimate'},masks:[],issuedAtMs:1700,signal:controller.signal,fetchImpl:async()=>{calls++;}});assert.equal(aborted.status,'cancelled');assert.equal(calls,0);
 });
 function selectedPoint(){return {x:.5,y:.25};}

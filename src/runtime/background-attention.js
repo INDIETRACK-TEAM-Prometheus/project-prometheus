@@ -110,7 +110,9 @@ function validateCandidateSpace(space, snapshot) {
 function validatePrepared(value, snapshot, now, evidenceIds = snapshot.dependencies.evidenceIds) {
   if (!value || typeof value !== 'object' || !Array.isArray(value.scenarios)) throw new TypeError('invalid prepared result');
   validateScenarios(value.scenarios);
-  const evidence = new Set(evidenceIds);
+  // The work may attach its own evidence (a depth artifact) that Spark can cite; only depth artifact IDs are accepted.
+  const extraEvidence = Array.isArray(value.groundingEvidenceIds) ? value.groundingEvidenceIds.filter(id => typeof id === 'string' && /^depth-[0-9a-f]{16}$/.test(id)).slice(0, 4) : [];
+  const evidence = new Set([...evidenceIds, ...extraEvidence]);
   if (value.scenarios.some(scenario => scenario.grounding_refs.some(id => !evidence.has(id)))) throw new TypeError('unknown grounding evidence');
   const nextGaze = value.nextGaze ?? null;
   const candidates = validateCandidateSpace(value.candidateSpace, snapshot);
@@ -120,7 +122,10 @@ function validatePrepared(value, snapshot, now, evidenceIds = snapshot.dependenc
   if (!time(observedUntil) || observedUntil > snapshot.observedUntil) throw new TypeError('prepared result exceeds causal cutoff');
   const expiresAt = value.expiresAt ?? snapshot.dependencies.expiresAt;
   if (expiresAt != null && (!time(expiresAt) || expiresAt <= now)) throw new TypeError('prepared result expired');
-  return {scenarios:structuredClone(value.scenarios), nextGaze:structuredClone(nextGaze), ...(value.candidateSpace ? {candidateSpace:structuredClone(value.candidateSpace)} : {}), observedUntil, expiresAt:expiresAt ?? null, frameId:value.frameId ?? snapshot.frame.frameId, dependencies:structuredClone(value.dependencies ?? snapshot.dependencies)};
+  return {scenarios:structuredClone(value.scenarios), nextGaze:structuredClone(nextGaze), ...(value.candidateSpace ? {candidateSpace:structuredClone(value.candidateSpace)} : {}), observedUntil, expiresAt:expiresAt ?? null, frameId:value.frameId ?? snapshot.frame.frameId, dependencies:structuredClone(value.dependencies ?? snapshot.dependencies),
+    ...(extraEvidence.length ? {groundingEvidenceIds:extraEvidence} : {}),
+    // Display-only context from the work (gaze target, frame view, depth status); never used for decisions here.
+    ...(Object.hasOwn(value, 'gazeTarget') ? {gazeTarget:structuredClone(value.gazeTarget)} : {}), ...(value.view ? {view:structuredClone(value.view)} : {}), ...(value.depth ? {depth:structuredClone(value.depth)} : {})};
 }
 
 // Nearest-rank percentile over a bounded sample; null when empty.
@@ -374,7 +379,7 @@ export class BackgroundAttentionCoordinator {
       if (request.sequence <= this.lastPublishedSequence) { this.tel.counts.superseded++; this._recordCycle(cycle, 'superseded'); return; }
       const publishedAt = this.now();
       if (prepared.expiresAt != null && publishedAt >= prepared.expiresAt) { this.tel.counts.stale++; this._recordCycle(cycle, 'expired'); return; }
-      const value = {id:`${request.sessionId}:${request.sequence}`, sessionId:request.sessionId, sequence:request.sequence, frameId:prepared.frameId, observedUntil:prepared.observedUntil, sourceAgeMs:Math.max(0, publishedAt - prepared.observedUntil), dependencies:structuredClone(prepared.dependencies), scenarios:structuredClone(prepared.scenarios), nextGaze:structuredClone(prepared.nextGaze), ...(prepared.candidateSpace ? {candidateSpace:structuredClone(prepared.candidateSpace)} : {}), deliveryState:generated ? 'generated' : 'cache_hit', timings:{cacheLookupMs, generationMs, nextTargetsMs, totalMs:Math.max(0,publishedAt-request.processedAt), publishedAt}};
+      const value = {id:`${request.sessionId}:${request.sequence}`, sessionId:request.sessionId, sequence:request.sequence, frameId:prepared.frameId, observedUntil:prepared.observedUntil, sourceAgeMs:Math.max(0, publishedAt - prepared.observedUntil), dependencies:structuredClone(prepared.dependencies), scenarios:structuredClone(prepared.scenarios), nextGaze:structuredClone(prepared.nextGaze), ...(prepared.candidateSpace ? {candidateSpace:structuredClone(prepared.candidateSpace)} : {}), ...(Object.hasOwn(prepared, 'gazeTarget') ? {gazeTarget:structuredClone(prepared.gazeTarget)} : {}), ...(prepared.view ? {view:structuredClone(prepared.view)} : {}), ...(prepared.depth ? {depth:structuredClone(prepared.depth)} : {}), deliveryState:generated ? 'generated' : 'cache_hit', timings:{cacheLookupMs, generationMs, nextTargetsMs, totalMs:Math.max(0,publishedAt-request.processedAt), publishedAt}};
       this.metrics.lastSourceAgeMs = value.sourceAgeMs; this.metrics.published++; this.lastStateKey = request.stateKey; this.lastPublishedAt = publishedAt; this.lastFailure = null; this.lastPublishedSequence = request.sequence;
       this.latest = request;
       cycle.publishedAt = publishedAt;

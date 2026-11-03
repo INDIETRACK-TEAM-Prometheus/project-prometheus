@@ -36,14 +36,14 @@ function validEar(value) {
 
 // Plain-language reason the latest server response has no open-eye gaze point (shown while calibration waits).
 export function describeOpenEyeWait(sample) {
-  if (!sample) return '아직 서버 응답이 없습니다';
-  if (sample.faceDetected !== true) return sample.trackingFailure?.stage === 'eye_patch' ? `서버 응답: 얼굴은 찾았지만 눈 영역 추출 실패${sample.trackingFailure.message ? ` (${sample.trackingFailure.message})` : ''}` : '서버 응답: 얼굴 미검출';
+  if (!sample) return 'No server response yet';
+  if (sample.faceDetected !== true) return sample.trackingFailure?.stage === 'eye_patch' ? `Server response: face found but the eye region could not be extracted${sample.trackingFailure.message ? ` (${sample.trackingFailure.message})` : ''}` : 'Server response: no face detected';
   if (sample.gazeState === 'closed') {
     const ear = sample.eyeAspectRatio;
-    return ear ? `서버 응답: 눈 감김 판정 (EAR 왼쪽 ${ear.left.toFixed(2)} · 오른쪽 ${ear.right.toFixed(2)}, 한쪽이라도 ${ear.threshold.toFixed(2)} 미만이면 감김)` : '서버 응답: 눈 감김 판정';
+    return ear ? `Server response: eyes judged closed (EAR left ${ear.left.toFixed(2)} · right ${ear.right.toFixed(2)}; closed if either is under ${ear.threshold.toFixed(2)})` : 'Server response: eyes judged closed';
   }
-  if (!sample.features) return '서버 응답: 시선 좌표 없음';
-  return '서버 응답: 열린 눈 확인';
+  if (!sample.features) return 'Server response: no gaze coordinates';
+  return 'Server response: open eyes confirmed';
 }
 
 const MAX_CONSECUTIVE_FRAME_FAILURES = 5;
@@ -58,16 +58,16 @@ const BATCH_SPAN_MS = 500;
 
 // Why one calibration target could not be used (shown right after the burst is analysed).
 export function describeCalibrationTarget(result) {
-  if (!result) return '결과 없음';
-  if (result.status !== 'insufficient') return `사용 가능한 프레임 ${result.usableFrames}/${result.totalFrames}`;
-  if (result.eyePatchFailures > 0 && result.faceFrames === 0) return `얼굴은 찾았지만 눈 영역 추출 실패 ${result.eyePatchFailures}/${result.totalFrames}장${result.failureMessage ? ` (${result.failureMessage})` : ''}`;
-  if (result.faceFrames === 0) return `얼굴 미검출 (프레임 ${result.totalFrames}장)`;
+  if (!result) return 'No result';
+  if (result.status !== 'insufficient') return `Usable frames ${result.usableFrames}/${result.totalFrames}`;
+  if (result.eyePatchFailures > 0 && result.faceFrames === 0) return `Face found but eye region extraction failed in ${result.eyePatchFailures}/${result.totalFrames} frames${result.failureMessage ? ` (${result.failureMessage})` : ''}`;
+  if (result.faceFrames === 0) return `No face detected (${result.totalFrames} frames)`;
   if (result.closedFrames > 0 && result.usableFrames < result.closedFrames) {
     const ear = result.eyeAspectRatio;
-    return ear ? `눈 감김 판정 (EAR 최소 ${ear.min.toFixed(2)}, 기준 ${ear.threshold.toFixed(2)} 미만이면 감김)` : '눈 감김 판정';
+    return ear ? `Eyes judged closed (EAR min ${ear.min.toFixed(2)}; closed under ${ear.threshold.toFixed(2)})` : 'Eyes judged closed';
   }
-  if (result.frameErrors > 0) return `프레임 처리 오류 ${result.frameErrors}건`;
-  return `사용 가능한 프레임 부족 (${result.usableFrames}/${result.totalFrames})`;
+  if (result.frameErrors > 0) return `${result.frameErrors} frame processing errors`;
+  return `Not enough usable frames (${result.usableFrames}/${result.totalFrames})`;
 }
 
 function bytesToBase64(bytes) {
