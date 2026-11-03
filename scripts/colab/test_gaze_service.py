@@ -255,7 +255,8 @@ class ClickCorrectionTests(unittest.TestCase):
         call = self.session.active.tracker.adapt_calls[0]
         self.assertEqual(call[0], ["eye-5", "eye-7"])
         self.assertEqual(call[3], [[0.1, -0.2], [0.1, -0.2]])
-        self.assertEqual(call[4], {"steps_inner": 10, "inner_lr": 1e-4, "affine_transform": True, "pt_type": "click"})
+        self.assertEqual(call[4], {"steps_inner": 1, "inner_lr": 1e-5, "affine_transform": True, "pt_type": "calib"})
+        self.assertTrue(self.session.active.calibrated)
         self.assertEqual(self.session.active.frames, {})
 
     def test_click_without_open_eyes_changes_nothing(self):
@@ -263,7 +264,7 @@ class ClickCorrectionTests(unittest.TestCase):
         self.assertEqual(service["click_correction"](self.session, self.body([1]))["status"], "insufficient")
         self.assertEqual(self.session.active.tracker.adapt_calls, [])
 
-    def test_click_needs_an_accepted_calibration_no_candidate_and_at_most_three_frames(self):
+    def test_click_needs_no_candidate_and_at_most_three_frames_but_no_prior_calibration(self):
         self.fake_frames({1})
         with self.assertRaises(service["ServiceError"]) as error:
             service["click_correction"](self.session, self.body([1, 2, 3, 4]))
@@ -274,9 +275,7 @@ class ClickCorrectionTests(unittest.TestCase):
         self.assertEqual(error.exception.code, "GAZE_CANDIDATE_EXISTS")
         self.session.candidate = None
         self.session.active.calibrated = False
-        with self.assertRaises(service["ServiceError"]) as error:
-            service["click_correction"](self.session, self.body([1]))
-        self.assertEqual(error.exception.code, "GAZE_NOT_CALIBRATED")
+        self.assertEqual(service["click_correction"](self.session, self.body([1]))["status"], "adapted")
 
 
 class BatchCalibrationTests(unittest.TestCase):

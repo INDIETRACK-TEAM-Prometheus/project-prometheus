@@ -1,4 +1,5 @@
 import {createWebcamGazeController} from './webcam.js';
+import {createOfficialWebEyeTrackController} from './official-webeyetrack.js';
 import {MAX_CALIBRATION_SAMPLE_AGE_MS} from './calibration-window.js';
 import {ClockDriftMonitor} from '../runtime/clock.js';
 
@@ -275,6 +276,8 @@ export function createRemoteWebcamGazeController({
   }
 
   return {
+    // GPU-host WebEyeTrack runs like the official demo: tracking starts at once and page clicks calibrate it.
+    official:true,
     get calibrated(){return calibrated;},
     async start({userInitiated=false,cameraConsent=false,videoConstraints=true}={}) {
       if (!userInitiated || !cameraConsent) throw new Error('explicit start and camera consent required');
@@ -290,7 +293,7 @@ export function createRemoteWebcamGazeController({
         const created=await jsonRequest('/api/gaze/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({screenPxDimensions:[Math.max(1,Math.round(viewport.width)),Math.max(1,Math.round(viewport.height))],...(screenCmDimensions?{screenCmDimensions}:{}),...(adapter?{adapter}:{})})});
         if (!validSessionId(created.sessionId)) throw startupError('gaze_protocol_error');
         if(typeof created.calibrated!=='boolean'||created.calibrated!==!!adapter)throw startupError('gaze_protocol_error');
-        calibrated=created.calibrated;
+        calibrated=true;
         sessionId=created.sessionId;diagnose('gaze_session_created');
         let cameraRequest;
         diagnose('camera_request_started');
@@ -376,7 +379,7 @@ export function createRemoteWebcamGazeController({
     cancelCalibration() { return discardCandidate().catch(()=>{}); },
     // Upstream click calibration on the accepted model: the user is looking at the point they clicked (viewport px).
     async clickCorrection(point) {
-      if(!calibrated||candidate||!running||paused||!sessionId)throw new Error('click correction unavailable');
+      if(candidate||!running||paused||!sessionId)throw new Error('click correction unavailable');
       const viewport=getViewport();
       if(!finite(point?.x)||!finite(point?.y)||!finite(viewport?.width)||!finite(viewport?.height)||viewport.width<=0||viewport.height<=0)throw new Error('invalid click point');
       const target=[Math.min(.5,Math.max(-.5,point.x/viewport.width-.5)),Math.min(.5,Math.max(-.5,point.y/viewport.height-.5))];
@@ -425,12 +428,15 @@ export function createRemoteWebcamGazeController({
     if(typeof getAdapter!=='function')return null;
     const stored=await getAdapter();
     const adapter=stored?.adapter??stored??null;
-    if(adapter&&!validateRemoteGazeAdapter(adapter,modelInfo))throw startupError('gaze_adapter_incompatible');
+    // An adapter saved for other model weights (e.g. before the switch to the demo model) is skipped, not fatal.
+    if(adapter&&!validateRemoteGazeAdapter(adapter,modelInfo)){diagnose('gaze_adapter_skipped_incompatible');return null;}
     return adapter;
   }
 }
 
 export function createProfiledWebcamGazeController(options) {
+  // Local profile = the official WebEyeTrack demo pipeline (package proxy, its model, click calibration).
+  const createLocal = options.createLocalController ?? (opts => createOfficialWebEyeTrackController(opts));
   let controller=null, remote=false, timing=null, selecting=null, generation=0;
   async function selectController() {
     if(controller)return controller;
@@ -439,7 +445,7 @@ export function createProfiledWebcamGazeController(options) {
       let response,config;
       try{response=await (options.fetchImpl??fetch)('/api/runtime/config',{cache:'no-store'});if(!response.ok)throw new Error();config=await response.json();}catch{throw startupError('runtime_config_unavailable');}
       if(config?.computeProfile==='cloud'&&config?.gazeBackend==='remote_gpu'){remote=true;controller=createRemoteWebcamGazeController(options);}
-      else if(config?.computeProfile==='local'&&config?.gazeBackend==='browser_local'){remote=false;controller=createWebcamGazeController(options);}
+      else if(config?.computeProfile==='local'&&config?.gazeBackend==='browser_local'){remote=false;controller=createLocal(options);}
       else throw startupError('runtime_config_invalid');
       if(timing)controller.setTimingCalibration(timing);
       return controller;
@@ -448,6 +454,7 @@ export function createProfiledWebcamGazeController(options) {
   }
   return {
     get remote(){return remote;},
+    get official(){return controller?.official===true;},
     get calibrated(){return Boolean(controller?.calibrated);},
     async start(options){const token=++generation;const selected=await selectController();if(token!==generation)throw startupError('camera_request_aborted');return selected.start(options);},
     stop(){generation++;return controller?.stop();},
@@ -464,6 +471,7 @@ export function createProfiledWebcamGazeController(options) {
     commitCalibration(...args){return selectController().then(c=>c.commitCalibration(...args));},
     cancelCalibration(...args){return controller?.cancelCalibration?.(...args);},
     clickCorrection(...args){if(!remote||!controller?.clickCorrection)return Promise.reject(new Error('click correction unavailable'));return controller.clickCorrection(...args);},
+    click(...args){return !remote&&typeof controller?.click==='function'?controller.click(...args):false;},
     setTimingCalibration(value){timing=value;return controller?.setTimingCalibration(value);}
   };
 }

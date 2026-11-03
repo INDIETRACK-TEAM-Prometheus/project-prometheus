@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- The official WebEyeTrack demo (js/examples/demo-app/src/App.tsx at the pinned commit) without React: the package's own
+     WebcamClient + WebEyeTrackProxy, gaze dot at (normPog + 0.5) x window size, and the package's own click calibration
+     (every click is a calibration point). Nothing here re-implements WebEyeTrack. -->
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>WebEyeTrack official demo</title>
+<style>
+  body{margin:0;background:#000;color:#ddd;font:13px system-ui,sans-serif;min-height:100vh}
+  header{background:#fff;color:#111;padding:8px 12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  .row{display:flex;gap:12px;flex-wrap:wrap;padding:8px}
+  video{width:320px;transform:scaleX(-1)}
+  #patch{max-width:480px;width:100%}
+  pre{background:#111;padding:8px;margin:8px;white-space:pre-wrap;max-width:560px}
+  #dot{position:fixed;width:20px;height:20px;margin:-10px 0 0 -10px;border-radius:50%;background:#e33;border:2px solid #fff;pointer-events:none;z-index:9;left:-100px;top:-100px}
+  #dot.closed{background:#888}
+</style></head>
+<body>
+<header><b>WebEyeTrack 공식 데모 (패키지 그대로)</b><span>화면의 아무 곳이나 <b>바라보면서 클릭</b>하면 그 점으로 보정됩니다. 여러 위치를 클릭할수록 정확해집니다.</span><span id="status">모델 로딩 중</span></header>
+<div class="row"><video id="webcam" autoplay playsinline muted></video><canvas id="patch"></canvas></div>
+<pre id="debug"></pre>
+<div id="dot"></div>
+<script src="/vendor/webeyetrack.js"></script>
+<script>
+  const proxy = new WebEyeTrackProxy(new WebcamClient('webcam'));
+  const dot = document.getElementById('dot'), patch = document.getElementById('patch'), debug = document.getElementById('debug'), status = document.getElementById('status');
+  let frames = 0, clicks = 0, started = performance.now();
+  addEventListener('click', () => { clicks++; });
+  proxy.onGazeResults = result => {
+    if (!result) return;
+    frames++;
+    status.textContent = `실행 중 · ${(frames / ((performance.now() - started) / 1000)).toFixed(1)} fps · 클릭 ${clicks}회`;
+    dot.style.left = `${(result.normPog[0] + 0.5) * innerWidth}px`;
+    dot.style.top = `${(result.normPog[1] + 0.5) * innerHeight}px`;
+    dot.className = result.gazeState === 'closed' ? 'closed' : '';
+    if (result.eyePatch) { patch.width = result.eyePatch.width; patch.height = result.eyePatch.height; patch.getContext('2d').putImageData(result.eyePatch, 0, 0); }
+    debug.textContent = JSON.stringify({gazeState: result.gazeState, normPog: result.normPog, headVector: result.headVector, faceOrigin3D: result.faceOrigin3D, durations: result.durations}, (k, v) => typeof v === 'number' ? Math.round(v * 1000) / 1000 : v, 1);
+  };
+</script>
+</body></html>

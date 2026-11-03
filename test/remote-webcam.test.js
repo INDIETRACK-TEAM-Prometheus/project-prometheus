@@ -244,9 +244,11 @@ test('the physical screen size is sent with the session only when it is valid',a
   await bad.controller.stop();
 });
 
-test('click correction needs an accepted calibration and sends the clicked point with two fresh frames',async()=>{
+test('click calibration works from the first frame like the official demo and sends the clicked point with two fresh frames',async()=>{
   const cold=harness();await cold.controller.start({userInitiated:true,cameraConsent:true});
-  await assert.rejects(cold.controller.clickCorrection({x:10,y:10}),/unavailable/);await cold.controller.stop();
+  assert.equal(cold.controller.calibrated,true);assert.equal(cold.controller.official,true);
+  assert.equal((await cold.controller.clickCorrection({x:10,y:10})).adapted,true);await cold.controller.stop();
+  await assert.rejects(cold.controller.clickCorrection({x:10,y:10}),/unavailable/);
   const h=harness({restoreAdapter:adapter()});await h.controller.start({userInitiated:true,cameraConsent:true});
   assert.deepEqual(await h.controller.clickCorrection({x:600,y:150}),{adapted:true,usableFrames:2,totalFrames:2});
   const body=JSON.parse(h.calls.find(call=>call.url.endsWith('/calibration/click')).options.body);

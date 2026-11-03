@@ -18,6 +18,10 @@ for (const file of ['app.js','core.js','gaze/index.js','gaze/webcam.js','gaze/re
 // Optional user-provided local assets. Never proxy arbitrary URLs or expose paths.
 for (const [name,type] of [['vision_bundle.mjs','text/javascript; charset=utf-8'],['vision_wasm_internal.js','text/javascript; charset=utf-8'],['vision_wasm_internal.wasm','application/wasm'],['vision_wasm_nosimd_internal.js','text/javascript; charset=utf-8'],['vision_wasm_nosimd_internal.wasm','application/wasm'],['face_landmarker.task','application/octet-stream']]) files.set(`/vendor/${name}`,[`vendor/${name}`,type]);
 files.set('/vendor/webeyetrack.js',['node_modules/webeyetrack/dist/index.js','text/javascript; charset=utf-8']);
+// The official WebEyeTrack demo, served as-is next to the app for side-by-side comparison.
+files.set('/webeyetrack-official.html',['webeyetrack-official.html','text/html; charset=utf-8']);
+files.set('/src/gaze/official-webeyetrack.js',['src/gaze/official-webeyetrack.js','text/javascript; charset=utf-8']);
+files.set('/src/gaze/official-webeyetrack-worker.js',['src/gaze/official-webeyetrack-worker.js','text/javascript; charset=utf-8']);
 files.set('/src/gaze/webeyetrack-adaptation.js',['src/gaze/webeyetrack-adaptation.js','text/javascript; charset=utf-8']);
 files.set('/src/gaze/local-recorder.js',['src/gaze/local-recorder.js','text/javascript; charset=utf-8']);
 files.set('/src/spatial/mask-association.js',['src/spatial/mask-association.js','text/javascript; charset=utf-8']);

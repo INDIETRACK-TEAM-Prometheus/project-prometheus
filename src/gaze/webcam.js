@@ -258,6 +258,7 @@ export function createWebcamGazeController({
   }
 
   return {
+    get calibrated() { return !!activeWorker?.calibrated; },
     async start({userInitiated = false, cameraConsent = false, videoConstraints = true} = {}) {
       if (!userInitiated || !cameraConsent) throw new Error('explicit start and camera consent required');
       if (running || starting) throw new Error('already started or starting');
@@ -378,6 +379,13 @@ export function createWebcamGazeController({
       activeWorker = candidateWorker;
       candidateWorker = null;
       if (previous && previous !== activeWorker) terminateRecord(previous);
+    },
+    // Forward a click to WebEyeTrack's own click calibration on the accepted model (as its WebEyeTrackProxy does).
+    click(point) {
+      const viewport = getViewport();
+      if (!running || candidateWorker || !activeWorker?.calibrated || !Number.isFinite(point?.x) || !Number.isFinite(point?.y) || !(viewport?.width > 0) || !(viewport?.height > 0)) return false;
+      activeWorker.worker.postMessage({type:'click', x:point.x/viewport.width-.5, y:point.y/viewport.height-.5});
+      return true;
     },
     cancelCalibration() {
       const candidate = candidateWorker;

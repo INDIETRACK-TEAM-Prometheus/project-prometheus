@@ -256,5 +256,11 @@ self.onmessage = event => {
   }
   if (message?.type === 'restoreCalibration') {
     restoreCalibration(message);
+    return;
+  }
+  // The package's own click calibration (WebEyeTrack.handleClick: 1 s debounce, 5% proximity filter, 60 s click TTL),
+  // fed the same normalised coordinates its WebEyeTrackProxy sends.
+  if (message?.type === 'click' && !adaptationBusy && Number.isFinite(message.x) && Number.isFinite(message.y)) {
+    try { tracker.handleClick(message.x, message.y); } catch {}
   }
 };

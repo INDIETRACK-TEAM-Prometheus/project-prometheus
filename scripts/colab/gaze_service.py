@@ -57,6 +57,25 @@ CLICK_LOCK_WAIT_SECONDS = 2.0
 MODEL_ID = "webeyetrack-blazegaze-mpiifacegaze"
 ADAPTER_ID = "webeyetrack-gaze-mlp-f32-v1"
 ADAPTER_WEIGHT_SHAPES = ((518, 16), (16,), (16, 16), (16,), (16, 2), (2,))
+# The model the official WebEyeTrack demo and npm package run (docs/public/web at the pinned commit). It has the same
+# BlazeGaze architecture as the Python checkpoint, with all 94 arrays in the same order, but different trained values.
+WEB_MODEL_URL = f"https://raw.githubusercontent.com/RedForestAI/WebEyeTrack/{SOURCE_COMMIT}/docs/public/web"
+WEB_MODEL_BIN_BYTES = 624072
+WEB_MODEL_ARRAYS = 94
+USE_WEB_MODEL = os.environ.get("PROMETHEUS_GAZE_WEIGHTS", "web") == "web"
+# Click calibration as the JS package runs it (WebEyeTrack.handleClick -> adapt defaults): one Adam step at 1e-5 with the
+# affine refitted on all kept points once there are more than 3. The package keeps 5 points; the guide uses 20 and
+# later clicks add more.
+CLICK_STEPS = 1
+CLICK_LEARNING_RATE = 1e-5
+CLICK_MAX_POINTS = 40
+# Upstream marks an eye closed below EAR 0.2 and drops the gaze point; with glasses or narrowed eyes open eyes fall below
+# that, so the point kept disappearing. It is a WebEyeTrackConfig setting, overridable with PROMETHEUS_GAZE_EAR_THRESHOLD.
+try:
+    EAR_THRESHOLD = min(0.25, max(0.08, float(os.environ.get("PROMETHEUS_GAZE_EAR_THRESHOLD", "0.15"))))
+except ValueError:
+    EAR_THRESHOLD = 0.15
+WEB_WEIGHTS = None
 
 TRACKER_FACTORY = None
 TF = None
@@ -654,8 +673,8 @@ def click_correction(session, body):
     state = session.active
     if session.candidate is not None:
         raise ServiceError(409, "GAZE_CANDIDATE_EXISTS")
-    if state is None or state.tracker is None or state.failed or not state.calibrated:
-        raise ServiceError(409, "GAZE_NOT_CALIBRATED")
+    if state is None or state.tracker is None or state.failed:
+        raise ServiceError(409, "GAZE_TRACKER_UNAVAILABLE")
     target = calibration_target(body.get("target"))
     frames = body.get("frames")
     if not isinstance(frames, list) or not 1 <= len(frames) <= MAX_CLICK_FRAMES:
@@ -686,20 +705,17 @@ def click_correction(session, body):
                     [sample["headVector"] for sample in samples],
                     [sample["faceOrigin3D"] for sample in samples],
                     [target for _ in samples],
-                    steps_inner=ADAPT_STEPS,
-                    inner_lr=ADAPT_LEARNING_RATE,
+                    steps_inner=CLICK_STEPS,
+                    inner_lr=CLICK_LEARNING_RATE,
                     affine_transform=True,
-                    pt_type="click",
+                    pt_type="calib",
                 )
         except Exception:
             raise ServiceError(503, "GAZE_ADAPTATION_FAILED")
     finally:
+        # The tracker keeps its click points (up to CLICK_MAX_POINTS) so each click refines all earlier ones, as in the package.
         state.frames.clear()
-        try:
-            for values in state.tracker.calib_data.values():
-                values.clear()
-        except Exception:
-            pass
+    state.calibrated = True
     return {"status": "adapted", "usableFrames": len(samples), "totalFrames": len(frames)}
 
 
@@ -1083,6 +1099,31 @@ def _patch_upstream_mediapipe_compatibility(source_root):
     tracker.write_text(tracker_source, encoding="utf-8")
 
 
+def _load_web_model():
+    """Download (once) and decode the demo's TFJS weights into arrays in the Keras weight order."""
+    target = HOME / "web-model"
+    manifest_path, bin_path = target / "model.json", target / "group1-shard1of1.bin"
+    if not manifest_path.is_file() or not bin_path.is_file() or bin_path.stat().st_size != WEB_MODEL_BIN_BYTES:
+        _download(f"{WEB_MODEL_URL}/model.json", manifest_path)
+        _download(f"{WEB_MODEL_URL}/group1-shard1of1.bin", bin_path)
+    manifest = json.loads(manifest_path.read_text("utf-8"))["weightsManifest"]
+    if len(manifest) != 1 or manifest[0]["paths"] != ["group1-shard1of1.bin"]:
+        raise RuntimeError("web model manifest changed")
+    raw = bin_path.read_bytes()
+    if len(raw) != WEB_MODEL_BIN_BYTES:
+        raise RuntimeError("web model weights have an unexpected size")
+    arrays, offset = [], 0
+    for entry in manifest[0]["weights"]:
+        if entry.get("dtype") != "float32" or "quantization" in entry:
+            raise RuntimeError("web model weights are not plain float32")
+        count = int(math.prod(entry["shape"])) if entry["shape"] else 1
+        arrays.append(NP.frombuffer(raw, dtype="<f4", count=count, offset=offset).reshape(entry["shape"]).copy())
+        offset += count * 4
+    if offset != len(raw) or len(arrays) != WEB_MODEL_ARRAYS:
+        raise RuntimeError("web model weights do not match the manifest")
+    return arrays, hashlib.sha256(raw).hexdigest().upper()
+
+
 def _sha256(path):
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -1140,13 +1181,25 @@ def bootstrap():
             # The default Kalman filter (process 1e-5, measurement 1e-2) reaches only ~55% of a gaze jump after 8 frames.
             # The browser already smooths the display, so the service returns the raw estimate.
             kalman_config=kalman_disabled(WebEyeTrackConfig),
+            ear_threshold=EAR_THRESHOLD,
             verbose=False,
         )
         with tf.device("/GPU:0"):
-            return WebEyeTrack(config)
+            tracker = WebEyeTrack(config)
+            if WEB_WEIGHTS is not None:
+                model = tracker.blazegaze.model
+                if [tuple(w.shape) for w in model.weights] != [a.shape for a in WEB_WEIGHTS]:
+                    raise RuntimeError("web model does not match the BlazeGaze architecture")
+                model.set_weights(WEB_WEIGHTS)   # encoder and gaze_mlp share these layers
+            tracker.config.calib_config.max_points = CLICK_MAX_POINTS
+            return tracker
 
     TRACKER_FACTORY = tracker_factory
     TF, NP, CV2 = tf, np, cv2
+    global WEB_WEIGHTS
+    web_sha256 = None
+    if USE_WEB_MODEL:
+        WEB_WEIGHTS, web_sha256 = _load_web_model()
     probe = None
     try:
         probe = _new_tracker((1920, 1080), (53.1, 29.8))
@@ -1189,7 +1242,7 @@ def bootstrap():
         ).stdout.strip().splitlines()[0]
     except Exception:
         gpu_name = devices[0].name
-    MODEL_SHA256 = _sha256(weights)
+    MODEL_SHA256 = web_sha256 or _sha256(weights)
     return {
         "status": "ready",
         "backend": BACKEND_LABEL,
@@ -1200,7 +1253,7 @@ def bootstrap():
             "source": "https://github.com/RedForestAI/WebEyeTrack",
             "sourceCommit": SOURCE_COMMIT,
             "license": "MIT",
-            "weights": weights.name,
+            "weights": "web-demo/group1-shard1of1.bin" if web_sha256 else weights.name,
             "sha256": MODEL_SHA256,
             "faceLandmarker": landmarker.name,
             "faceLandmarkerSha256": _sha256(landmarker),

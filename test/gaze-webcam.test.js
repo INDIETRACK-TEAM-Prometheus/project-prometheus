@@ -319,3 +319,12 @@ test('late permission from a stopped start cannot replace a restarted camera str
   h.controller.stop();
   assert.equal(currentStreamStops,1);
 });
+
+test('local clicks go to the WebEyeTrack worker only after an accepted calibration', async () => {
+  const {createWebcamGazeController} = await import('../src/gaze/webcam.js');
+  const posted = [];
+  const controller = createWebcamGazeController({video:{}, mediaDevices:{getUserMedia(){}}, workerFactory:() => ({postMessage:m => posted.push(m), terminate(){}}), getViewport:() => ({width:800, height:600})});
+  assert.equal(controller.calibrated, false);
+  assert.equal(controller.click({x:400, y:300}), false);
+  assert.equal(posted.some(m => m.type === 'click'), false);
+});
