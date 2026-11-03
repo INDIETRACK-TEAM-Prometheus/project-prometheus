@@ -1,6 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { segmentSam } from './server/sam-adapter.js';
@@ -10,6 +10,7 @@ import { validateNextGaze } from './src/runtime/next-gaze.js';
 import { createRecordingStore } from './server/recording-store.js';
 import { createCalibrationStageLog } from './server/calibration-stage-log.js';
 import { createConfiguredDepthProvider } from './server/depth-provider.js';
+import { createDetectProvider } from './server/detect-provider.js';
 import { createRemoteGazeProvider, validScreenCm } from './server/gaze-provider.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +40,35 @@ const maxBody = 8 * 1024 * 1024;
 const maxGazeFrameBody = 512 * 1024;
 const maxGazeTargetBody = 2 * 1024 * 1024 + 64 * 1024;
 const loopback = address => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address);
+// Object names, depths and 3D memory for Spark (see the React app's live perception loop); bounded and typed.
+export function validSceneObjects(value, frame) {
+  const exact = (item, keys) => item && typeof item === 'object' && !Array.isArray(item) && Object.keys(item).sort().join(',') === [...keys].sort().join(',');
+  const label = item => item === null || (typeof item === 'string' && item.length >= 1 && item.length <= 40 && /^[A-Za-z0-9 _-]+$/.test(item));
+  const depth = item => item === null || (Number.isFinite(item) && item > 0 && item <= 50);
+  const bounds = b => exact(b, ['left','top','right','bottom']) && [b.left,b.top,b.right,b.bottom].every(Number.isInteger) && b.left >= 0 && b.top >= 0 && b.right <= frame?.width && b.bottom <= frame?.height && b.right > b.left && b.bottom > b.top;
+  if (!exact(value, ['gazeObject','objects','memory'])) return false;
+  if (value.gazeObject !== null && !(exact(value.gazeObject, ['label','depthM','bounds']) && label(value.gazeObject.label) && depth(value.gazeObject.depthM) && bounds(value.gazeObject.bounds))) return false;
+  if (!Array.isArray(value.objects) || value.objects.length > 20 || !value.objects.every(o => exact(o, ['label','score','depthM','bounds']) && label(o.label) && o.label !== null && Number.isFinite(o.score) && o.score >= 0 && o.score <= 1 && depth(o.depthM) && bounds(o.bounds))) return false;
+  return Array.isArray(value.memory) && value.memory.length <= 12 && value.memory.every(m => exact(m, ['label','distanceM','bearing','secondsAgo']) && label(m.label) && Number.isFinite(m.distanceM) && m.distanceM >= 0 && m.distanceM <= 100 && ['ahead','left','right','behind'].includes(m.bearing) && Number.isFinite(m.secondsAgo) && m.secondsAgo >= 0 && m.secondsAgo <= 3600);
+}
+
+function staticType(name) {
+  return ({html:'text/html; charset=utf-8', js:'text/javascript; charset=utf-8', css:'text/css; charset=utf-8', svg:'image/svg+xml', png:'image/png', woff2:'font/woff2'})[name.split('.').pop()] ?? 'application/octet-stream';
+}
+
+export async function listDemoClips(dir) {
+  const names = (await readdir(dir)).filter(name => /^[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.gaze\.json$/.test(name)).map(name => name.slice(0, -'.gaze.json'.length));
+  const present = new Set(await readdir(dir));
+  let order = [];
+  try { order = JSON.parse(await readFile(path.join(dir, 'playlist.json'), 'utf8')).clips ?? []; } catch {}
+  const rank = name => { const index = order.findIndex(item => item.name === name); return index < 0 ? Infinity : index; };
+  return names.filter(name => present.has(`${name}.mp4`)).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).map(name => {
+    const meta = order.find(item => item.name === name) ?? {};
+    return {name, title:typeof meta.title === 'string' ? meta.title.slice(0, 80) : name, video:`/demo-media/${name}.mp4`, gaze:`/demo-media/${name}.gaze.json`,
+      eyes:present.has(`${name}.eyes.mp4`) ? `/demo-media/${name}.eyes.mp4` : null, ...(Number.isFinite(meta.start) ? {start:meta.start} : {}), ...(Number.isFinite(meta.end) ? {end:meta.end} : {})};
+  });
+}
+
 function json(res, status, body) {
   if (!res.destroyed && !res.writableEnded) { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}); res.end(JSON.stringify(body)); }
 }
@@ -79,9 +109,10 @@ function validDepthEvidence(depth,frame,issuedAtMs,candidates){
   }
   return new Set(depth.objects.map(o=>o.objectId)).size===depth.objects.length && depth.relations.every(r=>exactKeys(r,['nearObjectId','farObjectId']) && ok.has(r.nearObjectId) && ok.has(r.farObjectId) && r.nearObjectId!==r.farObjectId);
 }
-export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),calibrationStageLog=createCalibrationStageLog({root:path.join(root,'data','diagnostics')}),depthProvider=createConfiguredDepthProvider(),computeProfile=process.env.PROMETHEUS_COMPUTE_PROFILE??'cloud',gazeProvider:configuredGazeProvider,gazeRemoteUrl=process.env.PROMETHEUS_GAZE_REMOTE_URL} = {}) {
+export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios, samTimeoutMs = 30000, httpsOptions, logger = line => console.info(line),recordingStore=createRecordingStore({root:path.join(root,'data','recordings')}),calibrationStageLog=createCalibrationStageLog({root:path.join(root,'data','diagnostics')}),depthProvider=createConfiguredDepthProvider(),computeProfile=process.env.PROMETHEUS_COMPUTE_PROFILE??'cloud',detectProvider=createDetectProvider(),gazeProvider:configuredGazeProvider,gazeRemoteUrl=process.env.PROMETHEUS_GAZE_REMOTE_URL} = {}) {
   if (!['cloud','local'].includes(computeProfile)) throw new TypeError('PROMETHEUS_COMPUTE_PROFILE must be cloud or local');
   const gazeProvider=configuredGazeProvider??(computeProfile==='cloud'?createRemoteGazeProvider({baseUrl:gazeRemoteUrl}):null);
+  detectProvider.warm?.();
   const configuredDepthProvider=depthProvider;
   if(computeProfile==='cloud'&&depthProvider.kind==='local_depth_provider')depthProvider={kind:'cloud_depth_unavailable',async infer(){throw Object.assign(new Error('remote depth worker required by cloud profile'),{code:'DEPTH_CLOUD_GPU_REQUIRED'});},async close(){}};
   let inFlight = 0;
@@ -177,6 +208,17 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
       }catch(error){const code=typeof error?.code==='string'&&/^DEPTH_[A-Z_]+$/.test(error.code)?error.code:'DEPTH_INVALID_REQUEST';json(res,code==='DEPTH_PROVIDER_BUSY'?429:503,{error:'depth_unavailable',code});}
       return;
     }
+    // YOLO (local CPU) as SAM's auxiliary: class names and boxes for the whole frame, fast enough for the live loop.
+    if(pathname==='/api/detect'){
+      if(req.method!=='POST'||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
+      if(!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type']??'')){req.resume();json(res,415,{error:'unsupported_media_type'});return;}
+      const abort=new AbortController();res.on('close',()=>{if(!res.writableEnded)abort.abort();});
+      try{let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>maxBody){req.resume();json(res,413,{error:'too_large'});return;}chunks.push(chunk);}
+        const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const result=await detectProvider.detect({...input,signal:abort.signal});json(res,200,result);
+      }catch(error){const code=typeof error?.code==='string'&&/^DETECT_[A-Z_]+$/.test(error.code)?error.code:'DETECT_INVALID_REQUEST';json(res,code==='DETECT_PROVIDER_BUSY'?429:code==='DETECT_INVALID_REQUEST'?400:503,{error:'detect_unavailable',code});}
+      return;
+    }
     if(pathname==='/api/diagnostics/calibration-stage'){
       const expectedOrigin=`${req.socket.encrypted?'https':'http'}://${req.headers.host}`;
       if(req.method!=='POST'||req.headers.origin!==expectedOrigin||!localRequest(req)){req.resume();json(res,403,{error:'forbidden'});return;}
@@ -232,18 +274,18 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
         let input; try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { reject(400,{error:'invalid_request'}); return; }
         if (pathname === '/api/reason-provisional') {
           const exact=(value,keys)=>value && typeof value==='object' && !Array.isArray(value) && Object.keys(value).sort().join(',')===keys.slice().sort().join(',');
-          const frame=input?.frame, gaze=input?.gazePoint, boxes=input?.masks, candidates=input?.candidates, hasCandidates=Object.hasOwn(input??{},'candidates'), depth=input?.depth, hasDepth=Object.hasOwn(input??{},'depth'), gazeTarget=input?.gazeTarget, hasGazeTarget=Object.hasOwn(input??{},'gazeTarget');
+          const frame=input?.frame, gaze=input?.gazePoint, boxes=input?.masks, candidates=input?.candidates, hasCandidates=Object.hasOwn(input??{},'candidates'), depth=input?.depth, hasDepth=Object.hasOwn(input??{},'depth'), gazeTarget=input?.gazeTarget, hasGazeTarget=Object.hasOwn(input??{},'gazeTarget'), sceneObjects=input?.sceneObjects, hasSceneObjects=Object.hasOwn(input??{},'sceneObjects');
           // The object nearest the fixation (ranked client-side by box distance); it must be one of the candidates.
           const validGazeTarget=!hasGazeTarget || (hasCandidates && exact(gazeTarget,['objectId','distance','rankedObjectIds']) && candidates.some(candidate=>candidate?.objectId===gazeTarget.objectId) && Number.isFinite(gazeTarget.distance) && gazeTarget.distance>=0 && gazeTarget.distance<=1 && Array.isArray(gazeTarget.rankedObjectIds) && gazeTarget.rankedObjectIds.length>=1 && gazeTarget.rankedObjectIds.length<=3 && gazeTarget.rankedObjectIds[0]===gazeTarget.objectId && new Set(gazeTarget.rankedObjectIds).size===gazeTarget.rankedObjectIds.length && gazeTarget.rankedObjectIds.every(id=>candidates.some(candidate=>candidate?.objectId===id)));
           const validBoxes=Array.isArray(boxes) && boxes.length<=10 && boxes.every(box=>exact(box,['left','top','right','bottom']) && [box.left,box.top,box.right,box.bottom].every(Number.isInteger) && box.left>=0 && box.top>=0 && box.right<=frame?.width && box.bottom<=frame?.height && box.right>box.left && box.bottom>box.top);
           const validCandidates=!hasCandidates || (Array.isArray(candidates) && candidates.length>0 && candidates.length<=10 && candidates.length<=(boxes?.length??0) && new Set(candidates.map(candidate=>candidate?.objectId)).size===candidates.length && candidates.every(candidate=>exact(candidate,['objectId','bounds']) && typeof candidate.objectId==='string' && /^[!-~]{1,128}$/.test(candidate.objectId) && exact(candidate.bounds,['left','top','right','bottom']) && boxes.some(box=>['left','top','right','bottom'].every(key=>candidate.bounds[key]===box[key]))));
-          if (!exact(input,['consentScope','timingStatus','frame','imageDataUrl','gazePoint','issuedAtMs','masks',...(hasCandidates?['candidates']:[]),...(hasDepth?['depth']:[]),...(hasGazeTarget?['gazeTarget']:[])]) || !validGazeTarget || (hasDepth && !validDepthEvidence(depth,frame,input.issuedAtMs,hasCandidates?candidates:[])) || input.consentScope!=='provisional_spark' || input.timingStatus!=='provisional' || !exact(frame,['frameId','observedAt','width','height']) || typeof frame.frameId!=='string' || !frame.frameId.trim() || frame.frameId.length>128 || !Number.isFinite(frame.observedAt) || frame.observedAt<0 || !Number.isInteger(frame.width) || !Number.isInteger(frame.height) || frame.width<1 || frame.height<1 || frame.width*frame.height>1048576 || !exact(gaze,['x','y','sampleAtMs','processedAtMs','timestampKind','estimateStatus']) || !Number.isFinite(gaze.x) || gaze.x<0 || gaze.x>=1 || !Number.isFinite(gaze.y) || gaze.y<0 || gaze.y>=1 || !Number.isFinite(gaze.sampleAtMs) || gaze.sampleAtMs<0 || !Number.isFinite(gaze.processedAtMs) || gaze.processedAtMs<gaze.sampleAtMs || !['browser_capture_estimate','callback_time_not_capture'].includes(gaze.timestampKind) || !['uncalibrated_estimate','validated_calibration_estimate'].includes(gaze.estimateStatus) || (gaze.timestampKind==='callback_time_not_capture'&&gaze.estimateStatus!=='uncalibrated_estimate') || !Number.isFinite(input.issuedAtMs) || input.issuedAtMs<Math.max(frame.observedAt,gaze.processedAtMs) || !validBoxes || !validCandidates || !validInput({frame:{frameId:frame.frameId,observedAt:frame.observedAt},imageDataUrl:input.imageDataUrl,prompt:'provisional scene'})) { reject(400,{error:'invalid_request'}); return; }
+          if (!exact(input,['consentScope','timingStatus','frame','imageDataUrl','gazePoint','issuedAtMs','masks',...(hasCandidates?['candidates']:[]),...(hasDepth?['depth']:[]),...(hasGazeTarget?['gazeTarget']:[]),...(hasSceneObjects?['sceneObjects']:[])]) || !validGazeTarget || (hasSceneObjects && !validSceneObjects(sceneObjects,frame)) || (hasDepth && !validDepthEvidence(depth,frame,input.issuedAtMs,hasCandidates?candidates:[])) || input.consentScope!=='provisional_spark' || input.timingStatus!=='provisional' || !exact(frame,['frameId','observedAt','width','height']) || typeof frame.frameId!=='string' || !frame.frameId.trim() || frame.frameId.length>128 || !Number.isFinite(frame.observedAt) || frame.observedAt<0 || !Number.isInteger(frame.width) || !Number.isInteger(frame.height) || frame.width<1 || frame.height<1 || frame.width*frame.height>1048576 || !exact(gaze,['x','y','sampleAtMs','processedAtMs','timestampKind','estimateStatus']) || !Number.isFinite(gaze.x) || gaze.x<0 || gaze.x>=1 || !Number.isFinite(gaze.y) || gaze.y<0 || gaze.y>=1 || !Number.isFinite(gaze.sampleAtMs) || gaze.sampleAtMs<0 || !Number.isFinite(gaze.processedAtMs) || gaze.processedAtMs<gaze.sampleAtMs || !['browser_capture_estimate','callback_time_not_capture'].includes(gaze.timestampKind) || !['uncalibrated_estimate','validated_calibration_estimate'].includes(gaze.estimateStatus) || (gaze.timestampKind==='callback_time_not_capture'&&gaze.estimateStatus!=='uncalibrated_estimate') || !Number.isFinite(input.issuedAtMs) || input.issuedAtMs<Math.max(frame.observedAt,gaze.processedAtMs) || !validBoxes || !validCandidates || !validInput({frame:{frameId:frame.frameId,observedAt:frame.observedAt},imageDataUrl:input.imageDataUrl,prompt:'provisional scene'})) { reject(400,{error:'invalid_request'}); return; }
           stage('request_validated');
           const observedUntil=Math.max(frame.observedAt,gaze.sampleAtMs);
           const timestampBasis=gaze.timestampKind==='browser_capture_estimate'?'browser_capture_estimate':'callback_time_not_capture';
           const calibrationStatus=gaze.estimateStatus==='uncalibrated_estimate'?'uncalibrated':'validated_calibration';
           const depthEvidence=hasDepth?[{id:`depth-${depth.artifactSha256.slice(0,16)}`,kind:'depth',text:JSON.stringify({source:'Depth Anything V2 Metric monocular estimate on this scene frame; scene-surface axial depth in metres, not binocular fixation depth; IQR is map spread, not confidence',modelId:depth.modelId,objects:depth.objects,relations:depth.relations,gazeDepthM:depth.gazeDepthM}),observedAt:frame.observedAt,processedAt:depth.availableAtMs,causalStatus:'provisional'}]:[];
-          const evidence=[{id:frame.frameId,kind:'scene',text:JSON.stringify({timingStatus:'provisional',calibrationStatus,timestampBasis,gazePoint:{x:gaze.x,y:gaze.y,sampleAtMs:gaze.sampleAtMs,processedAtMs:gaze.processedAtMs,timestampKind:gaze.timestampKind,estimateStatus:gaze.estimateStatus},sam:{maskCount:boxes.length,bounds:boxes},...(hasGazeTarget?{gazeTarget:{objectId:gazeTarget.objectId,distanceFractionOfDiagonal:gazeTarget.distance,rankedObjectIds:gazeTarget.rankedObjectIds,note:'object nearest the median gaze of the last 0.8 s; webcam gaze error is about 10% of the screen'}}:{})}),observedAt:frame.observedAt,processedAt:input.issuedAtMs,causalStatus:'provisional'},...depthEvidence];
+          const evidence=[{id:frame.frameId,kind:'scene',text:JSON.stringify({timingStatus:'provisional',calibrationStatus,timestampBasis,gazePoint:{x:gaze.x,y:gaze.y,sampleAtMs:gaze.sampleAtMs,processedAtMs:gaze.processedAtMs,timestampKind:gaze.timestampKind,estimateStatus:gaze.estimateStatus},sam:{maskCount:boxes.length,bounds:boxes},...(hasGazeTarget?{gazeTarget:{objectId:gazeTarget.objectId,distanceFractionOfDiagonal:gazeTarget.distance,rankedObjectIds:gazeTarget.rankedObjectIds,note:'object nearest the median gaze of the last 0.8 s; webcam gaze error is about 10% of the screen'}}:{}),...(hasSceneObjects?{gazeObject:sceneObjects.gazeObject,objects:sceneObjects.objects,spatialMemory:sceneObjects.memory,objectNote:'gazeObject is the SAM 3.1 segment at the gaze point, named by the overlapping YOLO detection when there is one; objects are YOLO (COCO classes, may be wrong); depthM is Depth Anything monocular axial depth in metres; spatialMemory lists objects looked at earlier, kept in 3D with the glasses camera pose, with distance and bearing from where the wearer is now'}:{})}),observedAt:frame.observedAt,processedAt:input.issuedAtMs,causalStatus:'provisional'},...depthEvidence];
           stage('reasoner_started');
           const result=await reasoner({timingStatus:'provisional',observedUntil,issuedAt:input.issuedAtMs,evidence,imageDataUrl:input.imageDataUrl,signal:controller.signal,...(hasCandidates?{candidates}: {})});
           if (!Array.isArray(result.scenarios)) throw new Error('invalid provisional reasoner response');
@@ -313,13 +355,25 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
       catch { res.writeHead(404); res.end('Not found'); }
       return;
     }
-    const entry = files.get(pathname);
+    // The Aria demo clips in data/demo: <name>.mp4 + <name>.gaze.json (+ <name>.eyes.mp4), in data/demo/playlist.json order.
+    if (pathname === '/api/demo/clips') {
+      if (req.method !== 'GET' || !localRequest(req)) { req.resume(); json(res,403,{error:'forbidden'}); return; }
+      try { json(res,200,{clips:await listDemoClips(path.join(root,'data','demo'))}); } catch { json(res,200,{clips:[]}); }
+      return;
+    }
+    // The React app (ui/, built to ui/dist); the earlier single-file page stays at /classic.
+    const built = pathname === '/' ? 'index.html' : /^\/assets\/[A-Za-z0-9._-]{1,120}$/.test(pathname) ? pathname.slice(1) : null;
+    if (built && req.method === 'GET') {
+      try { const data = await readFile(path.join(root, 'ui', 'dist', built)); res.writeHead(200, {'Content-Type': staticType(built), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}); res.end(data); return; }
+      catch { if (pathname !== '/') { res.writeHead(404); res.end('Not found'); return; } }
+    }
+    const entry = files.get(pathname === '/classic' ? '/' : pathname);
     if (req.method !== 'GET' || !entry) { res.writeHead(404); res.end('Not found'); return; }
     try { const data = await readFile(path.join(root, entry[0])); res.writeHead(200, {'Content-Type': entry[1], 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}); res.end(data); }
     catch (error) { res.writeHead(error.code === 'ENOENT' ? 404 : 500); res.end('Unavailable'); }
   };
   const server=httpsOptions ? https.createServer(httpsOptions, handler) : http.createServer(handler);
-  server.on('close',()=>{void depthProvider.close?.();if(configuredDepthProvider!==depthProvider)void configuredDepthProvider.close?.();void gazeProvider?.close?.();});
+  server.on('close',()=>{void detectProvider.close?.();void depthProvider.close?.();if(configuredDepthProvider!==depthProvider)void configuredDepthProvider.close?.();void gazeProvider?.close?.();});
   return server;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -26,7 +26,7 @@ test('recording list and delete are loopback-only and report store results',asyn
 });
 test('full-screen page exposes the data panel and discloses local recording',async()=>{
  const server=createLocalServer();server.listen(0,'127.0.0.1');await once(server,'listening');
- try{const page=await (await fetch(`http://127.0.0.1:${server.address().port}/`)).text();
+ try{const page=await (await fetch(`http://127.0.0.1:${server.address().port}/classic`)).text();
    assert.match(page,/<button id="dataPanel" aria-controls="sessionPanel"/);assert.match(page,/<footer id="sessionPanel"/);
    assert.match(page,/class="demo-disclosure">[^<]*recorded only to data\/recordings on this device/);assert.match(page,/id="deleteRecordings"/);
  }finally{await new Promise(resolve=>server.close(resolve));}

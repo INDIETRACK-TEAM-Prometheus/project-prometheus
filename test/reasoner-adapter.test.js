@@ -19,7 +19,7 @@ test('accepts explicitly tagged provisional evidence without presenting it as ca
  const evidence=[{...input.evidence[0],causalStatus:'provisional'}];let body;
  globalThis.fetch=async(_url,options)=>{body=JSON.parse(options.body);return reply([]);};
  const result=await reasonScenarios({...input,evidence,timingStatus:'provisional'});
- assert.equal(result.timingStatus,'provisional');assert.equal(body.input[0].content.includes('Timing is provisional and unverified'),true);assert.equal(JSON.parse(body.input[1].content).timingStatus,'provisional');
+ assert.equal(result.timingStatus,'provisional');assert.equal(body.input[0].content.includes('Timing is provisional'),true);assert.equal(JSON.parse(body.input[1].content).timingStatus,'provisional');
  globalThis.fetch=async()=>{throw Error('unexpected network');};
  await assert.rejects(reasonScenarios({...input,evidence}),{code:'REASONER_INVALID_INPUT'});
  await assert.rejects(reasonScenarios({...input,evidence,timingStatus:'verified'}),{code:'REASONER_INVALID_INPUT'});

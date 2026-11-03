@@ -1,4 +1,4 @@
-import { sharedProviderPolicy, providerHttpError, providerNetworkError } from './provider-policy.js';
+import { samProviderPolicy, providerHttpError, providerNetworkError } from './provider-policy.js';
 import { formats, recordsOfKind, decodeMaskToRaster } from '@meta-sam/parser';
 
 const MAX_RESPONSE = 16 * 1024 * 1024;
@@ -53,7 +53,7 @@ export async function segmentSam({ imageDataUrl, prompt, signal }) {
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 30000);
   const started = performance.now();
   try {
-    return await sharedProviderPolicy.run({cost:0.0025, signal}, async () => {
+    return await samProviderPolicy.run({cost:0.0025, signal}, async () => {
     let response;
     try { response = await fetch('https://api.meta.ai/v1/responses', {
       method: 'POST', redirect: 'error', signal: controller.signal,

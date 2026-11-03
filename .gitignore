@@ -16,3 +16,4 @@ data/models/
 .venv-depth/
 .depth-runtime/
 data/demo/
+ui/dist/

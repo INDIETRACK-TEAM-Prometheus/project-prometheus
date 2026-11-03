@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "build:ui": "vite build",
+    "dev:ui": "vite",
+    "prestart": "vite build"
   },
   "engines": {
     "node": "^20.17.0 || >=22.9.0"
@@ -13,6 +16,13 @@
   "dependencies": {
     "@meta-sam/parser": "0.1.0",
     "munkres": "2.1.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "three": "0.186.1",
     "webeyetrack": "0.0.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.2.1",
+    "vite": "8.3.5"
   }
 }

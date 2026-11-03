@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { segmentSam } from '../server/sam-adapter.js';
-import { sharedProviderPolicy } from '../server/provider-policy.js';
-sharedProviderPolicy.minIntervalMs = 0;
+import { samProviderPolicy } from '../server/provider-policy.js';
+samProviderPolicy.minIntervalMs = 0;
 
 const fixture = '<0f>0<|box;x1=10;y1=20;x2=14;y2=24;w=100;h=80;c=0.75|><|mask;x=0;y=0;c=0.75;data=5,5,!!!!!(QO(0lu8?|>';
 const originalFetch = globalThis.fetch;

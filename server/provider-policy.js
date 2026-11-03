@@ -34,6 +34,8 @@ export class ProviderPolicy {
     } finally { this.inFlight--; }
   }
 }
-// The shared demo loop reserves SAM + Spark together; the old $0.10 cap
-// rejected its intended cadence. Operators can set an explicit local cap.
+// SAM and Spark have separate lanes: one shared in-flight slot made every live SAM call wait behind a several-second
+// Spark call. SAM runs in the live perception loop (about once a second); Spark reasons over its latest result.
+// Operators can set explicit local caps.
 export const sharedProviderPolicy = new ProviderPolicy({maxCostPerMinute:Number(process.env.PROMETHEUS_PROVIDER_BUDGET_PER_MINUTE ?? 1)});
+export const samProviderPolicy = new ProviderPolicy({maxInFlight:2, minIntervalMs:100, maxCallsPerMinute:Number(process.env.PROMETHEUS_SAM_CALLS_PER_MINUTE ?? 120), maxCostPerMinute:Number(process.env.PROMETHEUS_SAM_BUDGET_PER_MINUTE ?? 0.5)});
