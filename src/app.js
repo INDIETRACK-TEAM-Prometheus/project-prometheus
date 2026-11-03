@@ -1,5 +1,6 @@
 import {createWorld} from './spatial/world.js';
 import {createVideoScene} from './spatial/video-scene.js';
+import {parseGazeTrack} from './gaze/gaze-replay.js';
 import {createLocalRecorder,listLocalRecordings,deleteLocalRecordings} from './gaze/local-recorder.js';
 import {GAZE_CALIBRATION_PROFILE_KEY,restoreLandmarkResidualCalibration,openGazeCalibrationProfileStore,loadGazeCalibrationProfile,createGazeCalibrationProfileAsync,saveGazeCalibrationProfile,fitAffineCalibration,identityAffineCalibration,selectAffineCalibrationCandidate} from './gaze/calibration-profile.js';
 import {createCausalDisplayFilter,REMOTE_GAZE_DISPLAY_FILTER} from './gaze/display-filter.js';
@@ -309,7 +310,7 @@ async function boot() {
   // WebEyeTrack scales its calibration loss by the screen size in cm; the viewport share of the physical screen is what the targets span.
   function viewportScreenCm(){const inches=screenDiagonalInches(),diagonalPx=Math.hypot(screen.width,screen.height);if(!inches||!(diagonalPx>0))return null;const cmPerPx=inches*2.54/diagonalPx;return [Math.round(innerWidth*cmPerPx*10)/10,Math.round(innerHeight*cmPerPx*10)/10];}
   function showScreenDiagonal(){const inches=screenDiagonalInches(),cm=viewportScreenCm();$('#screenDiagonal').value=inches??'';$('#screenDiagonalStatus').textContent=cm?`${inches}인치 · 현재 창 ${cm[0]}×${cm[1]} cm · 다음 카메라 시작부터 적용`:'미입력 · 모델 기본값(24인치 16:9) 사용';}
-  let clickCorrections=0,clickCorrectionBusy=false,lastClickCorrectionAt=-Infinity,syntheticWorld=null,videoScene=null,videoObjectUrl=null;
+  let clickCorrections=0,clickCorrectionBusy=false,lastClickCorrectionAt=-Infinity,syntheticWorld=null,videoScene=null,videoObjectUrl=null,gazeTrack=null;
   const fixation=createFixationBuffer();
   let activeLandmarkResidual=null;
   const calibrationStatus=$('#calibrationStatus');
@@ -756,7 +757,7 @@ async function boot() {
   let clickGuide=null;
   function stopClickGuide(){clickGuide?.remove();clickGuide=null;}
   function startClickGuide(){
-    if(!controller?.official||!controller.calibrated)return;
+    if(!controller?.official||!controller.calibrated||controller.replay)return;
     stopClickGuide();
     // Rows alternate direction so the eyes move to a neighbouring dot each time.
     const spots=[.08,.36,.64,.92].flatMap((y,row)=>{const xs=[.05,.275,.5,.725,.95].map(x=>[x,y]);return row%2?xs.reverse():xs;});
@@ -817,13 +818,16 @@ async function boot() {
     // Object identities do not carry over between scenes.
     liveTracker=null;clearGazeTarget();
     if(kind==='video'&&videoScene){world=videoScene;void sceneVideo.play().catch(()=>{});$('#sceneLabel').textContent='VIDEO SCENE';$('#sceneNote').textContent='녹화 영상 · 시선 → SAM 3.1 → 깊이 → Muse Spark';}
-    else{sceneVideo.pause();world=syntheticWorld;sceneSource.value='synthetic';$('#sceneLabel').textContent='LIVE WORLD';$('#sceneNote').textContent='가상 장면은 시선으로 조작되지 않습니다';}
+    else{sceneVideo.pause();gazeTrack=null;world=syntheticWorld;sceneSource.value='synthetic';$('#sceneLabel').textContent='LIVE WORLD';$('#sceneNote').textContent='가상 장면은 시선으로 조작되지 않습니다';}
   }
   sceneSource.addEventListener('change',()=>{if(sceneSource.value==='video')sceneVideoFile.click();else useScene('synthetic');});
   sceneVideoFile.addEventListener('cancel',()=>{if(world!==videoScene)sceneSource.value='synthetic';});
   sceneVideoFile.addEventListener('change',()=>{
-    const file=sceneVideoFile.files?.[0];sceneVideoFile.value='';
+    const files=[...(sceneVideoFile.files??[])];sceneVideoFile.value='';
+    const file=files.find(item=>item.type.startsWith('video/')||/\.(mp4|webm|mov|m4v)$/i.test(item.name)),trackFile=files.find(item=>/\.json$/i.test(item.name));
     if(!file){if(world!==videoScene)sceneSource.value='synthetic';return;}
+    // Optional recorded gaze for this video (scripts/aria/export_gaze_video.py); it replaces live gaze while loaded.
+    gazeTrack=null;if(trackFile){void trackFile.text().then(text=>{gazeTrack=parseGazeTrack(text);message.textContent=`동영상 장면: ${file.name} · 녹화 시선 ${gazeTrack.samples.length}개 (${gazeTrack.source}) · ▶ 시작으로 재생`;}).catch(()=>{message.textContent='시선 기록(JSON)을 읽지 못했습니다 · 웹캠 시선을 씁니다';});}
     if(videoObjectUrl)URL.revokeObjectURL(videoObjectUrl);
     videoObjectUrl=URL.createObjectURL(file);sceneVideo.src=videoObjectUrl;
     try{videoScene??=createVideoScene(canvas,sceneVideo);}catch{message.textContent='이 브라우저에서 동영상 장면을 표시할 수 없습니다.';useScene('synthetic');return;}
@@ -949,7 +953,8 @@ async function boot() {
   }
   function setState(s) {state.textContent=({starting:'시작 중',active:'카메라 활성',stopping:'정리 중',stopped:'정지',error:'시작 실패'})[s];start.disabled=s==='starting'||s==='active'||s==='stopping';stop.disabled=!(s==='starting'||s==='active');calibrate.disabled=s!=='active';calibrate.style.display=s==='active'?'inline-flex':'none';$('#pause').disabled=s!=='active';if(s!=='active'){clearGazeMarker();$('#pause').textContent='⏸';$('#pause').setAttribute('aria-label','일시정지');$('#pause').title='일시정지';}if(s==='stopped'&&!$('#localConsent').checked)$('#worldSceneState').textContent='동의 대기';updateFrozenGazeControls();}
   try {
-    controller=createProfiledWebcamGazeController({video,mediaDevices:navigator.mediaDevices,onSample,onEyePreview,onDiagnostic:logStartupDiagnostic,onCalibrationProgress,getScreenCm:viewportScreenCm,getAdapter:async()=>{const store=await profileStorage;remoteCalibrationProfile=store?await store.getItem(remoteGazeAdapterKey):null;if(remoteCalibrationProfile&&(!remoteCalibrationProfile.adapter||remoteCalibrationProfile.version!==1||remoteCalibrationProfile.calibration?.passed!==true||!remoteCalibrationProfile.environment))throw Object.assign(new Error('remote calibration profile invalid'),{code:'gaze_adapter_incompatible'});return remoteCalibrationProfile?.adapter??null;},onError:error=>{stopBackgroundAttention();void localRecorder.stop();const diagnostic=startupFailureDiagnostic(error),detail=typeof error?.detail==='string'&&/^[a-z_]{3,48}$/.test(error.detail)?error.detail:null,text=`WebEyeTrack 추적 중단 · 코드 ${diagnostic.code} · 단계 ${diagnostic.step}${detail?` · 원인 ${detail}`:''}`;if(detail)try{console.info('[Prometheus WebEyeTrack diagnostic] 원인',detail);}catch{}logStartupDiagnostic(diagnostic.code);clearFrozenGazeDemo('카메라 오류 · 잠정 시선 시험 취소',true);stopRemote();cancelDiagnostic();activeCalibration=null;activeAffine=null;displayFilter.reset();activeLandmarkResidual=null;training=[];validation=[];if(pilot?.calibration?.passed)pilot.calibration={...pilot.calibration,passed:false,status:'camera_error',invalidatedAtUtc:new Date().toISOString()};timingCalibration=null;cameraSessionId=null;pendingAligned=null;$('#timingStatus').textContent='카메라 오류 · 시간 측정 다시 적용 필요';$('#runGazeSam').disabled=true;coordinator?.stop();message.textContent=text;gazeStatus.textContent=text;}});
+    controller=createProfiledWebcamGazeController({video,mediaDevices:navigator.mediaDevices,onSample,onEyePreview,onDiagnostic:logStartupDiagnostic,onCalibrationProgress,getScreenCm:viewportScreenCm,
+      getReplay:()=>world===videoScene&&gazeTrack?{track:gazeTrack,video:sceneVideo,getSceneRect:()=>canvas.getBoundingClientRect()}:null,getAdapter:async()=>{const store=await profileStorage;remoteCalibrationProfile=store?await store.getItem(remoteGazeAdapterKey):null;if(remoteCalibrationProfile&&(!remoteCalibrationProfile.adapter||remoteCalibrationProfile.version!==1||remoteCalibrationProfile.calibration?.passed!==true||!remoteCalibrationProfile.environment))throw Object.assign(new Error('remote calibration profile invalid'),{code:'gaze_adapter_incompatible'});return remoteCalibrationProfile?.adapter??null;},onError:error=>{stopBackgroundAttention();void localRecorder.stop();const diagnostic=startupFailureDiagnostic(error),detail=typeof error?.detail==='string'&&/^[a-z_]{3,48}$/.test(error.detail)?error.detail:null,text=`WebEyeTrack 추적 중단 · 코드 ${diagnostic.code} · 단계 ${diagnostic.step}${detail?` · 원인 ${detail}`:''}`;if(detail)try{console.info('[Prometheus WebEyeTrack diagnostic] 원인',detail);}catch{}logStartupDiagnostic(diagnostic.code);clearFrozenGazeDemo('카메라 오류 · 잠정 시선 시험 취소',true);stopRemote();cancelDiagnostic();activeCalibration=null;activeAffine=null;displayFilter.reset();activeLandmarkResidual=null;training=[];validation=[];if(pilot?.calibration?.passed)pilot.calibration={...pilot.calibration,passed:false,status:'camera_error',invalidatedAtUtc:new Date().toISOString()};timingCalibration=null;cameraSessionId=null;pendingAligned=null;$('#timingStatus').textContent='카메라 오류 · 시간 측정 다시 적용 필요';$('#runGazeSam').disabled=true;coordinator?.stop();message.textContent=text;gazeStatus.textContent=text;}});
     coordinator=createCoordinator({controller,memory,runtime,onState:setState,onAligned:submitAligned,onDiagnostic:logStartupDiagnostic,namespace:epoch});
   } catch {start.disabled=true;message.textContent='이 브라우저에서 카메라 API를 사용할 수 없습니다.';}
   async function selectDurable(mode){
@@ -993,7 +998,8 @@ async function boot() {
         $('#worldGazeState').textContent=environmentChanged?'환경 변경 · 정확도 미보장':'WebEyeTrack 교정 · 정확도 미보장';
       }else {showCalibrationStatus(controller.remote?'Remote GPU WebEyeTrack 교정 없음 · 교정 버튼으로 시작':'WebEyeTrack 교정 없음 · 자동 교정 안 함 · 교정 버튼으로 시작');message.textContent=controller.remote?'카메라 활성 · 클라우드 GPU의 미교정 시선만 표시합니다. 카메라 프레임은 추론용으로 전송됩니다.':'카메라 활성 · WebEyeTrack 기본 모델의 미교정 추정만 표시합니다. 교정 성능과 시간 정렬은 검증되지 않았습니다.';gazeStatus.textContent='미교정 추정 대기';$('#worldGazeState').textContent=controller.remote?'Remote GPU · 미교정 추정 대기':'미교정 추정 대기';}
       if(controller.official)setTimeout(startClickGuide,1500);
-      if(controller.official){showCalibrationStatus('공식 WebEyeTrack(데모와 동일) · 교정 절차 없음 · 화면을 바라보면서 클릭하면 그 점으로 보정');message.textContent='공식 WebEyeTrack 모델로 바로 추적합니다. 여러 위치를 바라보면서 클릭할수록 정확해집니다.';gazeStatus.textContent='공식 WebEyeTrack 시선 · 클릭 보정 · 정확도 미보장';$('#worldGazeState').textContent='공식 WebEyeTrack · 클릭 보정';$('#clickCorrectionState').textContent='보면서 클릭하면 보정';}
+      if(controller.replay){showCalibrationStatus('녹화 시선 재생 · Project Aria 안경 시선 → SAM 3.1 → 깊이 → Muse Spark');message.textContent='녹화된 안경 시선을 영상과 맞춰 재생합니다. 웹캠은 쓰지 않습니다.';gazeStatus.textContent='Aria 녹화 시선 재생';$('#worldGazeState').textContent='Aria 녹화 시선';$('#clickCorrectionState').textContent='녹화 시선 (보정 불필요)';}
+      else if(controller.official){showCalibrationStatus('공식 WebEyeTrack(데모와 동일) · 교정 절차 없음 · 화면을 바라보면서 클릭하면 그 점으로 보정');message.textContent='공식 WebEyeTrack 모델로 바로 추적합니다. 여러 위치를 바라보면서 클릭할수록 정확해집니다.';gazeStatus.textContent='공식 WebEyeTrack 시선 · 클릭 보정 · 정확도 미보장';$('#worldGazeState').textContent='공식 WebEyeTrack · 클릭 보정';$('#clickCorrectionState').textContent='보면서 클릭하면 보정';}
       $('#gazeSamDemoStatus').textContent=controller.remote?'Remote GPU WebEyeTrack · 시선 프레임 전송 · 얼굴 랜드마크/눈 크롭은 전송하지 않음':activeCalibration?'WebEyeTrack 교정 사용 · 화면/환경 변경 시 정확도는 보장되지 않습니다.':'WebEyeTrack 기본 모델 · 미교정 · 정확도와 물리적 시간 정렬은 검증되지 않았습니다.';
       startBackgroundAttention();
     }

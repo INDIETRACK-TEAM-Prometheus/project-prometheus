@@ -25,6 +25,7 @@ files.set('/src/gaze/official-webeyetrack-worker.js',['src/gaze/official-webeyet
 files.set('/src/gaze/fixation.js',['src/gaze/fixation.js','text/javascript; charset=utf-8']);
 files.set('/src/spatial/gaze-target.js',['src/spatial/gaze-target.js','text/javascript; charset=utf-8']);
 files.set('/src/spatial/video-scene.js',['src/spatial/video-scene.js','text/javascript; charset=utf-8']);
+files.set('/src/gaze/gaze-replay.js',['src/gaze/gaze-replay.js','text/javascript; charset=utf-8']);
 files.set('/src/gaze/webeyetrack-adaptation.js',['src/gaze/webeyetrack-adaptation.js','text/javascript; charset=utf-8']);
 files.set('/src/gaze/local-recorder.js',['src/gaze/local-recorder.js','text/javascript; charset=utf-8']);
 files.set('/src/spatial/mask-association.js',['src/spatial/mask-association.js','text/javascript; charset=utf-8']);

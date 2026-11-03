@@ -1,0 +1,99 @@
+"""Export one Project Aria sequence (e.g. Aria Everyday Activities) as an upright RGB video plus the wearer's eye gaze in it.
+
+Uses only the official projectaria_tools API (pip install projectaria-tools): the RGB stream from the VRS recording, MPS
+general eye gaze, and the device calibration to re-project each gaze ray into the RGB camera. Output:
+
+  <out>.mp4         H.264, upright, playable in the browser (needs ffmpeg on PATH)
+  <out>.gaze.json   {"version":1, "source":..., "width":..., "height":..., "fps":..., "samples":[{"t":s, "x":0-1, "y":0-1}]}
+
+x/y are normalised to the upright video frame; t is seconds from the first exported frame (matches video.currentTime).
+
+  python export_gaze_video.py --vrs recording.vrs --gaze mps/eye_gaze/general_eye_gaze.csv --out aria_walk --seconds 60
+"""
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+def upright_point(x, y, raw_height):
+    """Aria RGB frames are stored rotated 90 degrees counter-clockwise; rotating the image clockwise maps (x, y) here."""
+    return raw_height - 1 - y, x
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--vrs", required=True, type=Path)
+    parser.add_argument("--gaze", required=True, type=Path, help="MPS general_eye_gaze.csv")
+    parser.add_argument("--out", required=True, type=Path, help="output path without extension")
+    parser.add_argument("--start", type=float, default=0.0, help="seconds to skip at the start")
+    parser.add_argument("--seconds", type=float, default=60.0, help="length to export")
+    parser.add_argument("--size", type=int, default=1024, help="output width/height (Aria RGB is square)")
+    parser.add_argument("--default-depth", type=float, default=1.0, help="metres, when the gaze has no depth estimate")
+    args = parser.parse_args(argv)
+
+    import numpy as np
+    from projectaria_tools.core import data_provider, mps
+    from projectaria_tools.core.mps.utils import get_gaze_vector_reprojection, get_nearest_eye_gaze
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise SystemExit("ffmpeg is required to write a browser-playable H.264 video")
+
+    provider = data_provider.create_vrs_data_provider(str(args.vrs))
+    label = "camera-rgb"
+    stream = provider.get_stream_id_from_label(label)
+    calibration = provider.get_device_calibration()
+    rgb_calibration = calibration.get_camera_calib(label)
+    gaze = mps.read_eyegaze(str(args.gaze))
+    count = provider.get_num_data(stream)
+    if count == 0 or not gaze:
+        raise SystemExit("no RGB frames or no eye gaze in this sequence")
+
+    first_ns = provider.get_image_data_by_index(stream, 0)[1].capture_timestamp_ns
+    start_ns, end_ns = first_ns + int(args.start * 1e9), first_ns + int((args.start + args.seconds) * 1e9)
+    indices = [i for i in range(count) if start_ns <= provider.get_image_data_by_index(stream, i)[1].capture_timestamp_ns < end_ns]
+    if len(indices) < 2:
+        raise SystemExit("the requested window has fewer than two RGB frames")
+    stamps = [provider.get_image_data_by_index(stream, i)[1].capture_timestamp_ns for i in indices]
+    fps = round((len(stamps) - 1) / ((stamps[-1] - stamps[0]) / 1e9), 3)
+
+    out_video, out_gaze = args.out.with_suffix(".mp4"), args.out.with_suffix(".gaze.json")
+    encoder = subprocess.Popen([ffmpeg, "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{args.size}x{args.size}",
+                                "-r", str(fps), "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out_video)],
+                               stdin=subprocess.PIPE)
+    samples = []
+    import cv2
+    for index, stamp in zip(indices, stamps):
+        image = provider.get_image_data_by_index(stream, index)[0].to_numpy_array()
+        raw_height, raw_width = image.shape[:2]
+        upright = np.ascontiguousarray(np.rot90(image, k=3))
+        frame = cv2.resize(upright, (args.size, args.size), interpolation=cv2.INTER_AREA)
+        encoder.stdin.write(frame[:, :, :3].astype(np.uint8).tobytes())
+        sample = {"t": round((stamp - stamps[0]) / 1e9, 4)}
+        eye = get_nearest_eye_gaze(gaze, stamp)
+        point = None
+        if eye is not None:
+            depth = getattr(eye, "depth", 0.0) or args.default_depth
+            point = get_gaze_vector_reprojection(eye, label, calibration, rgb_calibration, depth)
+        if point is not None:
+            x, y = upright_point(float(point[0]), float(point[1]), raw_height)
+            # upright width is the raw height and vice versa
+            nx, ny = x / raw_height, y / raw_width
+            if 0 <= nx <= 1 and 0 <= ny <= 1:
+                sample.update(x=round(nx, 5), y=round(ny, 5))
+        samples.append(sample)
+    encoder.stdin.close()
+    if encoder.wait() != 0:
+        raise SystemExit("ffmpeg failed to write the video")
+    out_gaze.write_text(json.dumps({"version": 1, "source": "project-aria-mps-eye-gaze", "sequence": args.vrs.parent.name,
+                                    "width": args.size, "height": args.size, "fps": fps, "samples": samples}, separators=(",", ":")), "utf-8")
+    valid = sum(1 for sample in samples if "x" in sample)
+    print(f"{out_video} ({len(samples)} frames, {fps} fps) and {out_gaze} ({valid}/{len(samples)} frames with gaze)")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

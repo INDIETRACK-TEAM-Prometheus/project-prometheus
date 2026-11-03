@@ -1,5 +1,6 @@
 import {createWebcamGazeController} from './webcam.js';
 import {createOfficialWebEyeTrackController} from './official-webeyetrack.js';
+import {createGazeReplayController} from './gaze-replay.js';
 import {MAX_CALIBRATION_SAMPLE_AGE_MS} from './calibration-window.js';
 import {ClockDriftMonitor} from '../runtime/clock.js';
 
@@ -439,7 +440,8 @@ export function createProfiledWebcamGazeController(options) {
   const createLocal = options.createLocalController ?? (opts => createOfficialWebEyeTrackController(opts));
   let controller=null, remote=false, timing=null, selecting=null, generation=0;
   async function selectController() {
-    if(controller)return controller;
+    if(controller&&!controller.replay)return controller;
+    controller=null;
     if(selecting)return selecting;
     selecting=(async()=>{
       let response,config;
@@ -455,8 +457,13 @@ export function createProfiledWebcamGazeController(options) {
   return {
     get remote(){return remote;},
     get official(){return controller?.official===true;},
+    get replay(){return controller?.replay===true;},
     get calibrated(){return Boolean(controller?.calibrated);},
-    async start(options){const token=++generation;const selected=await selectController();if(token!==generation)throw startupError('camera_request_aborted');return selected.start(options);},
+    async start(startOptions){
+      // A recorded gaze track for the video scene (Project Aria) replaces live gaze for this session.
+      const replay=typeof options.getReplay==='function'?options.getReplay():null;
+      if(replay){generation++;remote=false;controller=createGazeReplayController({...options,...replay});return controller.start(startOptions);}
+      const token=++generation;const selected=await selectController();if(token!==generation)throw startupError('camera_request_aborted');return selected.start(startOptions);},
     stop(){generation++;return controller?.stop();},
     telemetry(){return typeof controller?.telemetry==='function'?controller.telemetry():null;},
     pause(){return controller?.pause?.();},
