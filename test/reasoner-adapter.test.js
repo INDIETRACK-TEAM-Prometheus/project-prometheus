@@ -91,3 +91,10 @@ test('next gaze is separate and constrained to current candidates',async()=>{
  prediction={rankedTargetIds:[]};
  assert.deepEqual((await reasonScenarios({...input,policy,candidates})).nextGaze,prediction);
 });
+
+test('reasoner model and effort default to Spark 1.3 at minimal and accept only known values', async () => {
+  const {reasonerSettings} = await import('../server/reasoner-adapter.js');
+  assert.deepEqual(reasonerSettings({}), {model:'muse-spark-1.3', effort:'minimal'});
+  assert.deepEqual(reasonerSettings({PROMETHEUS_SPARK_MODEL:'muse-spark-1.1', PROMETHEUS_SPARK_EFFORT:'low'}), {model:'muse-spark-1.1', effort:'low'});
+  assert.deepEqual(reasonerSettings({PROMETHEUS_SPARK_MODEL:'gpt-x', PROMETHEUS_SPARK_EFFORT:'none'}), {model:'muse-spark-1.3', effort:'minimal'});
+});
