@@ -1,4 +1,10 @@
-# Prometheus
+<p align="center">
+  <img src="docs/logo.svg" width="120" alt="Prometheus logo: an eye with a flame for a pupil">
+</p>
+
+<h1 align="center">Prometheus</h1>
+
+<p align="center"><b>Gaze → SAM 3.1 → depth → 3D memory → Muse Spark next-action prediction</b></p>
 
 **Prometheus watches where you look and predicts what you will do next.** It follows the wearer's eye gaze through
 egocentric glasses video, segments whatever they look at with SAM 3.1, places it in a 3D memory of the room with metric
@@ -10,15 +16,20 @@ written during the hackathon; third-party models, datasets and libraries are lis
 
 ## What it does
 
-```
- scene video ──► RT-DETRv2 (local) ──► boxes of everything in view ─────────────────┐
-      │                                                                             │
- eye gaze ────► SAM 3.1 point prompt at the gaze ──► mask of the object looked at ──┤
-      │                                                                             ▼
-      │        Depth Anything V2 (local) ──► metric depth ──► 3D object memory (world frame)
-      │                                                                             │
-      └──────► Muse Spark 1.2 ── names the cut-out objects, compares places, ◄──────┘
-                                 predicts the wearer's next actions
+```mermaid
+flowchart LR
+  G(["Eye gaze"]) --> S
+  V(["Scene video"]) --> S & D & Z
+  S["SAM 3.1<br/>the object looked at"]
+  D["RT-DETRv2<br/>everything in view"]
+  Z["Depth Anything V2<br/>scaled by SLAM points"]
+  S & D --> N["Muse Spark 1.2<br/>names the objects"]
+  S --> M
+  Z --> M
+  N --> M[("3D object memory")]
+  M <--> PL["Muse Spark 1.2<br/>place recall"]
+  M --> R["Muse Spark 1.2<br/>next-action prediction"]
+  R --> O(["What the wearer may do next"])
 ```
 
 - **Gaze-grounded segmentation.** The wearer's gaze point is the SAM 3.1 prompt, so the mask is the object they are
@@ -38,6 +49,140 @@ written during the hackathon; third-party models, datasets and libraries are lis
 
 All perception loops run independently (detection, depth, SAM at the gaze, naming, prediction), so a slow model never
 blocks the others.
+
+## Architecture
+
+### Components
+
+The browser app does the capture, overlay and memory; the local server keeps the API key, rate-limits every provider
+and runs the two local models as long-lived Python workers.
+
+```mermaid
+flowchart TB
+  subgraph BROWSER["Browser: React 19 app (ui/)"]
+    APP["App.jsx<br/>playlist, HUD, captions"]
+    PER["usePerception<br/>5 independent loops"]
+    PLC["usePlaceMemory<br/>store / compare / recall"]
+    MEM["object-memory.js<br/>3D objects in world frame"]
+    VIEW["SceneStage + EyePanels<br/>video, gaze, masks, boxes"]
+    MV["MemoryView<br/>three.js room, path, objects"]
+    APP --> PER & PLC & VIEW & MV
+    PER --> MEM
+    PLC --> MEM
+    MEM --> MV
+  end
+  subgraph SERVER["Local Node server (server.js, 127.0.0.1:4173)"]
+    API["/api/detect · /api/depth/estimate · /api/sam/segment<br/>/api/name-objects · /api/predict · /api/compare-places"]
+    POL["provider-policy.js<br/>per-lane pacing, retries, budgets"]
+    MEDIA["/demo-media<br/>byte-range video"]
+    API --> POL
+  end
+  subgraph WORKERS["Local Python workers (JSON lines over stdio)"]
+    DET["scripts/detect/worker.py<br/>RT-DETRv2"]
+    DEP["scripts/depth/worker.py<br/>Depth Anything V2"]
+  end
+  subgraph CLOUD["Meta Model API"]
+    SAM["sam-3.1"]
+    SPK["muse-spark-1.2"]
+  end
+  DATA[("data/demo/<br/>clips + gaze tracks")]
+
+  PER -- "frames (JPEG)" --> API
+  PLC -- "keyframe grid" --> API
+  APP -- "clips" --> MEDIA
+  MEDIA --- DATA
+  POL --> DET & DEP
+  POL -- "SAM lane" --> SAM
+  POL -- "naming / predict / place lanes" --> SPK
+```
+
+### Perception loops
+
+Each loop paces itself and reads the newest result of the others from shared state, so a slow call delays only its own
+output.
+
+| Loop | Runs | Input | Output |
+|---|---|---|---|
+| Detect | back to back | 640 px frame | RT-DETRv2 boxes with distances from the latest depth map |
+| Depth | back to back | 320 px frame | depth map, rescaled to metres with the SLAM points in view |
+| Gaze | every 1.5 s | frame + gaze point + pose | SAM 3.1 mask (RT-DETR box as fallback), world point into the memory |
+| Naming | every 5 s | SAM crop + up to 5 detector crops, tiled | Muse Spark names; renames the memory object, drops people and hands |
+| Predict | every 3 s | annotated frame, object list, memory | up to 3 next-action predictions |
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant V as Scene video
+  participant L as Gaze loop
+  participant S as SAM 3.1
+  participant D as Depth loop
+  participant M as 3D memory
+  participant N as Naming loop
+  participant P as Predict loop
+  participant K as Muse Spark 1.2
+
+  V->>L: frame at video time t
+  L->>L: gaze(t), pose(t)
+  L->>S: point prompt at the gaze
+  S-->>L: mask
+  D-->>L: newest depth map (metres)
+  L->>M: observe(pose · ray(mask centre) · median depth)
+  N->>K: tiled crops (SAM mask + RT-DETR boxes)
+  K-->>N: names
+  N->>M: rename, or forget people and hands
+  P->>K: frame with gaze and tags drawn, objects with distances, memory
+  K-->>P: next actions
+```
+
+### Place memory
+
+```mermaid
+stateDiagram-v2
+  [*] --> Recording: clip starts
+  Recording --> Keyframes: first 3 keyframes captured
+  Keyframes --> Compare: Muse Spark compares with each stored place
+  Compare --> Recalled: same place, confidence ≥ 0.6
+  Compare --> NewPlace: no match
+  Recalled --> Recording: remembered objects seeded into the 3D memory
+  NewPlace --> Recording: memory starts empty
+  Recording --> Stored: clip changes
+  Stored --> [*]: keyframes + objects kept as a place
+```
+
+When a recalled object is seen again it is merged with the new sighting; until then it is drawn as recalled in the
+memory view and offered to the predictor as an earlier visit.
+
+### 3D memory geometry
+
+```mermaid
+flowchart LR
+  A["Mask centroid (x, y)"] --> B["Fisheye ray grid<br/>rayAt(x, y)"]
+  C["Depth Anything V2<br/>relative depth"] --> E["Median depth in the mask"]
+  F["SLAM points in view"] --> G["Scale to metres<br/>median ratio, smoothed"]
+  G --> E
+  B --> H["camera point = ray · depth"]
+  E --> H
+  I["Camera pose T_world_rgb"] --> J["world point = T · camera point"]
+  H --> J
+  J --> K{"Within 0.6 m of a<br/>remembered object?"}
+  K -- yes --> L["Merge sighting"]
+  K -- no --> O["New object"]
+```
+
+### Offline export
+
+```mermaid
+flowchart LR
+  VRS["AEA recording.vrs"] --> EG["export_gaze_video.py"]
+  GZ["MPS general_eye_gaze.csv"] --> EG
+  TR["MPS closed_loop_trajectory.csv"] --> EG
+  EG --> MP4[".mp4 upright scene video"]
+  EG --> EYE[".eyes.mp4 eye cameras"]
+  EG --> TRK[".gaze.json<br/>gaze, pose, ray grid"]
+  PTS["MPS semidense_points.csv.gz"] --> EA["export_depth_anchors.py"]
+  TRK --> EA
+  EA --> TRK2[".gaze.json<br/>+ depth anchors + room cloud"]
+```
 
 ## Meta models
 
