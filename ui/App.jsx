@@ -10,7 +10,7 @@ import EyePanels from './components/EyePanels.jsx';
 import MemoryView from './components/MemoryView.jsx';
 
 // Prometheus on Project Aria recordings: the glasses' scene video and eye cameras, MPS eye gaze driving SAM 3.1,
-// YOLO and depth live, a 3D memory of what the wearer looked at, and Muse Spark's next-action predictions.
+// RT-DETR and depth live, a 3D memory of what the wearer looked at, and Muse Spark's next-action predictions.
 // Clips play one after another (data/demo/playlist.json order); each rebuilds its memory and is compared with the
 // places remembered from earlier clips (usePlaceMemory).
 
@@ -55,7 +55,7 @@ export default function App() {
   }, [live]);
 
   const seconds = ms => ms == null ? '–' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
-  const stages = [['YOLO', 'yolo'], ['SAM 3.1', 'sam'], ['Depth', 'depth'], ['Spark naming', 'naming'], ['Muse Spark', 'spark']];
+  const stages = [['RT-DETR', 'detect'], ['SAM 3.1', 'sam'], ['Depth', 'depth'], ['Spark naming', 'naming'], ['Muse Spark', 'spark']];
 
   return (
     <div className="app">

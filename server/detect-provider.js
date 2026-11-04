@@ -4,14 +4,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 
-// Ultralytics YOLO on the local CPU (scripts/yolo/worker.py), reusing the depth runtime's Python: an auxiliary to SAM 3.1
-// that names objects and follows them in real time. One request at a time; a busy worker answers DETECT_PROVIDER_BUSY.
+// Object boxes on the local CPU (scripts/detect/worker.py, RT-DETRv2 via Hugging Face transformers, Apache-2.0),
+// reusing the depth runtime's Python: an auxiliary to SAM 3.1 that finds everything in the frame for Muse Spark to
+// name. One request at a time; a busy worker answers DETECT_PROVIDER_BUSY.
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultPython = path.join(projectRoot, '.asset-tmp', 'depth-runtime', 'venv312', 'Scripts', 'python.exe');
-// YOLO26s (Ultralytics 8.4): light and NMS-free, about 0.5 s a frame on this CPU next to depth. It only finds boxes;
-// the names come from Muse Spark looking at the crops (object-namer.js), so a larger detector buys little here.
-const defaultWeights = path.join(projectRoot, '.asset-tmp', 'yolo', 'yolo26s.pt');
-const workerPath = path.join(projectRoot, 'scripts', 'yolo', 'worker.py');
+const defaultModel = 'PekingU/rtdetr_v2_r18vd';
+// model weights are cached here (Hugging Face hub layout) and loaded offline after the first download
+const modelCache = path.join(projectRoot, '.asset-tmp', 'rtdetr', 'hf');
+const workerPath = path.join(projectRoot, 'scripts', 'detect', 'worker.py');
 const fail = code => Object.assign(new Error(code), {code});
 const codes = new Set(['DETECT_INVALID_REQUEST','DETECT_INVALID_FRAME','DETECT_INVALID_IMAGE','DETECT_INFERENCE_FAILED','DETECT_RUNTIME_UNAVAILABLE','DETECT_PROVIDER_BUSY','DETECT_PROVIDER_TIMEOUT','DETECT_PROVIDER_CLOSED','DETECT_CANCELLED']);
 const IMAGE = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/;
@@ -24,7 +25,7 @@ export function validDetectRequest(input) {
     typeof input.imageDataUrl === 'string' && input.imageDataUrl.length <= 8 * 1024 * 1024 && IMAGE.test(input.imageDataUrl);
 }
 
-export function createDetectProvider({pythonPath = process.env.PROMETHEUS_YOLO_PYTHON || defaultPython, weights = process.env.PROMETHEUS_YOLO_WEIGHTS || defaultWeights,
+export function createDetectProvider({pythonPath = process.env.PROMETHEUS_DETECT_PYTHON || defaultPython, model = process.env.PROMETHEUS_DETECT_MODEL || defaultModel,
   spawnProcess = spawn, startupTimeoutMs = 120_000, requestTimeoutMs = 15_000} = {}) {
   let worker = null, starting = null, launching = null, pending = null, closed = false;
 
@@ -43,7 +44,7 @@ export function createDetectProvider({pythonPath = process.env.PROMETHEUS_YOLO_P
     if (worker) return Promise.resolve(worker);
     starting ??= new Promise((resolve, reject) => {
       let child;
-      try { child = spawnProcess(pythonPath, ['-u', workerPath, '--weights', weights], {cwd:projectRoot, windowsHide:true, stdio:['pipe','pipe','ignore']}); }
+      try { child = spawnProcess(pythonPath, ['-u', workerPath, '--model', model], {cwd:projectRoot, windowsHide:true, stdio:['pipe','pipe','ignore'], env:{...process.env, HF_HOME:modelCache}}); }
       catch { starting = null; reject(fail('DETECT_RUNTIME_UNAVAILABLE')); return; }
       const lines = createInterface({input:child.stdout, crlfDelay:Infinity}), state = {child, lines, model:null, stopped:false};
       launching = child;
@@ -96,5 +97,5 @@ export function createDetectProvider({pythonPath = process.env.PROMETHEUS_YOLO_P
   }
   // Starts the worker ahead of the first frame (model load and warm-up take a few seconds).
   function warm() { void ensureWorker().catch(() => {}); }
-  return {kind:'local_yolo_provider', detect, close, warm, status:() => ({available:!!worker, inFlight:!!pending, model:worker?.model ?? null})};
+  return {kind:'local_detect_provider', detect, close, warm, status:() => ({available:!!worker, inFlight:!!pending, model:worker?.model ?? null})};
 }

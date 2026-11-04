@@ -1,7 +1,8 @@
-"""Private JSON-lines worker used by server/detect-provider.js: Ultralytics YOLO object detection on one scene frame.
+"""Private JSON-lines worker used by server/detect-provider.js: object boxes for one scene frame with RT-DETRv2
+(PekingU/rtdetr_v2_r18vd, Apache-2.0, through Hugging Face transformers).
 
-YOLO is an auxiliary to SAM 3.1: it runs in about 0.1 s on CPU, so boxes and class names follow the scene in real time,
-while SAM segments the object under the gaze. Requests: {"id", "frame": {frameId, observedAt, width, height}, "imageDataUrl"}.
+The detector is an auxiliary to SAM 3.1: it finds the boxes of everything in the frame in about half a second on CPU,
+and Muse Spark names what is inside them. Requests: {"id", "frame": {frameId, observedAt, width, height}, "imageDataUrl"}.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ import json
 import re
 import sys
 import time
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -22,6 +22,8 @@ DATA_URL = re.compile(r"data:image/(png|jpeg);base64,([A-Za-z0-9+/]*={0,2})\Z")
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_PIXELS = 1024 * 1024
 MAX_DETECTIONS = 30
+# the checkpoint keeps PASCAL VOC spellings for a few COCO classes
+READABLE = {"diningtable": "dining table", "pottedplant": "potted plant", "tvmonitor": "tv", "sofa": "couch", "motorbike": "motorcycle", "aeroplane": "airplane"}
 
 
 class DetectFailure(Exception):
@@ -58,34 +60,42 @@ def parse_request(value):
     image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
     if image is None or image.shape[1] != width or image.shape[0] != height:
         raise DetectFailure("DETECT_INVALID_IMAGE")
-    return request_id, frame, image
+    return request_id, frame, cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
-def detect(model, request, confidence):
+def detect(model, processor, request, threshold):
+    import torch
     request_id, frame, image = parse_request(request)
     started = time.perf_counter()
-    result = model.predict(image, imgsz=640, conf=confidence, verbose=False)[0]
+    with torch.no_grad():
+        outputs = model(**processor(images=image, return_tensors="pt"))
+    result = processor.post_process_object_detection(outputs, target_sizes=[image.shape[:2]], threshold=threshold)[0]
     inference_ms = round((time.perf_counter() - started) * 1000, 3)
     width, height = frame["width"], frame["height"]
     detections = []
-    for box, cls, score in zip(result.boxes.xyxy.tolist(), result.boxes.cls.tolist(), result.boxes.conf.tolist()):
+    for box, label, score in zip(result["boxes"].tolist(), result["labels"].tolist(), result["scores"].tolist()):
         left, top = max(0, int(round(box[0]))), max(0, int(round(box[1])))
         right, bottom = min(width, int(round(box[2]))), min(height, int(round(box[3])))
         if right > left and bottom > top:
-            detections.append({"label": str(result.names[int(cls)]), "score": round(float(score), 4), "bounds": {"left": left, "top": top, "right": right, "bottom": bottom}})
+            name = model.config.id2label[int(label)]
+            detections.append({"label": READABLE.get(name, name), "score": round(float(score), 4), "bounds": {"left": left, "top": top, "right": right, "bottom": bottom}})
     detections.sort(key=lambda item: -item["score"])
     return {"id": request_id, "status": "ok", "frame": frame, "detections": detections[:MAX_DETECTIONS], "timing": {"inferenceMs": inference_ms}}
 
 
-def run_worker(weights: Path, confidence: float):
+def run_worker(model_id: str, threshold: float):
     try:
-        from ultralytics import YOLO
-        model = YOLO(str(weights))
-        model.predict(np.zeros((64, 64, 3), np.uint8), imgsz=640, verbose=False)  # warm-up: the first call is several seconds
+        import torch
+        from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection
+        torch.set_num_threads(4)
+        model = RTDetrV2ForObjectDetection.from_pretrained(model_id).eval()
+        processor = RTDetrImageProcessor.from_pretrained(model_id)
+        with torch.no_grad():  # warm-up: the first call is several times slower
+            model(**processor(images=np.zeros((64, 64, 3), np.uint8), return_tensors="pt"))
     except Exception:
         send({"type": "ready", "status": "error", "error": "DETECT_RUNTIME_UNAVAILABLE"})
         return 2
-    send({"type": "ready", "status": "ready", "model": {"id": weights.stem, "device": "cpu"}})
+    send({"type": "ready", "status": "ready", "model": {"id": model_id, "device": "cpu"}})
     while True:
         raw = sys.stdin.buffer.readline(MAX_REQUEST_BYTES + 1)
         if not raw:
@@ -95,7 +105,7 @@ def run_worker(weights: Path, confidence: float):
             request = json.loads(raw)
             if isinstance(request, dict) and isinstance(request.get("id"), str):
                 request_id = request["id"][:128]
-            send(detect(model, request, confidence))
+            send(detect(model, processor, request, threshold))
         except DetectFailure as exc:
             send({"id": request_id, "status": "error", "error": exc.code})
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -106,10 +116,10 @@ def run_worker(weights: Path, confidence: float):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--weights", required=True, type=Path)
-    parser.add_argument("--confidence", type=float, default=0.25)
+    parser.add_argument("--model", default="PekingU/rtdetr_v2_r18vd")
+    parser.add_argument("--threshold", type=float, default=0.3)
     args = parser.parse_args()
-    return run_worker(args.weights, args.confidence)
+    return run_worker(args.model, args.threshold)
 
 
 if __name__ == "__main__":

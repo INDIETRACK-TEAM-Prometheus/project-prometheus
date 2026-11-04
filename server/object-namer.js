@@ -1,8 +1,8 @@
 import { ProviderPolicy, providerHttpError, providerNetworkError } from './provider-policy.js';
 import { REASONER_MODELS, REASONER_EFFORTS } from './reasoner-adapter.js';
 
-// YOLO and SAM 3.1 find and cut out the objects; Muse Spark looks at the crops and names them. The browser sends one
-// image: a grid of numbered tiles, tile 1 the SAM segment at the gaze point, the rest YOLO boxes. COCO's 80 classes
+// RT-DETR and SAM 3.1 find and cut out the objects; Muse Spark looks at the crops and names them. The browser sends one
+// image: a grid of numbered tiles, tile 1 the SAM segment at the gaze point, the rest RT-DETR boxes. COCO's 80 detector classes
 // cannot say "gray suitcase" or "top-load washing machine"; the vision model can.
 
 const fail = code => Object.assign(new Error(code), {code});

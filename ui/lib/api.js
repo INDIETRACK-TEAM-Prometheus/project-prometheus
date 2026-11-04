@@ -1,4 +1,4 @@
-// Calls to the local server: clip list, YOLO, SAM 3.1, depth and Muse Spark. Each throws on a failed response.
+// Calls to the local server: clip list, RT-DETR, SAM 3.1, depth and Muse Spark. Each throws on a failed response.
 
 async function post(url, body, signal) {
   const response = await fetch(url, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body), signal});

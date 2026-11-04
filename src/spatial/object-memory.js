@@ -53,7 +53,7 @@ export function maskDepthMedian(mask, frame, depth) {
   return values[values.length >> 1];
 }
 
-// Median valid depth inside a box (frame pixels), for YOLO detections.
+// Median valid depth inside a box (frame pixels), for RT-DETR detections.
 export function boxDepthMedian(bounds, frame, depth) {
   if (!depth || !bounds || !(frame?.width > 0)) return null;
   const sx = depth.width / frame.width, sy = depth.height / frame.height, values = [];
@@ -88,7 +88,7 @@ export function createObjectMemory({mergeDistanceM = .6, maxObjects = 60} = {}) 
   const objects = [];
   let serial = 0;
   return {
-    // label may be null (SAM segmented something YOLO has no class for); unlabelled sightings merge only very close by.
+    // label may be null (SAM segmented something RT-DETR has no class for); unlabelled sightings merge only very close by.
     observe({label = null, point, t, depthM = null}) {
       if (!Array.isArray(point) || point.length !== 3 || !point.every(finite) || !finite(t)) return null;
       const limit = label ? mergeDistanceM : mergeDistanceM / 2;

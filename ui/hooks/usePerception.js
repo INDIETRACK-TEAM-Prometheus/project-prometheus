@@ -4,10 +4,10 @@ import {captureVideo, boxIou, scaleBounds, cropGrid, annotateFrame} from '../lib
 import {worldPoint, maskCentroid, maskDepthMedian, boxDepthMedian, relativeTo, depthScale} from '../../src/spatial/object-memory.js';
 
 // Three loops over the playing glasses video, each as fast as its model allows and none waiting for another:
-//   YOLO (local CPU, ~0.15 s)      class names and boxes for the whole frame
+//   RT-DETR (local CPU, ~0.4 s)    class names and boxes for the whole frame
 //   depth (~1-2 s, local CPU)     a metric depth map (scaled by SLAM points) for distances and the 3D memory
 //   SAM 3.1 (~0.5 s)               the object at the gaze point, published at once, placed in the 3D memory
-//   Muse Spark naming (~5 s)       looks at the crops YOLO and SAM cut out and names them ("gray suitcase")
+//   Muse Spark naming (~5 s)       looks at the crops RT-DETR and SAM cut out and names them ("gray suitcase")
 //   Muse Spark (~1.5 s)            next-action predictions from the latest gaze result and the memory
 // Results live in a ref (read every animation frame by the overlay), not in React state.
 
@@ -19,13 +19,13 @@ const pace = async (since, every, signal) => { const wait = every - (performance
 const LABEL_IOU = .25, NAME_TTL_MS = 8000, NAME_IOU = .3;
 const clean = label => typeof label === 'string' ? label.replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 40) || null : null;
 
-// The vision model's name for a YOLO box: a box it named recently with the same class that overlaps this one.
+// The vision model's name for a RT-DETR box: a box it named recently with the same class that overlaps this one.
 export function visionName(item, frame, named, now) {
   if (!named?.list?.length || now - named.at > NAME_TTL_MS) return null;
   const sx = frame.width / named.frame.width, sy = frame.height / named.frame.height;
   let best = null, bestIou = NAME_IOU;
   for (const entry of named.list) {
-    if (!entry.name || entry.yolo !== item.label) continue;
+    if (!entry.name || entry.detector !== item.label) continue;
     const iou = boxIou(scaleBounds(entry.bounds, sx, sy), item.bounds);
     if (iou > bestIou) { best = entry; bestIou = iou; }
   }
@@ -36,7 +36,7 @@ export function emptyLive() {
   return {detections:null, segment:null, depth:null, spark:null, timings:{}, errors:{}, busy:{}};
 }
 
-// The YOLO detection naming a SAM mask: best box overlap, else the smallest box around the gaze point.
+// The RT-DETR detection naming a SAM mask: best box overlap, else the smallest box around the gaze point.
 function nameMask(maskBounds, gaze, detections, frame) {
   if (!detections?.list?.length) return null;
   const sx = frame.width / detections.frame.width, sy = frame.height / detections.frame.height;
@@ -69,21 +69,21 @@ export function usePerception({videoRef, source, running, memory, onMemory}) {
     const video = () => videoRef.current;
     const playing = () => video() && !video().paused && !video().ended && video().readyState >= 2;
 
-    async function yoloLoop() {
+    async function detectLoop() {
       while (!signal.aborted) {
         if (!playing()) { await sleep(150, signal); continue; }
         const frame = captureVideo(video(), 640);
         if (!frame) { await sleep(150, signal); continue; }
         const started = performance.now();
-        state.busy.yolo = true;
+        state.busy.detect = true;
         try {
           const result = await detect(frame, signal);
           // distances come from the latest depth map (about a second old at most)
           const depth = state.depth?.map;
           state.detections = {frame, list:result.detections.map(item => ({...item, depthM:depth ? boxDepthMedian(item.bounds, frame, depth) : null})), at:performance.now()};
-          state.timings.yolo = performance.now() - started; delete state.errors.yolo;
-        } catch (error) { if (signal.aborted) return; state.errors.yolo = error.message; await sleep(800, signal); }
-        finally { state.busy.yolo = false; }
+          state.timings.detect = performance.now() - started; delete state.errors.detect;
+        } catch (error) { if (signal.aborted) return; state.errors.detect = error.message; await sleep(800, signal); }
+        finally { state.busy.detect = false; }
       }
     }
 
@@ -119,7 +119,7 @@ export function usePerception({videoRef, source, running, memory, onMemory}) {
         state.busy.sam = true;
         let masks = [];
         try { masks = (await segment(frame, samPointPrompt(frame, gaze), signal)).masks ?? []; state.timings.sam = performance.now() - started; delete state.errors.sam; }
-        // SAM rate-limited or down: the YOLO box at the gaze point stands in, so naming, memory and prediction go on
+        // SAM rate-limited or down: the RT-DETR box at the gaze point stands in, so naming, memory and prediction go on
         catch (error) { if (signal.aborted) return; state.errors.sam = error.message; }
         finally { state.busy.sam = false; }
         const mask = masks[0] ?? null;
@@ -131,7 +131,7 @@ export function usePerception({videoRef, source, running, memory, onMemory}) {
         // the memory keeps the vision model's names only; until one arrives the object stays unnamed there
         const remembered = point ? memory.observe({label:null, point, t:frame.videoTime, depthM}) : null;
         if (remembered) onMemory();
-        state.segment = {frame, preview, gaze, pose, mask, box:mask?.bounds ?? named?.bounds ?? null, label:remembered?.label ?? named?.label ?? null, visionNamed:!!remembered?.label, yoloLabel:named?.label ?? null, score:named?.score ?? null, depthM, memoryId:remembered?.id ?? null, at:performance.now()};
+        state.segment = {frame, preview, gaze, pose, mask, box:mask?.bounds ?? named?.bounds ?? null, label:remembered?.label ?? named?.label ?? null, visionNamed:!!remembered?.label, detectorLabel:named?.label ?? null, score:named?.score ?? null, depthM, memoryId:remembered?.id ?? null, at:performance.now()};
         await pace(started, SAM_EVERY_MS, signal);
       }
     }
@@ -155,7 +155,7 @@ export function usePerception({videoRef, source, running, memory, onMemory}) {
           const person = name => /\b(person|persons|people|man|woman|child|hand|hands|arm|arms|finger|fingers|face|leg|legs|foot|feet)\b/.test(name);
           if (names[0] && seg.memoryId && (person(names[0]) ? memory.forget(seg.memoryId) : memory.rename(seg.memoryId, names[0]))) onMemory();
           if (names[0] && state.segment?.memoryId === seg.memoryId) Object.assign(state.segment, {label:names[0], visionNamed:true});
-          state.named = {frame:det?.frame ?? seg.frame, at:performance.now(), list:boxes.map((item, i) => ({bounds:item.bounds, yolo:item.label, name:names[i + 1] ?? null}))};
+          state.named = {frame:det?.frame ?? seg.frame, at:performance.now(), list:boxes.map((item, i) => ({bounds:item.bounds, detector:item.label, name:names[i + 1] ?? null}))};
         } catch (error) { if (signal.aborted) return; state.errors.naming = error.message; await sleep(2000, signal); }
         finally { state.busy.naming = false; }
         await pace(started, NAMING_EVERY_MS, signal);
@@ -170,7 +170,7 @@ export function usePerception({videoRef, source, running, memory, onMemory}) {
         lastFrameId = seg.frame.frameId;
         const {frame} = seg, depth = state.depth?.map ?? null, sx = state.depth ? state.depth.frame.width : 0;
         const detections = state.detections;
-        // every YOLO detection worth a look goes to Spark (score >= 0.25), not just the confident few
+        // every RT-DETR detection worth a look goes to Spark (score >= 0.25), not just the confident few
         const objects = (detections?.list ?? []).filter(item => item.score >= .25).slice(0, 12).map(item => {
           const bounds = scaleBounds(item.bounds, frame.width / detections.frame.width, frame.height / detections.frame.height);
           const d = depth && sx ? boxDepthMedian(bounds, frame, depth) : null;
@@ -180,7 +180,7 @@ export function usePerception({videoRef, source, running, memory, onMemory}) {
           .map(o => ({label:clean(o.label) ?? 'object', ...relativeTo(seg.pose, o.position), secondsAgo:o.recalled && !o.seenAgain ? 0 : Math.max(0, Math.round((frame.videoTime - o.lastT) * 10) / 10), earlierVisit:!!o.recalled && !o.seenAgain}))
           .filter(o => Number.isFinite(o.distanceM)) : [];
         // the prediction sees a smaller copy of the same frame (fewer image tokens, same view)
-        // Spark sees the detections drawn on the frame (G = SAM segment, numbers = YOLO boxes), matching the text list
+        // Spark sees the detections drawn on the frame (G = SAM segment, numbers = RT-DETR boxes), matching the text list
         const annotated = await annotateFrame({...(seg.preview ?? frame), sourceWidth:frame.width, sourceHeight:frame.height}, {gaze:seg.gaze, gazeBounds:seg.box, boxes:objects.map(o => o.bounds)});
         if (signal.aborted) return;
         const body = {frame:{width:frame.width, height:frame.height}, imageDataUrl:annotated, gazePoint:{x:seg.gaze.x, y:seg.gaze.y},
@@ -197,7 +197,7 @@ export function usePerception({videoRef, source, running, memory, onMemory}) {
       }
     }
 
-    void yoloLoop(); void depthLoop(); void gazeLoop(); void namingLoop(); void sparkLoop();
+    void detectLoop(); void depthLoop(); void gazeLoop(); void namingLoop(); void sparkLoop();
     return () => controller.abort();
   }, [running, source, videoRef, memory, onMemory]);
 

@@ -1,5 +1,5 @@
 // Frames for analysis are copied straight from the <video> element (not the screen), so letterboxing and overlays never
-// reach SAM, YOLO or depth.
+// reach SAM, RT-DETR or depth.
 
 let serial = 0;
 
@@ -70,7 +70,7 @@ export async function cropGrid(entries, {tile = 200, columns = 3, margin = .15} 
 }
 
 // The frame Muse Spark predicts from, with what the detectors found drawn on it: the SAM 3.1 segment at the gaze
-// (green, tag G), the gaze point, and every YOLO box (white, numbered like the objects list it gets as text).
+// (green, tag G), the gaze point, and every RT-DETR box (white, numbered like the objects list it gets as text).
 export async function annotateFrame(frame, {gaze, gazeBounds, boxes}) {
   const image = await loadImage(frame.dataUrl), canvas = document.createElement('canvas');
   canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
