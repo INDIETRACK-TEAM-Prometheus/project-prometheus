@@ -36,3 +36,21 @@ test('YOLO requests carry one bounded frame image', () => {
   assert.equal(validDetectRequest({frame, imageDataUrl:'https://example.com/x.jpg'}), false);
   assert.equal(validDetectRequest({frame:{...frame, width:4096, height:4096}, imageDataUrl:'data:image/jpeg;base64,/9j/AA=='}), false);
 });
+
+test('demo media answers byte ranges so long videos can seek', async () => {
+  const {createLocalServer} = await import('../server.js');
+  const {once} = await import('node:events');
+  const {readFile} = await import('node:fs/promises');
+  const server = createLocalServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  try {
+    const whole = await readFile(path.join('data', 'demo', 'playlist.json'));
+    const url = `http://127.0.0.1:${server.address().port}/demo-media/playlist.json`;
+    const part = await fetch(url, {headers:{range:'bytes=2-9'}});
+    assert.equal(part.status, 206);
+    assert.equal(part.headers.get('content-range'), `bytes 2-9/${whole.length}`);
+    assert.deepEqual(Buffer.from(await part.arrayBuffer()), whole.subarray(2, 10));
+    const full = await fetch(url);
+    assert.equal(full.status, 200); assert.equal(full.headers.get('accept-ranges'), 'bytes');
+    assert.equal((await fetch(url, {headers:{range:`bytes=${whole.length + 5}-`}})).status, 416);
+  } finally { server.close(); }
+});

@@ -1,5 +1,4 @@
 import {useEffect, useRef} from 'react';
-import {gazeAt} from '../../src/gaze/gaze-replay.js';
 import {contentRect, maskCanvas} from '../lib/frames.js';
 import {visionName} from '../hooks/usePerception.js';
 
@@ -18,7 +17,7 @@ function drawLabel(ctx, text, x, y, d, {strong = false} = {}) {
   ctx.fillText(text, x + 6 * d, top + h - (strong ? 7.5 : 6) * d);
 }
 
-export default function SceneStage({videoRef, track, live, onEnded, onTimeUpdate, children}) {
+export default function SceneStage({videoRef, source, live, onEnded, onTimeUpdate, children}) {
   const stageRef = useRef(null), canvasRef = useRef(null), maskCache = useRef({mask:null, canvas:null});
 
   useEffect(() => {
@@ -68,7 +67,7 @@ export default function SceneStage({videoRef, track, live, onEnded, onTimeUpdate
         ctx.globalAlpha = 1;
       }
 
-      const gaze = track ? gazeAt(track, video.currentTime) : null;
+      const gaze = source ? source.gaze(video.currentTime) : null;
       if (gaze) {
         const x = gaze.x * w, y = gaze.y * h, r = 10 * d;
         ctx.lineWidth = 2 * d; ctx.strokeStyle = '#ffffff';
@@ -81,7 +80,7 @@ export default function SceneStage({videoRef, track, live, onEnded, onTimeUpdate
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [videoRef, track, live]);
+  }, [videoRef, source, live]);
 
   return (
     <div className="stage" ref={stageRef}>

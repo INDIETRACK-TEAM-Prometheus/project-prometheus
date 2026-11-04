@@ -8,8 +8,8 @@ async function post(url, body, signal) {
   return data;
 }
 
-export async function listClips() {
-  const response = await fetch('/api/demo/clips');
+export async function listClips(set = null) {
+  const response = await fetch(set ? `/api/demo/clips?set=${encodeURIComponent(set)}` : '/api/demo/clips');
   if (!response.ok) throw new Error('clips_unavailable');
   return (await response.json()).clips;
 }

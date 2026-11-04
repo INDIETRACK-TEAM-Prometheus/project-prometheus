@@ -1,6 +1,7 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {listClips} from './lib/api.js';
 import {parseGazeTrack} from '../src/gaze/gaze-replay.js';
+import {recordedSource} from '../src/gaze/gaze-source.js';
 import {createObjectMemory} from '../src/spatial/object-memory.js';
 import {usePerception} from './hooks/usePerception.js';
 import {usePlaceMemory} from './hooks/usePlaceMemory.js';
@@ -13,7 +14,7 @@ import MemoryView from './components/MemoryView.jsx';
 // Clips play one after another (data/demo/playlist.json order); each rebuilds its memory and is compared with the
 // places remembered from earlier clips (usePlaceMemory).
 
-const autostart = new URLSearchParams(location.search).has('autostart');
+const params = new URLSearchParams(location.search), autostart = params.has('autostart'), clipSet = params.get('set');
 
 export default function App() {
   const [clips, setClips] = useState([]), [index, setIndex] = useState(0), [track, setTrack] = useState(null);
@@ -22,11 +23,12 @@ export default function App() {
   const videoRef = useRef(null);
   const memory = useMemo(() => createObjectMemory(), []);
   const onMemory = useCallback(() => setObjects(memory.list()), [memory]);
-  const live = usePerception({videoRef, track, running, memory, onMemory});
+  const source = useMemo(() => track ? recordedSource(track) : null, [track]);
+  const live = usePerception({videoRef, source, running, memory, onMemory});
   const clip = clips[index] ?? null;
   const place = usePlaceMemory({videoRef, clip, track, memory, onMemory});
 
-  useEffect(() => { listClips().then(list => { setClips(list); setStatus(list.length ? '' : 'No clips in data/demo'); }, () => setStatus('Could not list the clips')); }, []);
+  useEffect(() => { listClips(clipSet).then(list => { setClips(list); setStatus(list.length ? '' : 'No clips in data/demo'); }, () => setStatus('Could not list the clips')); }, []);
 
   // Load a clip: its gaze track (with poses), then the video (usePlaceMemory resets the memory).
   useEffect(() => {
@@ -69,7 +71,7 @@ export default function App() {
       </header>
 
       <main className="scene">
-        <SceneStage videoRef={videoRef} track={track} live={live} onEnded={next} onTimeUpdate={onTimeUpdate}>
+        <SceneStage videoRef={videoRef} source={source} live={live} onEnded={next} onTimeUpdate={onTimeUpdate}>
           <div className="hud" aria-label="Model timings">
             {stages.map(([name, key]) => <span key={key} className={hud.errors[key] ? 'stage-chip error' : hud.busy?.[key] ? 'stage-chip busy' : 'stage-chip'} title={hud.errors[key] ?? ''}>{name}<b>{hud.errors[key] ? 'error' : seconds(hud.timings[key])}</b></span>)}
           </div>

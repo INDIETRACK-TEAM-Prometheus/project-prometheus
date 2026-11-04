@@ -62,11 +62,11 @@ function staticType(name) {
   return ({html:'text/html; charset=utf-8', js:'text/javascript; charset=utf-8', css:'text/css; charset=utf-8', svg:'image/svg+xml', png:'image/png', woff2:'font/woff2'})[name.split('.').pop()] ?? 'application/octet-stream';
 }
 
-export async function listDemoClips(dir) {
+export async function listDemoClips(dir, set = null) {
   const names = (await readdir(dir)).filter(name => /^[A-Za-z0-9][A-Za-z0-9._-]{0,100}\.gaze\.json$/.test(name)).map(name => name.slice(0, -'.gaze.json'.length));
   const present = new Set(await readdir(dir));
   let order = [];
-  try { order = JSON.parse(await readFile(path.join(dir, 'playlist.json'), 'utf8')).clips ?? []; } catch {}
+  try { order = JSON.parse(await readFile(path.join(dir, set ? `playlist-${set}.json` : 'playlist.json'), 'utf8')).clips ?? []; } catch {}
   const rank = name => { const index = order.findIndex(item => item.name === name); return index < 0 ? Infinity : index; };
   // with a playlist, only its clips play (the demo is cut to length there); without one, every exported clip
   return names.filter(name => present.has(`${name}.mp4`) && (!order.length || rank(name) < Infinity)).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).map(name => {
@@ -401,7 +401,19 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
     // Demo media (data/demo: scene videos and gaze tracks) for loading into the video scene; local requests only.
     const demoMedia = /^\/demo-media\/([A-Za-z0-9][A-Za-z0-9._-]{0,119}\.(mp4|webm|json))$/.exec(pathname);
     if (demoMedia && req.method === 'GET' && localRequest(req)) {
-      try { const data = await readFile(path.join(root, 'data', 'demo', demoMedia[1])); res.writeHead(200, {'Content-Type': demoMedia[2] === 'json' ? 'application/json; charset=utf-8' : `video/${demoMedia[2]}`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}); res.end(data); }
+      // Byte ranges, so the browser can seek in long videos (the eye video follows the scene video by seeking).
+      try {
+        const data = await readFile(path.join(root, 'data', 'demo', demoMedia[1]));
+        const type = demoMedia[2] === 'json' ? 'application/json; charset=utf-8' : `video/${demoMedia[2]}`;
+        const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+        if (range && (range[1] || range[2])) {
+          const start = range[1] ? Number(range[1]) : Math.max(0, data.length - Number(range[2]));
+          const end = range[1] && range[2] ? Math.min(Number(range[2]), data.length - 1) : data.length - 1;
+          if (start > end || start >= data.length) { res.writeHead(416, {'Content-Range': `bytes */${data.length}`}); res.end(); return; }
+          res.writeHead(206, {'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${data.length}`, 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'});
+          res.end(data.subarray(start, end + 1));
+        } else { res.writeHead(200, {'Content-Type': type, 'Content-Length': data.length, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}); res.end(data); }
+      }
       catch { res.writeHead(404); res.end('Not found'); }
       return;
     }
@@ -409,7 +421,10 @@ export function createLocalServer({sam = segmentSam, reasoner = reasonScenarios,
     // and orders them and may cut each to start/end seconds.
     if (pathname === '/api/demo/clips') {
       if (req.method !== 'GET' || !localRequest(req)) { req.resume(); json(res,403,{error:'forbidden'}); return; }
-      try { json(res,200,{clips:await listDemoClips(path.join(root,'data','demo'))}); } catch { json(res,200,{clips:[]}); }
+      // ?set=<name> plays data/demo/playlist-<name>.json instead (for example the HARMONIC clip)
+      const set=new URL(req.url,'http://localhost').searchParams.get('set');
+      if(set!==null&&!/^[a-z0-9-]{1,40}$/.test(set)){json(res,400,{error:'invalid_set'});return;}
+      try { json(res,200,{clips:await listDemoClips(path.join(root,'data','demo'),set)}); } catch { json(res,200,{clips:[]}); }
       return;
     }
     // The React app (ui/, built to ui/dist); the earlier single-file page stays at /classic.

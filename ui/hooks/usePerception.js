@@ -1,7 +1,6 @@
 import {useEffect, useRef} from 'react';
 import {detect, segment, samPointPrompt, estimateDepth, predict, nameObjects} from '../lib/api.js';
 import {captureVideo, boxIou, scaleBounds, cropGrid, annotateFrame} from '../lib/frames.js';
-import {gazeAt, poseAt, rayAt, anchorsAt} from '../../src/gaze/gaze-replay.js';
 import {worldPoint, maskCentroid, maskDepthMedian, boxDepthMedian, relativeTo, depthScale} from '../../src/spatial/object-memory.js';
 
 // Three loops over the playing glasses video, each as fast as its model allows and none waiting for another:
@@ -50,17 +49,18 @@ function nameMask(maskBounds, gaze, detections, frame) {
   return around.sort((a, b) => (a.bounds.right - a.bounds.left) * (a.bounds.bottom - a.bounds.top) - (b.bounds.right - b.bounds.left) * (b.bounds.bottom - b.bounds.top))[0] ?? null;
 }
 
-export function usePerception({videoRef, track, running, memory, onMemory}) {
+// source: a gaze source (src/gaze/gaze-source.js), recorded Aria gaze or live webcam gaze.
+export function usePerception({videoRef, source, running, memory, onMemory}) {
   const live = useRef(emptyLive());
 
   useEffect(() => {
     live.current = emptyLive();
-    if (!running || !track) return;
+    if (!running || !source) return;
     const controller = new AbortController(), {signal} = controller, state = live.current;
     // Depth Anything's metric scale is off on the fisheye; MPS SLAM points visible in the frame fix it (smoothed).
     let scale = null;
     const metric = (map, videoTime) => {
-      const measured = depthScale(anchorsAt(track, videoTime), map);
+      const measured = depthScale(source.anchors(videoTime), map);
       if (measured) scale = scale ? scale * .7 + measured * .3 : measured;
       if (!scale) return map;
       state.depthScale = scale;
@@ -113,9 +113,9 @@ export function usePerception({videoRef, track, running, memory, onMemory}) {
       while (!signal.aborted) {
         if (!playing()) { await sleep(100, signal); continue; }
         const frame = captureVideo(video(), 640), preview = captureVideo(video(), 448, {quality:.8});
-        const gaze = frame && gazeAt(track, frame.videoTime);
+        const gaze = frame && source.gaze(frame.videoTime);
         if (!frame || !gaze || gaze.x >= 1 || gaze.y >= 1) { await sleep(100, signal); continue; }
-        const pose = poseAt(track, frame.videoTime), started = performance.now();
+        const pose = source.pose(frame.videoTime), started = performance.now();
         state.busy.sam = true;
         let masks = [];
         try { masks = (await segment(frame, samPointPrompt(frame, gaze), signal)).masks ?? []; state.timings.sam = performance.now() - started; delete state.errors.sam; }
@@ -127,7 +127,7 @@ export function usePerception({videoRef, track, running, memory, onMemory}) {
         const depth = state.depth && performance.now() - state.depth.at < 4000 ? state.depth.map : null;
         const depthM = mask && depth ? maskDepthMedian(mask, frame, depth) : named && depth ? boxDepthMedian(named.bounds, frame, depth) : null;
         const centroid = mask ? maskCentroid(mask, frame) : named ? {x:(named.bounds.left + named.bounds.right) / 2 / frame.width, y:(named.bounds.top + named.bounds.bottom) / 2 / frame.height} : null;
-        const point = centroid && pose && depthM ? worldPoint(pose, rayAt(track, centroid.x, centroid.y), depthM) : null;
+        const point = centroid && pose && depthM ? worldPoint(pose, source.ray(centroid.x, centroid.y), depthM) : null;
         // the memory keeps the vision model's names only; until one arrives the object stays unnamed there
         const remembered = point ? memory.observe({label:null, point, t:frame.videoTime, depthM}) : null;
         if (remembered) onMemory();
@@ -199,7 +199,7 @@ export function usePerception({videoRef, track, running, memory, onMemory}) {
 
     void yoloLoop(); void depthLoop(); void gazeLoop(); void namingLoop(); void sparkLoop();
     return () => controller.abort();
-  }, [running, track, videoRef, memory, onMemory]);
+  }, [running, source, videoRef, memory, onMemory]);
 
   return live;
 }
