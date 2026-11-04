@@ -45,6 +45,8 @@ Python, data export: projectaria_tools 1.7.1 (Apache-2.0), msgpack 1.2.4 (Apache
 
 - **FFmpeg** 9.0 (gyan.dev full build, GPL): video encoding in the export scripts; not shipped.
 - **IBM Plex Sans / IBM Plex Mono** via Google Fonts (SIL Open Font License 1.1).
+- **Pretendard** 1.3.9 Bold ([orioncactus/pretendard](https://github.com/orioncactus/pretendard), SIL Open Font License 1.1): the
+  "PROMETHEUS" lettering in `docs/logo-wordmark.svg`, converted to outlines.
 - **Taste Skill** ([Leonxlnx/taste-skill](https://github.com/Leonxlnx/taste-skill)): design guidance for the UI.
 
 ## License notes

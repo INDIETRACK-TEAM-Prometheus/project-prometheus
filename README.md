@@ -1,10 +1,24 @@
-<p align="center">
-  <img src="docs/logo.svg" width="120" alt="Prometheus logo: a torch">
-</p>
+<div align="center">
 
-<h1 align="center">Prometheus</h1>
+<img src="docs/logo-wordmark.svg" width="420" alt="Prometheus">
 
-<p align="center"><b>Gaze → SAM 3.1 → depth → 3D memory → Muse Spark next-action prediction</b></p>
+**See where you look. Remember where things are. Predict what you do next.**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A520.17-black?logo=nodedotjs)](https://nodejs.org/)
+[![React](https://img.shields.io/badge/React-19.2-black?logo=react)](https://react.dev/)
+[![Python](https://img.shields.io/badge/Python-3.12-black?logo=python)](https://www.python.org/)
+[![SAM 3.1](https://img.shields.io/badge/Meta-SAM%203.1-black)](#meta-models)
+[![Muse Spark](https://img.shields.io/badge/Meta-Muse%20Spark%201.2-black)](#meta-models)
+[![Tests](https://img.shields.io/badge/Tests-node%20--test-black)](#tests)
+
+[Quick start](#running-it) · [Architecture](#architecture) · [Demo data](#demo-data) · [Contributing](CONTRIBUTING.md) · [Attributions](ATTRIBUTIONS.md)
+
+</div>
+
+> [!NOTE]
+> Prometheus is an independent hackathon project. It is not affiliated with or endorsed by Meta; it calls Meta's
+> models through the public Meta Model API.
 
 **Prometheus watches where you look and predicts what you will do next.** It follows the wearer's eye gaze through
 egocentric glasses video, segments whatever they look at with SAM 3.1, places it in a 3D memory of the room with metric
@@ -14,7 +28,7 @@ back to a place it has seen before, it recognises the place and recalls the obje
 Built for the Meta Global AI Developer Hackathon (October 26 to November 4, 2026). Everything in this repository was
 written during the hackathon; third-party models, datasets and libraries are listed in [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
 
-## What it does
+## Features
 
 ```mermaid
 flowchart LR
@@ -267,9 +281,22 @@ the hackathon; the current app is the React page at `/`.
 npm test
 ```
 
-## License and attribution
+The suite uses Node's built-in test runner and runs without a Meta API key; live-model checks are separate scripts in
+`scripts/verify-*.js`.
 
-Models, datasets, libraries and their licenses: [ATTRIBUTIONS.md](ATTRIBUTIONS.md). No dataset media is distributed
-here; the AEA dataset is used under its own license and is credited to Meta Platforms, Inc.
+## Contributing
 
-Team Project Prometheus: Mingyu Jeong.
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first; it covers setup, tests, commit
+style and the one hard rule: never commit dataset media or API keys. Report security problems privately as described in
+[SECURITY.md](SECURITY.md). Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+Prometheus is released under the [MIT License](LICENSE).
+
+Third-party models, datasets, libraries and fonts keep their own licenses; see [ATTRIBUTIONS.md](ATTRIBUTIONS.md). No
+dataset media is distributed here: the AEA dataset is used under its own license and is credited to Meta Platforms, Inc.
+
+## Team
+
+**Project Prometheus**: Mingyu Jeong ([@Mingoomato](https://github.com/Mingoomato))
