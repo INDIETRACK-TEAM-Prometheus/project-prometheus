@@ -1,7 +1,7 @@
 # Starts the gaze and depth workers on a self-hosted Linux GPU (set up once with setup-host.sh) and opens one SSH
 # process with the same two loopback forwards the Colab launcher uses, so the local server settings stay the same.
 param(
-  [string]$HostName = 'mj@172.20.10.7',
+  [Parameter(Mandatory)][string]$HostName,  # user@host of your Linux GPU machine
   [switch]$RunServer
 )
 $ErrorActionPreference = 'Stop'
@@ -16,7 +16,7 @@ $sshOptions = @('-i', $key, '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '
 
 if ($HostName -notmatch '^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$') { throw 'HostName must look like user@host.' }
 if (-not (Test-Path $key)) { throw "SSH key not found: $key. Create it and add the .pub file to the host's authorized_keys." }
-if (Test-Path $tunnelFile) { throw 'A GPU host tunnel is already recorded. Run scripts\gpu-host\stop-ssh-host.ps1 first.' }
+if (Test-Path $tunnelFile) { throw 'A GPU host tunnel is already recorded. Run scripts\gpu-host\stop-ssh-host.ps1 -HostName <user@host> first.' }
 if ((Test-Path (Join-Path $colabState 'system-session.txt')) -or (Test-Path (Join-Path $colabState 'tunnel.pid'))) {
   throw 'A Colab session owns the tunnel ports. Run scripts\colab\stop-system.ps1 first.'
 }
@@ -73,5 +73,5 @@ if ($RunServer) {
   finally { Pop-Location; & (Join-Path $PSScriptRoot 'stop-ssh-host.ps1') -HostName $HostName }
 } else {
   Write-Output 'The local server settings are the same as for Colab (PROMETHEUS_COMPUTE_PROFILE=cloud, DEPTH_BACKEND=colab, the two URLs above).'
-  Write-Output 'Stop with scripts\gpu-host\stop-ssh-host.ps1 (the host GPU stays busy until then).'
+  Write-Output "Stop with scripts\gpu-host\stop-ssh-host.ps1 -HostName $HostName (the host GPU stays busy until then)."
 }

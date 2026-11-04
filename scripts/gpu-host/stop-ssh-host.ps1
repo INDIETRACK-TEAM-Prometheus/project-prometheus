@@ -1,5 +1,5 @@
 # Closes the GPU host tunnel opened by start-ssh-host.ps1 and stops the workers on the host.
-param([string]$HostName = 'mj@172.20.10.7')
+param([Parameter(Mandatory)][string]$HostName)
 $ErrorActionPreference = 'Stop'
 $stateDir = Join-Path $env:LOCALAPPDATA 'Prometheus\gpu-host'
 $key = Join-Path $stateDir 'id_ed25519'
