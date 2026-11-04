@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" width="120" alt="Prometheus logo: an eye with a flame for a pupil">
+  <img src="docs/logo.svg" width="120" alt="Prometheus logo: a torch">
 </p>
 
 <h1 align="center">Prometheus</h1>

@@ -1,25 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Prometheus">
   <title>Prometheus</title>
-  <defs>
-    <linearGradient id="fire" x1="0" y1="1" x2="0" y2="0">
-      <stop offset="0" stop-color="#FF5A1F"/>
-      <stop offset="0.6" stop-color="#FF9A2E"/>
-      <stop offset="1" stop-color="#FFD25E"/>
-    </linearGradient>
-    <linearGradient id="lid" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#FF7A1A"/>
-      <stop offset="1" stop-color="#FFB547"/>
-    </linearGradient>
-  </defs>
-  <!-- the eye: what the wearer looks at -->
-  <path d="M10 64 C 30 30, 98 30, 118 64 C 98 98, 30 98, 10 64 Z" fill="none" stroke="url(#lid)" stroke-width="6" stroke-linejoin="round"/>
-  <!-- the iris: a dark lens -->
-  <circle cx="64" cy="64" r="24" fill="#16191E"/>
-  <circle cx="64" cy="64" r="24" fill="none" stroke="#FF7A1A" stroke-opacity="0.35" stroke-width="2"/>
-  <!-- the pupil: Prometheus' fire, foresight -->
-  <path d="M64 45 C 70 53, 75 57, 75 66 C 75 74, 70 80, 64 80 C 58 80, 53 74, 53 67 C 53 61, 56 57, 59 53 C 60 58, 62 60, 64 61 C 63 56, 62 50, 64 45 Z" fill="url(#fire)"/>
-  <path d="M64 63 C 67 67, 69 69, 69 72 C 69 75, 67 77, 64 77 C 61 77, 59 75, 59 72 C 59 69, 61 67, 64 63 Z" fill="#FFF1C2"/>
-  <!-- the gaze point -->
-  <circle cx="106" cy="20" r="3.5" fill="#FFD25E"/>
-  <path d="M106 9 V14 M106 26 V31 M95 20 H100 M112 20 H117" stroke="#FFD25E" stroke-width="2.5" stroke-linecap="round"/>
+  <style>
+    .mark { fill: #000; }
+    /* black on light backgrounds; white on GitHub's dark theme so the torch stays visible */
+    @media (prefers-color-scheme: dark) { .mark { fill: #fff; } }
+  </style>
+  <!-- flame, with the inner flame cut out -->
+  <path class="mark" fill-rule="evenodd" d="M64 8 C 75 22, 83 31, 83 44 C 83 55, 74 61, 64 61 C 54 61, 45 55, 45 44 C 45 35, 50 30, 55 23 C 56 31, 59 35, 63 37 C 61 28, 60 18, 64 8 Z M64 33 C 69 40, 72 44, 72 49 C 72 54, 68 57, 64 57 C 60 57, 56 54, 56 49 C 56 44, 59 40, 64 33 Z"/>
+  <!-- head -->
+  <path class="mark" d="M40 65 H88 L82 80 H46 Z"/>
+  <!-- handle -->
+  <path class="mark" d="M52 84 H76 L68.5 119 Q64 124 59.5 119 Z"/>
 </svg>
