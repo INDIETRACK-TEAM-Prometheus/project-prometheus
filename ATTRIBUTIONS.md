@@ -16,8 +16,8 @@ version used and its license. Versions are the ones pinned or installed for the 
 
 | Dataset | Used for | License | Status in this repository |
 |---|---|---|---|
-| **Aria Everyday Activities** (Meta, release 1.0.0): loc2_script3_seq1_rec1, loc2_script3_seq1_rec2, loc2_script2_seq6_rec1, loc2_script5_seq2_rec1 | Main demo: RGB scene video, eye-camera video, MPS eye gaze, MPS closed-loop trajectory, MPS semi-dense points | [AEA Dataset License](https://www.projectaria.com/datasets/aea/license/): no distribution or public display of the dataset or derived works without Meta's written permission | Derived clips are in `data/demo/` of the **private** repository; permission requested (Discord question to the organizers, emails to the address in the license bounced). Remove before making the repository public unless permission is granted. |
-| **HARMONIC** (CMU HARP Lab), sample run p122/run/011 | Fallback clip: egocentric video, both eye videos, Pupil Labs gaze | No license stated on the [project page](https://harplab.github.io/harmonic/) or in the paper | Kept out of git; permission request drafted, not sent. Newman et al., "HARMONIC: A multimodal dataset of assistive human–robot collaboration", IJRR 2021. |
+| **Aria Everyday Activities** (Meta, release 1.0.0): loc2_script3_seq1_rec1, loc2_script3_seq1_rec2, loc2_script2_seq6_rec1, loc2_script5_seq2_rec1 | Main demo: RGB scene video, eye-camera video, MPS eye gaze, MPS closed-loop trajectory, MPS semi-dense points | [AEA Dataset License](https://www.projectaria.com/datasets/aea/license/): no distribution or public display of the dataset or derived works without Meta's written permission | Not included: the repository has only the export scripts; run them on your own licensed download. The demo video shows our analysis of these recordings with attribution to Meta (license Section 2). |
+| **HARMONIC** (CMU HARP Lab), sample run p122/run/011 | Fallback clip: egocentric video, both eye videos, Pupil Labs gaze | No license stated on the [project page](https://harplab.github.io/harmonic/) or in the paper | Kept out of git and not used in the demo. Newman et al., "HARMONIC: A multimodal dataset of assistive human–robot collaboration", IJRR 2021. |
 
 Considered and not used: the Visual Experience Dataset (VEDB, CC-BY; downloads need Databrary institutional
 authorization and gaze is not provided), Gaze-in-Wild (project site unavailable), Ego4D / EgoExo4D (restrictive license).
@@ -51,7 +51,7 @@ Python, data export: projectaria_tools 1.7.1 (Apache-2.0), msgpack 1.2.4 (Apache
 
 - **No AGPL code:** an earlier build used Ultralytics YOLO (AGPL-3.0); it was replaced by RT-DETRv2 (Apache-2.0)
   before release, and Ultralytics is not a dependency.
-- **AEA clips:** the hackathon organizers ruled that footage without Meta's written permission must be left out
-  (projects using material they have no rights to are disqualified). They are not part of the submission and must be
-  removed from the repository history before it is made public.
+- **AEA:** "This work uses the Aria Everyday Activities Dataset, provided by Meta Platforms, Inc." Used for
+  non-commercial research under the AEA Dataset License; no dataset files or derived clips are distributed in this
+  repository or its history.
 - **HARMONIC:** no license is stated, so its media is not redistributed here.

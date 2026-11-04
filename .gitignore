@@ -16,11 +16,7 @@ data/models/
 .venv-depth/
 .depth-runtime/
 data/demo/*
-# the demo playlist and its four Project Aria (AEA loc2) clips are versioned
+# only the playlist is versioned: dataset clips are exported locally (see README)
 !data/demo/playlist.json
-!data/demo/aria_loc2_script3_seq1_rec1.*
-!data/demo/aria_loc2_script2_seq6_rec1.*
-!data/demo/aria_loc2_script5_seq2_rec1.*
-!data/demo/aria_loc2_script3_seq1_rec2.*
 ui/dist/
 data/harmonic/
