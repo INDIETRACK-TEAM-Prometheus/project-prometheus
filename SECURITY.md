@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report vulnerabilities privately through
-[GitHub security advisories](https://github.com/Mingoomato/project-prometheus/security/advisories/new), not in a
+[GitHub security advisories](https://github.com/INDIETRACK-TEAM-Prometheus/project-prometheus/security/advisories/new), not in a
 public issue. Include the steps to reproduce and the affected files. You should get a reply within a few days.
 
 ## Scope and design

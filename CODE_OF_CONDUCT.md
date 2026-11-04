@@ -7,6 +7,6 @@ follow it.
 ## Reporting
 
 Report unacceptable behaviour to the maintainer, Mingyu Jeong, through a
-[GitHub issue](https://github.com/Mingoomato/project-prometheus/issues) or, for anything sensitive, a private
-[security advisory](https://github.com/Mingoomato/project-prometheus/security/advisories/new). Reports are handled
+[GitHub issue](https://github.com/INDIETRACK-TEAM-Prometheus/project-prometheus/issues) or, for anything sensitive, a private
+[security advisory](https://github.com/INDIETRACK-TEAM-Prometheus/project-prometheus/security/advisories/new). Reports are handled
 promptly and kept confidential.

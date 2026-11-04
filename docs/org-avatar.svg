@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="512" height="512" role="img" aria-label="Prometheus">
+  <title>Prometheus</title>
+  <rect width="128" height="128" fill="#000"/>
+  <!-- the logo torch, centred with room for GitHub's round crop -->
+  <g transform="translate(64 64) scale(0.66) translate(-64 -65)" fill="#fff">
+    <path fill-rule="evenodd" d="M64 8 C 75 22, 83 31, 83 44 C 83 55, 74 61, 64 61 C 54 61, 45 55, 45 44 C 45 35, 50 30, 55 23 C 56 31, 59 35, 63 37 C 61 28, 60 18, 64 8 Z M64 33 C 69 40, 72 44, 72 49 C 72 54, 68 57, 64 57 C 60 57, 56 54, 56 49 C 56 44, 59 40, 64 33 Z"/>
+    <path d="M40 65 H88 L82 80 H46 Z"/>
+    <path d="M52 84 H76 L68.5 119 Q64 124 59.5 119 Z"/>
+  </g>
+</svg>

@@ -299,4 +299,4 @@ dataset media is distributed here: the AEA dataset is used under its own license
 
 ## Team
 
-**Project Prometheus**: Mingyu Jeong ([@Mingoomato](https://github.com/Mingoomato))
+**Project Prometheus** ([INDIETRACK-TEAM-Prometheus](https://github.com/INDIETRACK-TEAM-Prometheus)): Mingyu Jeong ([@Mingoomato](https://github.com/Mingoomato))
